@@ -537,6 +537,7 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 	sessionID := s.nextCallID.Add(1)
 	var fail func(error) (*core.Session, error)
 	var releaseCall func()
+	releaseSlot := sync.OnceFunc(func() { s.admission.ReleaseSession(principal, flowID) }) // fail may run twice
 	registered := false
 	defer func() {
 		if r := recover(); r != nil {
@@ -546,7 +547,7 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 				_, _ = fail(errors.New("call setup panicked"))
 			default: // resolved, but setup has no fail path yet
 				s.recoverEach(sessionID, "releaseCall", releaseCall)
-				s.admission.ReleaseSession(principal, flowID)
+				releaseSlot()
 			}
 			panic(r)
 		}
@@ -568,7 +569,7 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 	cancelResolve()
 	releaseCall = rel
 	if err != nil {
-		s.admission.ReleaseSession(principal, flowID)
+		releaseSlot()
 		s.metrics.SessionsFailedTotal.Add(1)
 		timeline.Record(TimelineEvent{Type: EventError, Details: s.redactor.Redact(err.Error())})
 		s.logSetupFailure(sessionID, flowID, "resolve", err)
@@ -606,6 +607,7 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 	var pipe *core.Pipeline
 	var session *core.Session
 	fail = func(err error) (*core.Session, error) {
+		defer releaseSlot() // even if a step below panics
 		// Release provider clients: the session closes its processors, and
 		// before a session exists the built pipeline's processors are closed here.
 		if session != nil {
@@ -623,7 +625,6 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 		ending.set(storage.EndSetupFailed)
 		s.recoverEach(sessionID, "releaseCall", releaseCall)
 		s.recoverEach(sessionID, "stopRecording", stopRecording)
-		s.admission.ReleaseSession(principal, flowID)
 		s.metrics.SessionsFailedTotal.Add(1)
 		timeline.Record(TimelineEvent{Type: EventError, Details: s.redactor.Redact(err.Error())})
 		s.logSetupFailure(sessionID, flowID, phase, err)

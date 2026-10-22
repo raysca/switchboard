@@ -1,6 +1,10 @@
 package server
 
 import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -55,4 +59,26 @@ func TestResolveCallPanicEndsRow(t *testing.T) {
 	r := newFlowRigE2E(t, newProbe())
 	r.s.adjustCall = func(*CallSpec) { panic("adjust bug") }
 	waitSetupReleased(t, r, r.dial(r.createRoutedFlow("salesvoice")), 0)
+}
+
+// A panic inside the fail path, after it released the slot, must not release it a second time when the
+// setup recover runs fail again (a second call's slot, held here, would be taken).
+func TestFailPathPanicReleasesAdmissionOnce(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe())
+	r.s.registry.Register("echo.tts", func(cfg *Config, spec StageSpec) (core.Processor, error) { return nil, errors.New("tts down") })
+	if err := r.s.admission.AcquireSession("other", "other-flow", true); err != nil {
+		t.Fatal(err)
+	}
+	r.s.logger = slog.New(panicOnSetupFailure{slog.NewTextHandler(io.Discard, nil)}) // fail's last step panics
+	waitSetupReleased(t, r, r.dial(r.createRoutedFlow("salesvoice")), 1)
+}
+
+// panicOnSetupFailure panics when the call-setup failure is logged, the last step of the fail path.
+type panicOnSetupFailure struct{ slog.Handler }
+
+func (h panicOnSetupFailure) Handle(ctx context.Context, r slog.Record) error {
+	if r.Message == "call setup failed" {
+		panic("log sink bug")
+	}
+	return h.Handler.Handle(ctx, r)
 }
