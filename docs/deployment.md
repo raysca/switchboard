@@ -348,7 +348,7 @@ Prometheus scrapes `:9092/metrics` (the probe listener). `deploy/alerts/govoice.
 
 ## 17. Smoke tests, troubleshooting and checklist
 
-> **Never run `deploy/smoke-google.sh` on a deployment host.** It drives `deploy/docker-compose.yaml` with the same project and the same fixed container names (`govoice-server`, `govoice-postgres`, `govoice-proxy`) as the live stack, so `compose up -d` replaces the running containers (with a freshly generated `POSTGRES_PASSWORD` and management key when you have not exported yours), and its exit trap runs `compose down -v`, which stops the stack and **deletes the Postgres volume** (`govoice_db`, your flow store). It also writes a 2-day self-signed certificate into `deploy/certs` when `voice.example.com.crt` is missing there. Run it only on a throwaway build machine.
+> **Never run `deploy/smoke-google.sh` on a deployment host.** It drives `deploy/docker-compose.yaml` with the same project and the same fixed container names (`govoice-server`, `govoice-postgres`, `govoice-proxy`) as the live stack, so `compose up -d` replaces the running containers (with a freshly generated `POSTGRES_PASSWORD` and management key when you have not exported yours), and its exit trap runs `compose down -v`, which stops the stack and **deletes the Postgres volume** (`govoice_db`, your flow store). It also writes a 2-day self-signed certificate into the git-ignored `certs` directory next to `nginx.conf` when `voice.example.com.crt` is missing there. Run it only on a throwaway build machine.
 
 | Check | Needs | What it proves | Blast radius (from the script) |
 |---|---|---|---|
