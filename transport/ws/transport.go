@@ -142,6 +142,18 @@ func (c *Connection) recoverPanic() {
 	c.cancel()
 }
 
+// startClosingOnPanic starts the session; a panic in a processor's Attach would
+// otherwise strand it, unstored and never closed, before the read loop recovers.
+func startClosingOnPanic(session *core.Session) error {
+	defer func() {
+		if r := recover(); r != nil {
+			_ = session.Close()
+			panic(r)
+		}
+	}()
+	return session.Start()
+}
+
 func (c *Connection) traceError(category string) {
 	c.traceEvent("transport.error", map[string]any{"error.category": category})
 }
@@ -543,7 +555,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 			session.SetOutputGate(conn.awaitOutputRoom)
-			if err := session.Start(); err != nil {
+			if err := startClosingOnPanic(session); err != nil {
 				conn.setCloseCause("session_start_failed")
 				_ = session.Close()
 				return err
