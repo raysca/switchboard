@@ -283,14 +283,4 @@ failover:
   llm_budget: 45s       # default 60s
 ```
 
-## Public admin mode (single port)
-
-By default the management API (`/api/v1`) lives on the loopback admin listener and the admin UI runs separately. With `public_admin: {enabled: true}` the public listener also serves the management API and the embedded admin UI (build it in with `make ui-embed`), so one port carries the UI, the API and the voice socket. It is off by default.
-
-- **Signing in to the admin UI without pasting the key.** Make a magic link: `make admin-link URL=https://<service-url>` (key from `GOVOICE_MANAGEMENT_API_KEY`), or `gcloud secrets versions access latest --secret=GOVOICE_MANAGEMENT_API_KEY | scripts/admin-link.sh https://<service-url>`. The link is `<url>/#key=<key>`: the key is in the URL fragment, which browsers never send to a server, and the admin UI reads it into memory and removes it from the address bar and history at once (reloading or pressing Sign out in the top bar clears it; open the link again). Treat the link like the key itself: it is a credential, so do not paste it into chat or tickets. The hosted UI never sends a keyless "are you signed in" request (that would count as a failed login below); only the dev server does.
-- Every management route still needs the management key. `/metrics`, `/ready` and `/debug/*` are not mounted on the public port (they answer non-200 there): metrics expose internals and stay on the admin listener. `/health` stays public.
-- `origin_allow_same_host: true` admits a browser whose `Origin` host equals the request `Host`, so the page can open the voice socket without listing its own origin in `origin_allowlist`. A foreign browser origin is still rejected.
-- Production requires `tls.trusted_proxy_mode` for both keys: the `Host` header and the client address must come from your proxy, not the caller. See `config/cloudrun.yaml`.
-- Failed management-key attempts share ONE global allowance (burst 10, one more every 6 s). A correct key is checked first and is never throttled, so no flood of bad keys, from any address, can lock the admin out. Once the allowance is spent, a wrong or missing key gets 429 `too_many_attempts` ("too many failed attempts; try again shortly", with `Retry-After`) instead of 401, and the UI shows that message. A missing key counts as a failure. `voice_management_auth_failures_total` counts every failed attempt and `voice_management_auth_throttled_total` those answered 429.
-- `GET /api/v1/server-config` (key required, never cached) reports `client_ip` and `secure`; check it after each deploy. If `client_ip` is a Google front-end/load-balancer address or `secure` is false, add the proxy's CIDR to `tls.trusted_proxies`, otherwise every caller shares one bucket in the per-IP rate limits and the handshake limiter (the auth throttle is global and unaffected).
-- End-to-end check: `make e2e-oneport` (echo provider, no secrets).
+Public admin mode (single port) is described in [deployment.md](deployment.md#public-admin-mode-single-port).
