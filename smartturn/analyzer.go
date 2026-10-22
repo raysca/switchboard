@@ -216,8 +216,6 @@ func (a *Analyzer) finish(j *job, p float32, err error) {
 			reason = ReasonOverload
 		case errors.Is(err, ErrUnavailable):
 			reason = ReasonUnavailable
-		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-			reason = ReasonTimeout
 		}
 		a.failLocked(j, reason)
 		return
