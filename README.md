@@ -29,7 +29,7 @@ make example-web               # in another terminal: browser client
 make example-cli TEXT="Hello"  # or a CLI call (omit TEXT for a voice clip)
 ```
 
-`make dev` builds everything, generates the management key and token secret, and keeps a local SQLite store in `.govoice-dev/` (git-ignored). Provider keys come from `examples/.env` (template: `examples/.env.example`). Without keys, the free targets in `make help` run on the `echo` fake provider. The admin UI is at `http://127.0.0.1:5173`. Full walkthrough (flows, tokens, the Pipecat client): [docs/quickstart.md](docs/quickstart.md).
+`make dev` builds everything, generates the management key and token secret, and keeps a local SQLite store in `.govoice-dev/` (git-ignored). Provider keys come from `examples/.env` (template: `examples/.env.example`). Without keys, the free targets in `make help` run on the `echo` fake provider. The admin UI is at `http://127.0.0.1:5173`. Seeded flows, ports and `make admin-link`: [quickstart section 8](docs/quickstart.md#8-local-development-with-make-dev); the full walkthrough (flows, tokens, the Pipecat client) is the rest of [docs/quickstart.md](docs/quickstart.md).
 
 ---
 
