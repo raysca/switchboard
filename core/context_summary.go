@@ -50,7 +50,7 @@ type ContextSummarizer struct {
 	now   func() time.Time
 
 	inflight                   atomic.Bool
-	retryAt                    atomic.Int64 // unix nanos
+	retryAt                    atomic.Pointer[time.Time] // carries now()'s monotonic reading: immune to wall-clock steps
 	applied, failed, discarded atomic.Int64
 }
 
@@ -79,7 +79,7 @@ func (s *ContextSummarizer) Maybe() bool {
 	if s.cfg.Summarizer == nil || (s.cfg.TriggerTokens <= 0 && s.cfg.TriggerMessages <= 0) {
 		return false
 	}
-	if s.now().UnixNano() < s.retryAt.Load() || !s.inflight.CompareAndSwap(false, true) {
+	if rt := s.retryAt.Load(); (rt != nil && s.now().Before(*rt)) || !s.inflight.CompareAndSwap(false, true) {
 		return false
 	}
 	span, start := s.snapshot()
@@ -108,7 +108,8 @@ func (s *ContextSummarizer) Maybe() bool {
 		case err != nil:
 			report("failed", 0)
 			s.failed.Add(1)
-			s.retryAt.Store(s.now().Add(s.cfg.RetryAfter).UnixNano())
+			retry := s.now().Add(s.cfg.RetryAfter)
+			s.retryAt.Store(&retry)
 			// Bounded reason only: provider errors may echo request content.
 			reason := "error"
 			if errors.Is(err, context.DeadlineExceeded) {

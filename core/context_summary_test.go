@@ -324,3 +324,27 @@ func TestSummarizerOnResult(t *testing.T) {
 		t.Fatalf("failed result = %+v", f)
 	}
 }
+
+// The retry pause is measured on now()'s monotonic reading and lifts once RetryAfter has elapsed.
+func TestSummary_RetryPauseLiftsAfterRetryAfter(t *testing.T) {
+	fn := func(context.Context, []Message) (string, error) { return "", errors.New("boom") }
+	r := newSummaryRig(t, ContextConfig{MaxTokens: 150}, SummaryConfig{TriggerMessages: 4, KeepTurns: 1, Summarizer: fn, RetryAfter: time.Minute})
+	clk := time.Now() // carries a monotonic reading
+	r.s.now = func() time.Time { return clk }
+	for i := 1; i <= 3; i++ {
+		r.turn(t, i, false)
+	}
+	if !r.s.Maybe() {
+		t.Fatal("expected start")
+	}
+	r.wait(t)
+	clk = clk.Add(59 * time.Second)
+	if r.s.Maybe() {
+		t.Fatal("retried before RetryAfter")
+	}
+	clk = clk.Add(2 * time.Second)
+	if !r.s.Maybe() {
+		t.Fatal("did not retry after RetryAfter")
+	}
+	r.wait(t)
+}
