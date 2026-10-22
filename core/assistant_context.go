@@ -197,6 +197,10 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 	case FrameUserMessage:
 		// New user turn received: reset assistant turn state
 		um := f.(*UserMessageFrame)
+		if IsSayTurn(um.Turn) && p.modelActive.Load() {
+			// A model turn started after Say checked: the scripted line loses (its later frames are stale).
+			return nil
+		}
 		p.activeTurn = um.Turn
 		p.active.Store(true)
 		p.modelActive.Store(!IsSayTurn(um.Turn))

@@ -527,7 +527,8 @@ func (c *IdleController) toClient(f Frame) {
 }
 
 // prompt queues the nudge and reports whether it did. A prompt refused because a model reply is in progress
-// is not spent: the user clock (already re-armed for one UserTimeout later) asks again then.
+// is not spent: the user clock (already re-armed for one UserTimeout later) asks again then. A prompt the run
+// loop drops because a model turn won the race after Say returned is spent without being heard.
 func (c *IdleController) prompt(n int, nudge bool) bool {
 	if !nudge {
 		if errors.Is(c.say(c.cfg.UserPrompt), ErrSayBusy) {

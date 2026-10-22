@@ -1,6 +1,7 @@
 package core_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -211,5 +212,56 @@ func TestAssistantSayIsSyntheticToTheGateAndInvisibleToTheLatencyObserver(t *tes
 		default:
 			return
 		}
+	}
+}
+
+// Say checks for an active model turn off the run loop, so a model turn can start after the check and
+// before the say frames arrive: the run loop drops the scripted line instead of letting it reset the
+// model's turn.
+func TestSayLosesTheRaceToAModelTurn(t *testing.T) {
+	ctx := core.NewConversationContext(core.ContextConfig{MaxMessages: 20})
+	p := core.NewAssistantContextProcessor(ctx, core.DefaultAssistantContextConfig())
+	r := &frameRec{}
+	bg := context.Background()
+	for _, f := range []core.Frame{
+		&core.UserMessageFrame{Turn: "u1", Gen: 1, Content: "hi"},
+		&core.UserMessageFrame{Turn: "say-1", Gen: 1},
+		&core.LLMTextDeltaFrame{Turn: "say-1", Gen: 1, Delta: "scripted line"},
+		&core.LLMTextFrame{Turn: "say-1", Gen: 1, Text: "scripted line"},
+		&core.LLMTextFrame{Turn: "u1", Gen: 1, Text: "model reply"},
+	} {
+		if err := p.ProcessFrame(bg, f, core.Downstream, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, su := range r.units() {
+		if err := p.ProcessFrame(bg, &core.WriteCompletionFrame{Turn: "u1", Gen: 1, UnitID: su.UnitID, IsFinal: true}, core.Upstream, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range r.frames {
+		switch v := f.(type) {
+		case *core.LLMTextDeltaFrame:
+			if v.Turn == "say-1" {
+				t.Fatalf("the dropped scripted line reached downstream: %+v", v)
+			}
+		case *core.LLMTextFrame:
+			if v.Turn == "say-1" {
+				t.Fatalf("the dropped scripted line reached downstream: %+v", v)
+			}
+		case *core.SynthesisUnitFrame:
+			if v.Turn != "u1" {
+				t.Fatalf("unit for %q, want the model turn", v.Turn)
+			}
+		}
+	}
+	var got []string
+	for _, m := range ctx.Messages() {
+		if m.Role == core.RoleAssistant {
+			got = append(got, m.TurnID+":"+m.Content)
+		}
+	}
+	if len(got) != 1 || got[0] != "u1:model reply" {
+		t.Fatalf("committed assistant messages = %q, want only the model's reply", got)
 	}
 }
