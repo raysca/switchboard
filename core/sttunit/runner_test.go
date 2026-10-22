@@ -453,21 +453,61 @@ func TestRunner_LateResultOfOldGenerationIsFenced(t *testing.T) {
 	}
 }
 
-func TestRunner_SendFailureFailsTheFrameAndReleases(t *testing.T) {
-	conn := newFakeConn(t)
-	h := newHarness(t, Config{Dial: dialConn(conn)})
+// A failed live Send is that stream's failure, handled like a failed Recv: one
+// error frame, the frame still passes, and the next audio dials a fresh stream
+// for the same turn. A ProcessFrame error would end the whole call.
+func TestRunner_SendFailureIsReportedNotFatal(t *testing.T) {
+	conn1, conn2 := newFakeConn(t), newFakeConn(t)
+	var reports atomic.Int32
+	br := resilience.NewBreaker(resilience.Config{FailureThreshold: 100, Cooldown: time.Hour})
+	var n atomic.Int32
+	h := newHarness(t, Config{
+		Breaker:  br,
+		Classify: func(error) resilience.Verdict { reports.Add(1); return resilience.Verdict{Retryable: true} },
+		Dial: func(context.Context) (Conn, error) {
+			if n.Add(1) == 1 {
+				return conn1, nil
+			}
+			return conn2, nil
+		},
+	})
 	h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
-	h.waitFor("open", func() bool { return conn.recvs.Load() >= 1 })
+	h.waitFor("open", func() bool { return conn1.recvs.Load() >= 1 })
 	broken := errors.New("broken pipe")
-	conn.setSendErr(broken)
-	err := h.r.ProcessFrame(context.Background(), &core.InputAudioFrame{Samples: []byte{1, 0}}, core.Downstream, discard{})
-	if !errors.Is(err, broken) {
-		t.Fatalf("ProcessFrame err = %v, want the send error (STTFailover.syncFailure needs it)", err)
+	conn1.setSendErr(broken)
+	pushed := &pushRecorder{}
+	if err := h.r.ProcessFrame(context.Background(), &core.InputAudioFrame{Samples: []byte{1, 0}}, core.Downstream, pushed); err != nil {
+		t.Fatalf("ProcessFrame err = %v, want nil (a send failure must not end the call)", err)
 	}
+	if pushed.n != 1 {
+		t.Fatalf("audio frames pushed downstream = %d, want 1", pushed.n)
+	}
+	h.waitFor("error frame", func() bool { return len(h.errorFrames()) == 1 })
+	ef := h.errorFrames()[0]
+	if !errors.Is(ef.Err, broken) || errors.Is(ef.Err, core.ErrSTTUnavailable) || errors.Is(ef.Err, core.ErrTranscriptInvalidated) || ef.Turn != "turn-1-1" {
+		t.Fatalf("error frame %+v", ef)
+	}
+	h.waitFor("released and closed", func() bool { return h.r.Streams() == 0 && conn1.isClosed() })
 	if _, _, n := h.r.STTCounts(); n != 1 {
 		t.Fatalf("errors counted = %d", n)
 	}
-	h.waitFor("released and closed", func() bool { return h.r.Streams() == 0 && conn.isClosed() })
+	if got := reports.Load(); got != 1 {
+		t.Fatalf("breaker reports = %d, want 1", got)
+	}
+	h.audio(2)
+	h.waitFor("redial", func() bool { return h.dials.Load() == 2 && conn2.recvs.Load() >= 1 })
+	conn2.results <- recvResult{res: Result{Text: "hello", Final: true, EndOfUtterance: true}}
+	h.waitFor("candidate from the new stream", func() bool { return len(h.candidates()) >= 1 })
+	if c := h.candidates()[0]; c.Turn != "turn-1-1" || c.Text != "hello" {
+		t.Fatalf("candidate %+v", c)
+	}
+}
+
+type pushRecorder struct{ n int }
+
+func (p *pushRecorder) Push(core.Frame) error { p.n++; return nil }
+func (p *pushRecorder) PushDirection(core.Frame, core.Direction) error {
+	return nil
 }
 
 // Live audio arriving while a flush pass is sending joins the pre-roll and
@@ -1063,6 +1103,7 @@ func TestRunner_StalledSendAndFailingRecvReportOnce(t *testing.T) {
 // pre-roll flush (unbound and bound), or a failure after the first report.
 func TestRunner_EachFailurePathReportsOnce(t *testing.T) {
 	broken := errors.New("broken pipe")
+	liveSendConn := newFakeConn(t)
 	for _, tc := range []struct {
 		name   string
 		dial   func(release chan struct{}) func(context.Context) (Conn, error)
@@ -1073,6 +1114,14 @@ func TestRunner_EachFailurePathReportsOnce(t *testing.T) {
 			return func(context.Context) (Conn, error) { return nil, broken }
 		}, func(h *harness) {
 			h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+			h.audio(1)
+		}, 1},
+		{"live send", func(release chan struct{}) func(context.Context) (Conn, error) {
+			return dialConn(liveSendConn)
+		}, func(h *harness) {
+			h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+			h.waitFor("open", func() bool { return liveSendConn.recvs.Load() >= 1 })
+			liveSendConn.setSendErr(broken)
 			h.audio(1)
 		}, 1},
 		{"flush unbound", func(release chan struct{}) func(context.Context) (Conn, error) {

@@ -291,7 +291,7 @@ func (r *Runner) beginTurn(ctx context.Context, turn string, gen uint64) {
 // The dial runs on the stream's session task, never here (A1). It returns nil
 // when closed, after this turn's dial failed, or when the session has no task
 // left (ErrTooManyTasks: reported like a failed dial, never returned, since a
-// ProcessFrame error would fail the whole call).
+// ProcessFrame error would fail the whole call; a failed live Send is the same).
 func (r *Runner) ensure(ctx context.Context) *stream {
 	r.mu.Lock()
 	if r.active != nil || r.closed || r.noDial || r.session == nil {
@@ -370,7 +370,9 @@ func (r *Runner) handleAudio(ctx context.Context, f *core.InputAudioFrame, e cor
 		r.release(st)
 		r.stop(st, errProviderFailure)
 		r.report(err)
-		return err
+		// Like a failed Recv: reported, not returned (a ProcessFrame error ends the
+		// call). The stream is released, so the next audio redials for this turn.
+		r.reportError(st, err)
 	}
 	return e.Push(f)
 }
