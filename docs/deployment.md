@@ -78,7 +78,7 @@ Compose publishes 8080 and 9092 on `127.0.0.1` only. It does **not** publish 909
 
 <!-- src: Makefile:19,26-45; former runbook -->
 
-- Release hardening: `make release-security` checks that every `FROM` line and every compose image is digest-pinned, runs `govulncheck` v1.8.0, writes a module SBOM to `deploy/sbom.json` (git-ignored), builds the image as `govoice:release-security` and checks that the binaries and model exist in it, then scans the image with Trivy (falling back to Grype, then to a Trivy container). The gate is zero critical and zero high findings (the scan fails on any fixed HIGH or CRITICAL one); medium and low findings are triaged per release.
+- Release hardening: `make release-security` checks that every `FROM` line and every compose image is digest-pinned, runs `govulncheck` v1.8.0, writes a module SBOM to `deploy/sbom.json` (git-ignored), builds the image as `govoice:release-security` and checks that the binaries and model exist in it, then scans the image with Trivy (falling back to Grype, then to a Trivy container). What it gates: `govulncheck` fails on a reachable known vulnerability in the Go modules, and the image scan fails only on HIGH or CRITICAL findings that have a fix available (`--ignore-unfixed` for Trivy, `--only-fixed --fail-on high` for Grype). Unfixed HIGH and CRITICAL findings, and all medium and low ones, do not fail it and are triaged per release. The in-image check proves only that `server`, `vadworker` and the Silero model exist; it does not check `turnworker` or the Smart Turn model (the Dockerfile verifies the Smart Turn model's sha256 at build time). The scan itself covers the whole image.
 
 <!-- src: Makefile:104-130; .gitignore:75; former security-scans guide §2 -->
 
@@ -102,7 +102,9 @@ Edit before a production start: `origin_allowlist` (it ships with the placeholde
 
 <!-- src: config/production.yaml:18-24,70-72; server/registry.go:294-297 -->
 
-The production profile refuses to start when any of these holds (messages are from the code):
+Startup refusals. The first group applies to the production profile only; the second applies in every profile. The wording below paraphrases the checks; the exact messages are in the cited code.
+
+Production profile only:
 
 - `mcp.allow_local_http` is set;
 - there is no TLS certificate and key, and no `tls.trusted_proxy_mode` with `tls.trusted_proxies`, unless `insecure_overrides.allow_plain_ws_in_production` is set;
@@ -110,15 +112,19 @@ The production profile refuses to start when any of these holds (messages are fr
 - `origin_allow_same_host` or `public_admin` is on without `tls.trusted_proxy_mode`;
 - the token secret is missing, is the repository-public development secret, or is shorter than 32 characters;
 - the VAD mode is `inprocess`, or the Smart Turn analyzer is loaded in a mode other than `process`;
-- `storage.dialect` is empty, or the DSN variable is empty (`storage enabled but GOVOICE_DATABASE_DSN is empty`);
-- the management key is shorter than 32 bytes when set, or equals the token secret, or is missing while `public_admin` is on;
-- a stored flow uses a provider the build cannot run.
+- a stored flow uses a provider the build cannot run (in other profiles this is logged as an error and startup continues).
 
-<!-- src: server/config_validate.go:100-125,172-179,290-300; server/management.go:34-47,84-91; server/server.go:185-198; server/auth/auth.go:25 -->
+In every profile:
+
+- `storage.dialect` is empty (calls run stored flows, so a store is required);
+- the DSN variable is empty (`storage enabled but GOVOICE_DATABASE_DSN is empty`), except in the development profile, which creates its own SQLite store;
+- the management key is set but shorter than 32 bytes, or equals the token secret, or is missing while `public_admin` is on.
+
+<!-- src: server/config_validate.go:100-125,172-179,290-300; server/management.go:34-47,84-91; server/server.go:185-198; server/auth/auth.go:17-27 -->
 
 ## 5. Environment variables
 
-The complete set the shipped code and scripts read. Provider secrets are environment-only: they are never stored or returned by any API ([credentials.md](security/credentials.md)).
+The variables an operator sets for the shipped server and scripts. Provider secrets are environment-only: they are never stored or returned by any API ([credentials.md](security/credentials.md)).
 
 | Variable | Needed | Read by | Notes |
 |---|---|---|---|
@@ -129,7 +135,7 @@ The complete set the shipped code and scripts read. Provider secrets are environ
 | `GOVOICE_ROOT`, `GOVOICE_MODEL_PATH`, `GOVOICE_ORT_LIB`, `GOVOICE_TURN_MODEL_PATH`, `LD_LIBRARY_PATH` | image and unit set them | server and worker processes | Where the Silero model, the Smart Turn model and ONNX Runtime live. The image sets the first three plus `LD_LIBRARY_PATH`; the unit sets the first three |
 | `ORT_DISABLE_TELEMETRY` | no | set by the server | Set to `1` before ONNX Runtime starts and passed to the workers; do not override it |
 | `GOOGLE_APPLICATION_CREDENTIALS` | per provider | server | A path to a service-account JSON file (STT, TTS, Vertex LLM) |
-| `GOOGLE_API_KEY` | per provider | server | Gemini API key (LLM) |
+| `GOOGLE_API_KEY` | per provider | server | Gemini API key (LLM). The Google credential resolver also falls back to `GEMINI_API_KEY` when no key is configured (`providers/google/credentials.go`, used by the programmatic examples); provider detection looks at `GOOGLE_API_KEY`, so set that name |
 | `XAI_API_KEY` | per provider | server | xAI LLM, STT, TTS |
 | `OPENAI_API_KEY`, `OPENAI_BASE_URL` | per provider | server | OpenAI or compatible LLM; a private base URL needs `providers.openai_llm.allow_private_base_url` |
 | `NVIDIA_API_KEY`, `NVIDIA_STT_FUNCTION_ID`, `NVIDIA_TTS_FUNCTION_ID` | per provider | server | Hosted NVIDIA only |
@@ -176,7 +182,7 @@ Migrations run forward-only at startup and a failed migration aborts the start. 
 1. Put TLS files in a `certs` directory next to `nginx.conf` (git-ignored): `voice.example.com.crt` and `.key` for the public vhost, and `admin.crt` and `.key` for the internal 9091 vhost. The paths are fixed by `nginx.conf` and mounted by compose at `/etc/ssl/certs`; replace `voice.example.com` in the two `server_name` lines and in the file names with your host. For a throwaway test, `deploy/smoke-google.sh` creates a self-signed pair with the command below (do not run that script on a deployment host, see [section 17](#17-smoke-tests-troubleshooting-and-checklist)): `openssl req -x509 -newkey rsa:2048 -nodes -keyout deploy/certs/voice.example.com.key -out deploy/certs/voice.example.com.crt -days 2 -subj '/CN=localhost'` and copies it to `admin.crt` and `admin.key`.
 2. Put the provider variables in `deploy/govoice.env` and export `TOKEN_SECRET`, `GOVOICE_MANAGEMENT_API_KEY` and `POSTGRES_PASSWORD` (compose refuses to start without them).
 3. Start: `docker compose -f deploy/docker-compose.yaml up -d`.
-4. Call the management API from inside the container, because compose does not publish port 9090 (on Kubernetes use `kubectl port-forward` or `exec`): `docker exec govoice-server curl -H "Authorization: Bearer $GOVOICE_MANAGEMENT_API_KEY" http://127.0.0.1:9090/api/v1/...`. Then follow [quickstart.md](quickstart.md#5-check-providers-create-a-flow-issue-a-token) to check providers, create a flow and issue a voice token. This nginx proxies only `/ws` and `/health`, so the admin UI is not reachable through it; the UI needs `public_admin` ([section 10](#10-path-c-google-cloud-run-the-demo-deployment)).
+4. Call the management API from inside the container, because compose does not publish port 9090 (on Kubernetes use `kubectl port-forward` or `exec`): `docker exec govoice-server sh -c 'curl -H "Authorization: Bearer $GOVOICE_MANAGEMENT_API_KEY" http://127.0.0.1:9090/api/v1/...'`. Keep the single quotes: the variable is then expanded by the shell inside the container, from the container's own environment, so the key never appears in the host's process list (`deploy/smoke.sh` does the same). Then follow [quickstart.md](quickstart.md#5-check-providers-create-a-flow-issue-a-token) to check providers, create a flow and issue a voice token. This nginx proxies only `/ws` and `/health`, so the admin UI is not reachable through it; the UI needs `public_admin` ([section 10](#10-path-c-google-cloud-run-the-demo-deployment)).
 
 <!-- src: deploy/nginx.conf:58,66,69-70,119-120; deploy/docker-compose.yaml:41-42,85-87; deploy/smoke-google.sh:18-23; former runbook; server/deploy_contract_test.go (TestNginxCertificatesAreMounted) -->
 
