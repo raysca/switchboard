@@ -122,6 +122,13 @@ func (c *Connection) traceEventAt(name string, at time.Time, attrs map[string]an
 	}
 }
 
+// outputCurrent reports whether f's generation is still the session's, or f
+// plays through interruptions.
+func (c *Connection) outputCurrent(f *core.OutputAudioFrame) bool {
+	session := c.session.Load()
+	return session == nil || f.Disposition == core.OutputUninterruptible || f.Gen == session.CurrentGeneration()
+}
+
 // recoverPanic ends the call when a connection goroutine panics (a client
 // anomaly or server code run from the read loop): the panic value is never
 // logged here, it can carry client or provider data.
@@ -462,7 +469,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if t := conn.tap.Load(); t != nil && err == nil {
 			(*t).Bot(f) // only audio the pacer actually released, never a flushed tail
 		}
-		if err == nil && f.IsFinal && f.Text != "" { // the unit's last audio is on the socket
+		// The unit's last audio is on the socket. A barge-in that landed since
+		// (the generation moved on) cut the unit: it sends no text after
+		// bot-interrupted. Uninterruptible audio is not cut and keeps its text.
+		if err == nil && f.IsFinal && f.Text != "" && conn.outputCurrent(f) {
 			if msg, e := conn.rtvi.FormatBotTTSText(f.Text); e == nil {
 				_ = conn.WriteWireMessage(conn.ctx, msg)
 			}

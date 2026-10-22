@@ -35,6 +35,7 @@ type wireEvent struct {
 // reject (a wrongly resampled one) is still counted.
 type outputRig struct {
 	sess *core.Session
+	conn *ws.Connection
 	mu   sync.Mutex
 	log  []wireEvent
 }
@@ -45,6 +46,7 @@ func newOutputRig(t *testing.T) *outputRig {
 	val, _ := token.NewValidator(token.DefaultConfig(testIssuer, testAudience, []byte(testSecret)), now.Add(-time.Minute))
 	server := ws.NewServer(ws.DefaultServerConfig(val))
 	sessCh := make(chan *core.Session, 1)
+	connCh := make(chan *ws.Connection, 1)
 	server.OnSessionReady = func(conn *ws.Connection) (*core.Session, error) {
 		pipe, err := core.NewPipeline(conn)
 		if err != nil {
@@ -53,6 +55,7 @@ func newOutputRig(t *testing.T) *outputRig {
 		sess, err := core.NewSession(210, pipe, core.DefaultResourceBudget())
 		if err == nil {
 			sessCh <- sess
+			connCh <- conn
 		}
 		return sess, err
 	}
@@ -66,7 +69,7 @@ func newOutputRig(t *testing.T) *outputRig {
 	}
 	t.Cleanup(func() { _ = conn.CloseNow() })
 	performHandshake(t, ctx, conn)
-	r := &outputRig{sess: <-sessCh}
+	r := &outputRig{sess: <-sessCh, conn: <-connCh}
 	t.Cleanup(func() { _ = r.sess.Close() })
 	go func() {
 		for {
