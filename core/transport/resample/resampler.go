@@ -77,16 +77,20 @@ func (r *Resampler) ResamplePCM16(pcmIn []byte) ([]byte, error) {
 	}
 
 	numSamplesIn := len(pcmIn) / 2
-	samplesIn := make([]int16, numSamplesIn)
-	for i := 0; i < numSamplesIn; i++ {
-		samplesIn[i] = int16(binary.LittleEndian.Uint16(pcmIn[i*2 : i*2+2]))
+	sample := func(i int) float64 { return float64(int16(binary.LittleEndian.Uint16(pcmIn[2*i:]))) }
+
+	// General stateful linear interpolation resampler. The output count is found first (same break
+	// rule as the fill loop below) so the result is the only allocation.
+	n := 0
+	for ph := r.phase; ; ph += r.ratio {
+		if idx := int(math.Floor(ph)); idx >= 0 && idx >= numSamplesIn-1 {
+			break // needs the next chunk's data to interpolate further
+		}
+		n++
 	}
-
-	// General stateful linear interpolation resampler
-	var samplesOut []int16
+	out := make([]byte, 2*n)
 	phase := r.phase
-
-	for {
+	for k := 0; k < n; k++ {
 		idx := int(math.Floor(phase))
 		frac := phase - float64(idx)
 
@@ -94,18 +98,12 @@ func (r *Resampler) ResamplePCM16(pcmIn []byte) ([]byte, error) {
 		if idx < 0 {
 			if r.hasHistory {
 				s0 = float64(r.lastSample)
-			} else if len(samplesIn) > 0 {
-				s0 = float64(samplesIn[0])
+			} else {
+				s0 = sample(0)
 			}
-			if len(samplesIn) > 0 {
-				s1 = float64(samplesIn[0])
-			}
-		} else if idx >= len(samplesIn)-1 {
-			// Needs next chunk's data to interpolate further
-			break
+			s1 = sample(0)
 		} else {
-			s0 = float64(samplesIn[idx])
-			s1 = float64(samplesIn[idx+1])
+			s0, s1 = sample(idx), sample(idx+1)
 		}
 
 		interpolated := s0 + frac*(s1-s0)
@@ -115,23 +113,15 @@ func (r *Resampler) ResamplePCM16(pcmIn []byte) ([]byte, error) {
 		} else if interpolated < -32768 {
 			interpolated = -32768
 		}
-		samplesOut = append(samplesOut, int16(math.Round(interpolated)))
+		binary.LittleEndian.PutUint16(out[2*k:], uint16(int16(math.Round(interpolated))))
 
 		phase += r.ratio
 	}
 
 	// Update phase and trailing sample for next chunk
-	r.phase = phase - float64(len(samplesIn))
-	if len(samplesIn) > 0 {
-		r.lastSample = samplesIn[len(samplesIn)-1]
-		r.hasHistory = true
-	}
-
-	// Pack to bytes
-	out := make([]byte, len(samplesOut)*2)
-	for i, s := range samplesOut {
-		binary.LittleEndian.PutUint16(out[i*2:i*2+2], uint16(s))
-	}
+	r.phase = phase - float64(numSamplesIn)
+	r.lastSample = int16(binary.LittleEndian.Uint16(pcmIn[2*numSamplesIn-2:]))
+	r.hasHistory = true
 	return out, nil
 }
 

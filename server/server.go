@@ -73,7 +73,7 @@ type Server struct {
 	probes                probeGate
 	vadExecutor           vad.SharedExecutor
 	turnBackend           smartturn.Backend
-	mgmt                  *management
+	mgmt                  atomic.Pointer[management]
 	flows                 *flow.Service
 	mcpService            *mcp.Service
 	logger                *slog.Logger
@@ -489,7 +489,20 @@ func (s *Server) setupRoutes() {
 	})
 }
 
-func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
+// onSessionReady turns a panic in call setup (flow resolution, a provider
+// constructor) into a refused call: the connection closes with an error, the
+// process lives. The panic value is redacted before it is logged.
+func (s *Server) onSessionReady(conn *ws.Connection) (session *core.Session, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.Error("panic during call setup", "panic", s.redactor.Redact(fmt.Sprint(r)))
+			session, err = nil, errors.New("call setup panicked")
+		}
+	}()
+	return s.startCall(conn)
+}
+
+func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 	// Under s.mu so Shutdown either refuses this call or waits for it to
 	// register: a call still resolving its flow is not yet in activeCalls.
 	s.mu.Lock()
@@ -519,7 +532,27 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		return nil, &ws.RejectError{Reason: admissionReason(err), Err: err}
 	}
 
+	// A panic from here until the call is registered (flow resolution, a provider
+	// constructor) releases what setup acquired, then propagates to onSessionReady.
 	sessionID := s.nextCallID.Add(1)
+	var fail func(error) (*core.Session, error)
+	var releaseCall func()
+	releaseSlot := sync.OnceFunc(func() { s.admission.ReleaseSession(principal, flowID) }) // fail may run twice
+	registered := false
+	defer func() {
+		if r := recover(); r != nil {
+			switch { // once registered, finishCall owns the release
+			case registered:
+			case fail != nil:
+				_, _ = fail(errors.New("call setup panicked"))
+			default: // resolved, but setup has no fail path yet
+				s.recoverEach(sessionID, "releaseCall", releaseCall)
+				releaseSlot()
+			}
+			panic(r)
+		}
+	}()
+
 	timeline := s.timelines.GetOrCreate(sessionID)
 	timeline.Record(TimelineEvent{Type: EventConnect, Details: "websocket connected"})
 	timeline.Record(TimelineEvent{Type: EventAuthenticate, Details: fmt.Sprintf("principal=%s", principal)})
@@ -532,10 +565,11 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		tokenID = claims.ID
 	}
 	ending := &endReason{transport: conn.CloseCause}
-	call, releaseCall, err := s.resolveCall(resolveCtx, conn.FlowID(), tokenID, principal, ending)
+	call, rel, err := s.resolveCall(resolveCtx, conn.FlowID(), tokenID, principal, ending)
 	cancelResolve()
+	releaseCall = rel
 	if err != nil {
-		s.admission.ReleaseSession(principal, flowID)
+		releaseSlot()
 		s.metrics.SessionsFailedTotal.Add(1)
 		timeline.Record(TimelineEvent{Type: EventError, Details: s.redactor.Redact(err.Error())})
 		s.logSetupFailure(sessionID, flowID, "resolve", err)
@@ -572,7 +606,8 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	var stopRecording func()
 	var pipe *core.Pipeline
 	var session *core.Session
-	fail := func(err error) (*core.Session, error) {
+	fail = func(err error) (*core.Session, error) {
+		defer releaseSlot() // even if a step below panics
 		// Release provider clients: the session closes its processors, and
 		// before a session exists the built pipeline's processors are closed here.
 		if session != nil {
@@ -588,9 +623,8 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 			}
 		}
 		ending.set(storage.EndSetupFailed)
-		recoverEach(s.logger, sessionID, "releaseCall", releaseCall)
-		recoverEach(s.logger, sessionID, "stopRecording", stopRecording)
-		s.admission.ReleaseSession(principal, flowID)
+		s.recoverEach(sessionID, "releaseCall", releaseCall)
+		s.recoverEach(sessionID, "stopRecording", stopRecording)
 		s.metrics.SessionsFailedTotal.Add(1)
 		timeline.Record(TimelineEvent{Type: EventError, Details: s.redactor.Redact(err.Error())})
 		s.logSetupFailure(sessionID, flowID, phase, err)
@@ -643,6 +677,11 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 			// observer, since Session.Close waits for it.
 			ending.set(storage.EndError)
 			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						s.logger.Error("panic during stt hang-up", slog.Uint64("session", sessionID), "panic", s.redactor.Redact(fmt.Sprint(r)))
+					}
+				}()
 				timeline.Record(TimelineEvent{Type: EventDisconnect, Details: "terminated: stt unavailable"})
 				conn.Hangup("stt_unavailable", 2*time.Second) // final RTVI error with the reason, 1000 close
 				conn.Close()
@@ -790,6 +829,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		s.live.Delete(call.StoredSessionID) // gone for operators before teardown work starts
 		s.finishCall(sessionID, principal, flowID, session, conn, timeline, errProviders, ending, releaseCall, stopRecording)
 	}()
+	registered = true
 
 	s.metrics.SessionsStartedTotal.Add(1)
 
@@ -1030,9 +1070,6 @@ func (s *Server) Start() error {
 
 // Logger is the configured structured logger (JSON when observability.json_format).
 func (s *Server) Logger() *slog.Logger { return s.logger }
-
-// PublicAddr returns the bound public listener address once Start has returned.
-func (s *Server) PublicAddr() string { return s.publicAddr }
 
 // Shutdown performs orderly drain-then-cancel shutdown per spec §37.
 func (s *Server) Shutdown(ctx context.Context) error {
@@ -1374,9 +1411,15 @@ func (s *Server) onText(conn *ws.Connection, text string) error {
 // max elapses, or ctx ends.
 func waitUntil(ctx context.Context, max time.Duration, done func() bool) {
 	finished := make(chan struct{})
+	stop := make(chan struct{})
+	defer close(stop) // the poller ends with the wait (a blocking done ends when it returns)
 	go func() {
 		for !done() {
-			time.Sleep(20 * time.Millisecond)
+			select {
+			case <-stop:
+				return
+			case <-time.After(20 * time.Millisecond):
+			}
 		}
 		close(finished)
 	}()
@@ -1389,13 +1432,13 @@ func waitUntil(ctx context.Context, max time.Duration, done func() bool) {
 	}
 }
 
-func recoverEach(log *slog.Logger, sessionID uint64, label string, fn func()) {
+func (s *Server) recoverEach(sessionID uint64, label string, fn func()) {
 	if fn == nil {
 		return
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			log.Error("panic during "+label, slog.Uint64("session", sessionID), slog.Any("panic", r))
+			s.logger.Error("panic during "+label, slog.Uint64("session", sessionID), "panic", s.redactor.Redact(fmt.Sprint(r)))
 		}
 	}()
 	fn()
@@ -1405,12 +1448,12 @@ func (s *Server) finishCall(sessionID uint64, principal, flowID string, session 
 	recDone := make(chan struct{})
 	go func() {
 		defer close(recDone)
-		recoverEach(s.logger, sessionID, "stopRecording", stopRecording)
+		s.recoverEach(sessionID, "stopRecording", stopRecording)
 	}()
 	defer func() {
 		<-recDone
 		if r := recover(); r != nil {
-			s.logger.Error("panic during session cleanup", slog.Uint64("session", sessionID), slog.Any("panic", r))
+			s.logger.Error("panic during session cleanup", slog.Uint64("session", sessionID), "panic", s.redactor.Redact(fmt.Sprint(r)))
 		}
 		s.mu.Lock()
 		delete(s.activeCalls, sessionID)
@@ -1440,7 +1483,7 @@ func (s *Server) finishCall(sessionID uint64, principal, flowID string, session 
 			}
 		}
 	}
-	recoverEach(s.logger, sessionID, "releaseCall", release)
+	s.recoverEach(sessionID, "releaseCall", release)
 }
 
 // logSetupFailure logs one warning for a call that could not be set up, so

@@ -240,7 +240,7 @@ func (s *grpcSTTStream) Close() error {
 type activeStream struct {
 	stream            STTStream
 	cancel            context.CancelFunc
-	ctx               context.Context
+	ctx               context.Context // owner lifetime
 	createdAt         time.Time
 	id                int
 	turnID            string
@@ -1102,7 +1102,7 @@ func (p *STTProcessor) receive(ctx context.Context, st *activeStream) {
 				continue
 			}
 			_ = p.session.Reenter(&core.ErrorFrame{
-				Err:  fmt.Errorf("%w: google transcript assembly failed: %v", core.ErrTranscriptInvalidated, assemblyErr),
+				Err:  fmt.Errorf("%w: google transcript assembly failed: %w", core.ErrTranscriptInvalidated, assemblyErr),
 				Turn: core.TurnID(turn), Gen: core.Generation(turnGen),
 			}, core.Downstream, p.index+1, turnGen)
 			continue

@@ -94,7 +94,12 @@ verify: test ## build|test + gofmt + manifest/fixture checks: run before a PR
 	git diff --exit-code -- tools/compat/fixtures
 	@echo "=== Playback-clear probe (clear failure stays a failure unless the recorded decision matches) ==="
 	node tools/compat/probe_playback_clear.js
+	@echo "=== Docs links and paths ==="
+	node scripts/check-links.mjs --paths
 	@echo "=== All verify checks passed ==="
+
+deadcode: ## build|Unreachable functions not in scripts/deadcode-allow.txt (advisory in CI)
+	@scripts/deadcode.sh
 
 release-security: ## build|Release hardening: pinned images, govulncheck, SBOM, image scan (docker)
 	@echo "=== Immutable base image digests ==="
@@ -128,7 +133,7 @@ proto-gen: ## build|Regenerate the protobuf frame code
 	@mkdir -p core/transport/v1/framespb
 	protoc --proto_path=proto --go_out=core/transport/v1/framespb --go_opt=Mframes.proto=govoice/core/transport/v1/framespb --go_opt=paths=source_relative frames.proto
 
-.PHONY: build test verify release-security proto-gen
+.PHONY: build test verify deadcode release-security proto-gen
 
 # Postgres storage tests (skipped by `make test`; run by the `postgres` job in .github/workflows/ci.yml,
 # which provides a service container and sets TEST_POSTGRES_DSN). Uses TEST_POSTGRES_DSN if set,

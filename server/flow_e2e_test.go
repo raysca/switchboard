@@ -192,6 +192,13 @@ func newFlowRigE2E(t *testing.T, probe *stageProbe, mods ...func(*Config)) *flow
 	probe.install(s)
 	ts := httptest.NewServer(s.wsServer)
 	t.Cleanup(ts.Close)
+	// Runs first (LIFO), after each call's own cleanup closed its connection: waits for the
+	// calls to end and releases the pinned MCP sessions, VAD and management plane.
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = s.Shutdown(ctx)
+	})
 	return &flowRigE2E{t: t, s: s, ts: ts, probe: probe}
 }
 
@@ -401,7 +408,7 @@ func (r *flowRigE2E) has(typ TimelineEventType, details string) bool {
 }
 
 func (r *flowRigE2E) spanNames(sessionID string) map[string]bool {
-	spans, err := r.s.mgmt.store.Traces().Spans(r.t.Context(), sessionID, "")
+	spans, err := r.s.mgmt.Load().store.Traces().Spans(r.t.Context(), sessionID, "")
 	if err != nil {
 		r.t.Fatal(err)
 	}
@@ -419,7 +426,7 @@ func (r *flowRigE2E) spanNames(sessionID string) map[string]bool {
 
 // spanAttributes is the stored attributes JSON of the first span called name ("" when none).
 func (r *flowRigE2E) spanAttributes(sessionID, name string) string {
-	spans, err := r.s.mgmt.store.Traces().Spans(r.t.Context(), sessionID, "")
+	spans, err := r.s.mgmt.Load().store.Traces().Spans(r.t.Context(), sessionID, "")
 	if err != nil {
 		r.t.Fatal(err)
 	}

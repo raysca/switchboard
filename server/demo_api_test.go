@@ -106,7 +106,11 @@ func TestDemoAutoInstallAtStart(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.adminServer.Close(); s.publicServer.Close() })
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = s.Shutdown(ctx)
+	})
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		w := apiRequest(s, http.MethodGet, "/api/v1/demo", testMgmtKey, "")

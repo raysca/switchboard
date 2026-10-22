@@ -20,7 +20,7 @@ type queueProcessor struct {
 	done    chan struct{}
 	once    sync.Once
 	cancel  context.CancelFunc // aborts an in-flight export when Shutdown gives up
-	ctx     context.Context
+	ctx     context.Context    // owner lifetime
 	dropped atomic.Uint64
 	failed  atomic.Uint64
 }

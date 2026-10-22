@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/netip"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -58,31 +60,6 @@ type ServerConfig struct {
 	Cues bool
 }
 
-// DefaultServerConfig returns a test/dev default: it allows any origin and a
-// missing Origin header. The server builds its own ServerConfig.
-func DefaultServerConfig(val *token.Validator) ServerConfig {
-	return ServerConfig{
-		Security: SecurityConfig{
-			AllowedOrigins:     []string{"*"},
-			AllowMissingOrigin: true,
-		},
-		TokenValidator:             val,
-		Pacer:                      DefaultPacerConfig(),
-		HandshakeTimeout:           5 * time.Second,
-		RTVIReadyTimeout:           5 * time.Second,
-		ReadTimeout:                30 * time.Second,
-		PingInterval:               15 * time.Second,
-		PingTimeout:                10 * time.Second,
-		PingMaxFailures:            2,
-		MaxConnectionLifetime:      60 * time.Minute,
-		MaxConcurrentSessions:      100,
-		MaxConcurrentSessionsPerIP: 10,
-		MaxPendingHandshakes:       50,
-		HandshakeRateLimit:         20.0,
-		FixedPlayerRate:            FixedPlayerSampleRate,
-	}
-}
-
 // Connection represents a live, authenticated WebSocket voice connection.
 type Connection struct {
 	id            uint64
@@ -99,7 +76,7 @@ type Connection struct {
 	rtvi          *rtvi.Handler
 	handling      atomic.Bool // read goroutine is in a handler, not Read: pongs wait
 
-	writeMu   sync.Mutex
+	slowOnce  sync.Once // terminateSlowClient counts and closes once
 	readyCh   chan struct{}
 	readyOnce sync.Once
 	// Resamplers
@@ -108,7 +85,7 @@ type Connection struct {
 	outResampler *resample.Resampler         // providerRate -> FixedPlayerRate
 	outRate      int                         // the rate outResampler was built for
 
-	ctx    context.Context
+	ctx    context.Context // owner lifetime
 	cancel context.CancelFunc
 
 	closed       atomic.Bool
@@ -146,6 +123,40 @@ func (c *Connection) traceEventAt(name string, at time.Time, attrs map[string]an
 		span.AddEvent(core.NewTraceEvent(name, at, session, "", 0, policy, attrs))
 	}
 }
+
+// outputCurrent reports whether f's generation is still the session's, or f
+// plays through interruptions.
+func (c *Connection) outputCurrent(f *core.OutputAudioFrame) bool {
+	session := c.session.Load()
+	return session == nil || f.Disposition == core.OutputUninterruptible || f.Gen == session.CurrentGeneration()
+}
+
+// recoverPanic ends the call when a connection goroutine panics (a client
+// anomaly or server code run from the read loop): the panic value is never
+// logged here, it can carry client or provider data.
+func (c *Connection) recoverPanic() {
+	if recover() == nil {
+		return
+	}
+	slog.Error("ws: connection goroutine panicked", "connection", c.id, "stack", string(debug.Stack()))
+	c.setCloseCause("panic")
+	c.traceError("panic")
+	c.closeBounded(websocket.StatusInternalError, "internal error", 500*time.Millisecond)
+	c.cancel()
+}
+
+// startClosingOnPanic starts the session; a panic in a processor's Attach would
+// otherwise strand it, unstored and never closed, before the read loop recovers.
+func startClosingOnPanic(session *core.Session) error {
+	defer func() {
+		if r := recover(); r != nil {
+			_ = session.Close()
+			panic(r)
+		}
+	}()
+	return session.Start()
+}
+
 func (c *Connection) traceError(category string) {
 	c.traceEvent("transport.error", map[string]any{"error.category": category})
 }
@@ -458,8 +469,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Initialize PacedWriter with thread-safe writeFn
 	pacer := NewPacedWriter(s.cfg.Pacer, func(ctx context.Context, data []byte) error {
-		conn.writeMu.Lock()
-		defer conn.writeMu.Unlock()
 		return wsConn.Write(ctx, websocket.MessageBinary, data)
 	})
 	conn.pacer = pacer
@@ -475,7 +484,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if t := conn.tap.Load(); t != nil && err == nil {
 			(*t).Bot(f) // only audio the pacer actually released, never a flushed tail
 		}
-		if err == nil && f.IsFinal && f.Text != "" { // the unit's last audio is on the socket
+		// The unit's last audio is on the socket. A barge-in that landed since
+		// (the generation moved on) cut the unit: it sends no text after
+		// bot-interrupted. Uninterruptible audio is not cut and keeps its text.
+		if err == nil && f.IsFinal && f.Text != "" && conn.outputCurrent(f) {
 			if msg, e := conn.rtvi.FormatBotTTSText(f.Text); e == nil {
 				_ = conn.WriteWireMessage(conn.ctx, msg)
 			}
@@ -546,7 +558,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 			session.SetOutputGate(conn.awaitOutputRoom)
-			if err := session.Start(); err != nil {
+			if err := startClosingOnPanic(session); err != nil {
 				conn.setCloseCause("session_start_failed")
 				_ = session.Close()
 				return err
@@ -562,6 +574,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// RTVI Ready watchdog: if client does not send valid client-ready within timeout,
 	// terminate connection before heavy session allocation.
 	go func() {
+		defer conn.recoverPanic()
 		select {
 		case <-conn.readyCh:
 			// Handshake completed successfully
@@ -582,6 +595,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer conn.recoverPanic()
 			conn.pingLoop()
 		}()
 	}
@@ -589,11 +603,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Writer task
 	go func() {
 		defer wg.Done()
+		defer conn.recoverPanic()
 		if err := pacer.Run(conn.ctx); err != nil && !errors.Is(err, context.Canceled) {
 			conn.traceError("transport_failure")
 			if errors.Is(err, ErrSlowClient) {
-				s.observe("slow_client", 1)
-				conn.closeBounded(websocket.StatusPolicyViolation, "slow client terminated", 500*time.Millisecond)
+				conn.terminateSlowClient()
 			}
 			conn.cancel()
 		}
@@ -602,6 +616,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Reader task
 	go func() {
 		defer wg.Done()
+		defer conn.recoverPanic()
 		conn.readLoop()
 		conn.cancel()
 	}()
@@ -977,12 +992,12 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 
 	case core.FrameUserStartedSpeaking:
 		msg, _ := c.rtvi.FormatUserStartedSpeaking()
-		_ = c.WriteWireMessage(ctx, msg)
+		c.writeOnLoop(ctx, msg)
 		return e.PushDirection(f, dir)
 
 	case core.FrameUserStoppedSpeaking:
 		msg, _ := c.rtvi.FormatUserStoppedSpeaking()
-		_ = c.WriteWireMessage(ctx, msg)
+		c.writeOnLoop(ctx, msg)
 		return e.PushDirection(f, dir)
 
 	case core.FrameInterimTranscription:
@@ -992,7 +1007,7 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 			ts = itf.Timestamp.Format(time.RFC3339Nano)
 		}
 		msg, _ := c.rtvi.FormatUserTranscriptionWithMeta(itf.Text, false, ts, itf.UserID)
-		_ = c.WriteWireMessage(ctx, msg)
+		c.writeOnLoop(ctx, msg)
 		return e.PushDirection(f, dir)
 
 	case core.FrameFinalTranscription:
@@ -1002,13 +1017,13 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 			ts = ftf.Timestamp.Format(time.RFC3339Nano)
 		}
 		msg, _ := c.rtvi.FormatUserTranscriptionWithMeta(ftf.Text, true, ts, ftf.UserID)
-		_ = c.WriteWireMessage(ctx, msg)
+		c.writeOnLoop(ctx, msg)
 		return e.PushDirection(f, dir)
 
 	case core.FrameLLMTextDelta:
 		ltf := f.(*core.LLMTextDeltaFrame)
 		for _, msg := range c.rtvi.BotLLMText(replyKey(ltf.Turn, ltf.Gen), ltf.Delta) {
-			_ = c.WriteWireMessage(ctx, msg)
+			c.writeOnLoop(ctx, msg)
 		}
 		return e.PushDirection(f, dir)
 
@@ -1017,32 +1032,32 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 		// turn's text is done.
 		lf := f.(*core.LLMTextFrame)
 		for _, msg := range c.rtvi.BotLLMStopped(replyKey(lf.Turn, lf.Gen)) {
-			_ = c.WriteWireMessage(ctx, msg)
+			c.writeOnLoop(ctx, msg)
 		}
 		return e.PushDirection(f, dir)
 
 	case core.FrameToolCall:
 		tc := f.(*core.ToolCallFrame)
 		for _, msg := range c.rtvi.FunctionCallStarted(tc.Call.ID) {
-			_ = c.WriteWireMessage(ctx, msg)
+			c.writeOnLoop(ctx, msg)
 		}
 		return e.PushDirection(f, dir)
 
 	case core.FrameToolResult:
 		tr := f.(*core.ToolResultFrame)
 		for _, msg := range c.rtvi.FunctionCallStopped(tr.Result.CallID, tr.Result.Status == core.ToolCancelled) {
-			_ = c.WriteWireMessage(ctx, msg)
+			c.writeOnLoop(ctx, msg)
 		}
 		return e.PushDirection(f, dir)
 
 	case core.FrameTTSStarted:
 		msg, _ := c.rtvi.FormatBotTTSStarted()
-		_ = c.WriteWireMessage(ctx, msg)
+		c.writeOnLoop(ctx, msg)
 		return e.PushDirection(f, dir)
 
 	case core.FrameTTSStopped:
 		msg, _ := c.rtvi.FormatBotTTSStopped()
-		_ = c.WriteWireMessage(ctx, msg)
+		c.writeOnLoop(ctx, msg)
 		return e.PushDirection(f, dir)
 
 	case core.FrameInterruption:
@@ -1076,7 +1091,7 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 		// (docs/compatibility/playback-clear-decision.json); the protobuf
 		// interruption frame is not sent: the pinned client rejects it.
 		if msg, err := c.rtvi.FormatBotInterrupted(); err == nil {
-			_ = c.WriteWireMessage(ctx, msg)
+			c.writeOnLoop(ctx, msg)
 		}
 		return e.PushDirection(f, dir)
 
@@ -1097,7 +1112,7 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 			category = "pipeline_error"
 		}
 		msg, _ := c.rtvi.FormatError(category, ef.Fatal)
-		_ = c.WriteWireMessage(ctx, msg)
+		c.writeOnLoop(ctx, msg)
 		if ef.Fatal {
 			c.Close()
 		}
@@ -1149,6 +1164,37 @@ func (c *Connection) enqueueOutput(ctx context.Context, frame *core.OutputAudioF
 	}
 }
 
+// loopWriteTimeout bounds an RTVI write made on the session run loop: it must give up well before
+// the run loop's watchdog (core MaxFrameProcessing, 2 s) so a client that stopped reading ends as a
+// slow client, not as a session failure.
+const loopWriteTimeout = time.Second
+
+// writeOnLoop is WriteWireMessage for ProcessFrame: a write that cannot finish in loopWriteTimeout
+// (the socket is held by a stalled audio write) terminates the connection as a slow client.
+func (c *Connection) writeOnLoop(ctx context.Context, msg string) {
+	if c.ctx.Err() != nil {
+		return // the connection is ending (e.g. terminated as a slow client by the previous message): don't wait again
+	}
+	limit := loopWriteTimeout
+	if wt := c.cfg.Pacer.WriteTimeout; wt > 0 {
+		limit = min(limit, wt)
+	}
+	wctx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	if err := c.WriteWireMessage(wctx, msg); errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		c.terminateSlowClient()
+	}
+}
+
+// terminateSlowClient counts and closes a client that stopped reading, once however many writers notice.
+func (c *Connection) terminateSlowClient() {
+	c.slowOnce.Do(func() {
+		c.observe("slow_client", 1)
+		c.closeBounded(websocket.StatusPolicyViolation, "slow client terminated", 500*time.Millisecond)
+		c.cancel()
+	})
+}
+
 // WriteWireMessage safely serializes and writes an RTVI JSON message to the client over WebSocket.
 func (c *Connection) WriteWireMessage(ctx context.Context, rtviJSON string) error {
 	data, err := EncodeMessageFrame(rtviJSON)
@@ -1161,8 +1207,6 @@ func (c *Connection) WriteWireMessage(ctx context.Context, rtviJSON string) erro
 		writeCtx, cancel = context.WithTimeout(ctx, c.cfg.Pacer.WriteTimeout)
 		defer cancel()
 	}
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
 	err = c.conn.Write(writeCtx, websocket.MessageBinary, data)
 	if err == nil && c.cfg.Observe != nil {
 		c.cfg.Observe("frame_out", uint64(len(data)))

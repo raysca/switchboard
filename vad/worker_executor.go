@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os/exec"
 	"path/filepath"
 	"sync"
@@ -100,10 +101,17 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-func (b *boundedBuffer) String() string {
+// tail returns the last n bytes and empties the buffer, so each failure reports only what its own process wrote.
+func (b *boundedBuffer) tail(n int) string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return string(b.buf)
+	t := b.buf
+	if len(t) > n {
+		t = t[len(t)-n:]
+	}
+	s := string(t)
+	b.buf = b.buf[:0]
+	return s
 }
 
 type workerProcess struct {
@@ -273,11 +281,14 @@ func (wp *workerProcess) start() (workerProc, error) {
 	if err := cmd.Start(); err != nil {
 		_ = stdin.Close()
 		_ = stdout.Close()
-		return workerProc{}, fmt.Errorf("start worker: %w", err)
+		err = fmt.Errorf("start worker: %w", err)
+		wp.logFailure(err) // like a failed handshake: respawnLoop retries silently
+		return workerProc{}, err
 	}
 	p := workerProc{cmd: cmd, stdin: stdin, stdout: stdout}
 	if err := wp.handshake(stdin, stdout); err != nil {
 		p.reap()
+		wp.logFailure(err) // a start that fails never reaches handleWorkerFailure, and respawnLoop retries silently
 		return workerProc{}, err
 	}
 	return p, nil
@@ -447,7 +458,7 @@ func (wp *workerProcess) executeBatch(jobs []*Job) {
 	}
 
 	if err := WriteFrame(stdin, payload); err != nil {
-		wp.handleWorkerFailure(jobs, fmt.Errorf("%w: %v", ErrWorker, err), true) // died before reading them
+		wp.handleWorkerFailure(jobs, fmt.Errorf("%w: %w", ErrWorker, err), true) // died before reading them
 		return
 	}
 
@@ -465,13 +476,13 @@ func (wp *workerProcess) executeBatch(jobs []*Job) {
 		wp.backend.statCounters.batchedJobs.Add(int64(len(jobs)))
 
 		if res.err != nil {
-			wp.handleWorkerFailure(jobs, fmt.Errorf("%w: %v", ErrWorker, res.err), false)
+			wp.handleWorkerFailure(jobs, fmt.Errorf("%w: %w", ErrWorker, res.err), false)
 			return
 		}
 
 		respItems, err := DecodeInferResp(res.payload)
 		if err != nil {
-			wp.handleWorkerFailure(jobs, fmt.Errorf("%w: decode response: %v", ErrWorker, err), false)
+			wp.handleWorkerFailure(jobs, fmt.Errorf("%w: decode response: %w", ErrWorker, err), false)
 			return
 		}
 
@@ -554,6 +565,12 @@ func awaitReply(resCh <-chan readResult, deadline time.Time, grace time.Duration
 	}
 }
 
+// logFailure logs a worker failure with the stderr its process wrote (which it empties, so the
+// next failure reports only its own).
+func (wp *workerProcess) logFailure(err error) {
+	slog.Warn("vad: worker failed", "worker", wp.id, "error", err, "stderr", wp.stderr.tail(4096))
+}
+
 // handleWorkerFailure kills a worker whose pipe failed. The batch goes to a
 // live worker only if retry (the worker never read it: the jobs' input and
 // state are unchanged); a batch the worker read and died on may be a poison
@@ -562,6 +579,7 @@ func (wp *workerProcess) handleWorkerFailure(jobs []*Job, err error, retry bool)
 	wp.mu.Lock()
 	wp.killAndReapLocked()
 	wp.mu.Unlock()
+	wp.logFailure(err)
 
 	wp.inFlightMu.Lock()
 	for _, j := range jobs {

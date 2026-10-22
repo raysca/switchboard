@@ -542,7 +542,7 @@ func (r *Runner) sendFinish(ctx context.Context, st *stream, conn Conn) {
 			defer func() { // a provider's Close must not kill the daemon from a timer goroutine
 				if rec := recover(); rec != nil {
 					turn, _ := st.owner()
-					slog.Error("sttunit: recovered provider panic on drain timeout", "provider", r.cfg.Provider, "turn", turn, "panic", fmt.Sprint(rec))
+					slog.Error("sttunit: recovered provider panic on drain timeout", "provider", r.cfg.Provider, "turn", turn, "panic_type", fmt.Sprintf("%T", rec))
 				}
 			}()
 			r.release(st)
@@ -697,19 +697,22 @@ func (r *Runner) invalidate(st *stream, cause error) {
 
 // emit turns a result into a candidate for the stream's turn.
 func (r *Runner) emit(st *stream, res Result) {
+	st.mu.Lock()
+	if st.stopped { // a result read after the stream was stopped is not the user's turn any more
+		st.mu.Unlock()
+		return
+	}
 	if res.Text == "" {
 		if res.Final { // an empty Final retracts what was heard: nothing is left uncommitted
-			st.mu.Lock()
 			if st.turn != "" {
 				st.lastText, st.settled = "", true
 			} else {
 				st.unboundText = ""
 			}
-			st.mu.Unlock()
 		}
+		st.mu.Unlock()
 		return
 	}
-	st.mu.Lock()
 	turn, gen := st.turn, st.gen
 	if turn != "" {
 		// Final, not Final && EndOfUtterance: a closing response need not carry

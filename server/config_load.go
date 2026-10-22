@@ -10,12 +10,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// LoadConfig parses and validates YAML configuration from disk.
-func LoadConfig(path string) (*Config, error) { return LoadConfigProfile(path, "") }
-
-// LoadConfigProfile is LoadConfig with the YAML profile overridden (the
-// -profile flag): the override picks the defaults and is what gets validated,
-// so -profile production cannot inherit development defaults or skip checks.
+// LoadConfigProfile parses and validates YAML configuration from disk. A non-empty
+// profile (the -profile flag) overrides the YAML profile: the override picks the
+// defaults and is what gets validated, so -profile production cannot inherit
+// development defaults or skip checks.
 func LoadConfigProfile(path string, profile Profile) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

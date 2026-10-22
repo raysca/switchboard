@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"testing"
+
+	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
@@ -19,6 +21,12 @@ func TestMain(m *testing.M) {
 	}
 	code := m.Run()
 	ShutdownORT()
+	if code == 0 {
+		if err := goleak.Find(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			code = 1
+		}
+	}
 	os.Exit(code)
 }
 

@@ -663,9 +663,10 @@ func TestRunner_DrainTimeoutRecoversProviderClosePanic(t *testing.T) {
 	h.waitFor("open", func() bool { return conn.recvs.Load() >= 1 })
 	h.post(&core.UserStoppedSpeakingFrame{})
 	h.waitFor("drain timeout closed the stream", func() bool { return h.r.Streams() == 0 && conn.closes.Load() >= 1 })
-	h.waitFor("recovery logged", func() bool { return strings.Contains(logs.String(), "provider Close panicked") })
-	if out := logs.String(); !strings.Contains(out, "provider=fake") || !strings.Contains(out, "turn=turn-1-1") {
-		t.Fatalf("log lacks provider/turn: %s", out)
+	h.waitFor("recovery logged", func() bool { return strings.Contains(logs.String(), "recovered provider panic") })
+	// The panic value can carry provider or caller data: only its type is logged.
+	if out := logs.String(); !strings.Contains(out, "provider=fake") || !strings.Contains(out, "turn=turn-1-1") || !strings.Contains(out, "panic_type=string") || strings.Contains(out, "provider Close panicked") {
+		t.Fatalf("log lacks provider/turn/panic type, or leaks the value: %s", out)
 	}
 	h.waitFor("stt.stream span ended despite the panic", func() bool { return tr.ended("stt.stream") })
 	if err := h.sess.Err(); err != nil {
@@ -1153,5 +1154,27 @@ func TestRunner_ProviderHangDoesNotStackSessionTasks(t *testing.T) {
 	}
 	if err := h.sess.Err(); err != nil {
 		t.Fatalf("the call failed: %v", err)
+	}
+}
+
+// A result a provider delivers after its stream was stopped (Recv that ignores the ctx) must not
+// become a transcript candidate.
+func TestRunner_StoppedStreamEmitsNothing(t *testing.T) {
+	conn := newFakeConn(t)
+	h := newHarness(t, Config{Dial: dialConn(conn)})
+	h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	h.audio(1)
+	h.waitFor("open", func() bool { return conn.recvs.Load() >= 1 })
+	h.r.mu.Lock()
+	st := h.r.active
+	h.r.mu.Unlock()
+	if st == nil {
+		t.Fatal("no active stream")
+	}
+	h.r.stop(st, nil)
+	h.r.emit(st, Result{Text: "late", Final: true, EndOfUtterance: true})
+	time.Sleep(50 * time.Millisecond) // a bounded wait for something that must not happen
+	if c := h.candidates(); len(c) != 0 {
+		t.Fatalf("a stopped stream emitted %+v", c)
 	}
 }

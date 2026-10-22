@@ -145,6 +145,9 @@ func TestCIWorkflowCoversTheSafetyNet(t *testing.T) {
 	if !strings.HasPrefix(ci["linux"].RunsOn, "ubuntu") || !strings.HasPrefix(ci["macos"].RunsOn, "macos") {
 		t.Errorf("linux/macos runners = %q/%q", ci["linux"].RunsOn, ci["macos"].RunsOn)
 	}
+	if dc, ok := ci["deadcode"]; !ok || !strings.Contains(runs("deadcode"), "make deadcode") || !dc.ContinueOnError {
+		t.Error("ci job deadcode must run make deadcode and stay advisory (continue-on-error)")
+	}
 	if perf := load("../.github/workflows/perf-gate.yml"); !perf["perf-gate"].ContinueOnError {
 		t.Error("perf-gate must stay advisory until a runner-class baseline is committed")
 	}

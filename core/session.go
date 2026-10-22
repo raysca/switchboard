@@ -74,7 +74,7 @@ type Session struct {
 	budget ResourceBudget
 	pipe   *Pipeline
 
-	ctx    context.Context
+	ctx    context.Context // owner lifetime
 	cancel context.CancelFunc
 
 	control chan Envelope
@@ -126,8 +126,8 @@ type Session struct {
 	debugLastStop *UserStoppedSpeakingFrame
 	tracer        Tracer
 	tracePolicy   TracePolicy
-	traceCtx      context.Context // run-loop owned after Start
-	traceRootCtx  context.Context // immutable session parent for external async boundaries
+	traceCtx      context.Context // trace parentage: run-loop owned after Start
+	traceRootCtx  context.Context // trace parentage: immutable session parent for external async boundaries
 	sessionSpan   Span
 	traceQueue    *AsyncTracer
 	tracing       bool

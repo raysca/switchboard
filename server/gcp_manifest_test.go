@@ -179,7 +179,7 @@ func TestDentalMCPServiceManifest(t *testing.T) {
 func TestManifestSecretsAreTheOnesTheBootstrapCreates(t *testing.T) {
 	boot, err := os.ReadFile("../deploy/gcp/bootstrap.sh")
 	if err != nil {
-		t.Skip("bootstrap.sh arrives in the next task")
+		t.Fatalf("read bootstrap.sh: %v", err)
 	}
 	for _, name := range gcpSecretNames {
 		if !strings.Contains(string(boot), name) {

@@ -91,7 +91,7 @@ type LLMFailover struct {
 // failoverGen is the state of the latest generation.
 type failoverGen struct {
 	gen       uint64
-	ctx       context.Context // the user message's (trace parentage for replays)
+	ctx       context.Context // trace parentage: the user message's, for replays
 	user      *UserMessageFrame
 	order     []int // candidate indexes, breaker-open ones last
 	pos       int   // position in order of the running candidate
@@ -154,6 +154,9 @@ func (w *LLMFailover) ProcessFrame(ctx context.Context, f Frame, dir Direction, 
 	switch fr := f.(type) {
 	case *UserMessageFrame:
 		return w.begin(ctx, fr, dir, e)
+	case *llmExpire:
+		w.firstTokenExpired(fr.g, fr.pos) // the watchdog fired: handled here, on the run loop
+		return nil
 	case *InterruptionFrame:
 		w.mu.Lock()
 		var active Processor
@@ -353,7 +356,30 @@ func (w *LLMFailover) armLocked(g *failoverGen) {
 	}
 	stopTimerLocked(g)
 	pos := g.pos
-	g.timer = time.AfterFunc(w.cfg.FirstTokenTimeout, func() { w.firstTokenExpired(g, pos) })
+	g.timer = time.AfterFunc(w.cfg.FirstTokenTimeout, func() { w.postExpiry(&llmExpire{g: g, pos: pos}) })
+}
+
+// llmExpire carries the first-token watchdog's expiry onto the session run loop, so the
+// timer goroutine never drives candidates (a panic there would kill the process).
+type llmExpire struct {
+	g   *failoverGen
+	pos int
+}
+
+func (*llmExpire) Type() FrameType { return FrameInternal }
+
+// postExpiry queues e for the run loop; a full inbox refuses internal frames, so it retries
+// until the session takes it, the generation is settled, or the session closes (ErrSessionClosed).
+func (w *LLMFailover) postExpiry(e *llmExpire) {
+	w.mu.Lock()
+	stale := w.closed || e.g.done || e.g.committed || e.g.pos != e.pos
+	w.mu.Unlock()
+	if stale {
+		return
+	}
+	if errors.Is(w.session.Reenter(e, Downstream, w.index, 0), ErrQueueFull) {
+		time.AfterFunc(5*time.Millisecond, func() { w.postExpiry(e) })
+	}
 }
 
 // stopTimerLocked disarms g's watchdog (w.mu held). A callback already running
@@ -370,7 +396,7 @@ func stopTimerLocked(g *failoverGen) {
 // (anything it emits later is dropped like any abandoned attempt).
 func (w *LLMFailover) firstTokenExpired(g *failoverGen, pos int) {
 	w.mu.Lock()
-	if w.closed || g.done || g.committed || g.pos != pos || !w.mayFailOver(g, ErrFirstTokenTimeout) {
+	if w.closed || w.cur != g || g.done || g.committed || g.pos != pos || !w.mayFailOver(g, ErrFirstTokenTimeout) {
 		w.mu.Unlock()
 		return
 	}

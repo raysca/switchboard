@@ -94,7 +94,7 @@ type TTSFailover struct {
 
 type ttsUnit struct {
 	su        *SynthesisUnitFrame
-	ctx       context.Context // the unit's (trace parentage for replays)
+	ctx       context.Context // trace parentage: the unit's, for replays
 	order     []int           // candidate indexes
 	pos       int             // position in order of the running candidate
 	owner     int             // candidate index running it
@@ -454,6 +454,8 @@ func (w *TTSFailover) expire(u *ttsUnit, attempt, progress int) {
 	}
 	if !u.committed && u.pos+1 < len(u.order) && (w.cfg.Allow == nil || w.cfg.Allow(class)) {
 		u.pos++
+		u.attempt++  // as on the error path: fences an expiry already in flight
+		u.owner = -1 // the abandoned candidate's frames (even ones it emits while cancelled) are dropped
 		to := w.cfg.Candidates[u.order[u.pos]].Provider
 		w.mu.Unlock()
 		cancel()

@@ -172,8 +172,8 @@ func TestFlushStaleInterruptionCannotCancelCurrentTurn(t *testing.T) {
 	_ = s.Start()
 	defer s.Close()
 	_ = s.Post(&core.FlushFrame{Gen: 1})
+	awaitType(t, seen, core.FrameFlush) // control and data lanes keep no order between them
 	_ = s.Post(&core.UserMessageFrame{Turn: "B", Gen: 2, Content: "current"})
-	awaitType(t, seen, core.FrameFlush)
 	awaitType(t, seen, core.FrameUserMessage)
 	_ = s.Post(&core.InterruptionFrame{Turn: "B", Gen: 1})
 	_ = s.Post(&core.LLMTextDeltaFrame{Turn: "B", Gen: 2, Delta: "still current"})
@@ -201,8 +201,8 @@ func TestFlushInlineStaleInterruptionCannotCancelCurrentTurn(t *testing.T) {
 	_ = s.Start()
 	defer s.Close()
 	_ = s.Post(&core.FlushFrame{Gen: 1})
+	awaitType(t, seen, core.FrameFlush) // control and data lanes keep no order between them
 	_ = s.Post(&core.UserMessageFrame{Turn: "B", Gen: 2, Content: "current"})
-	awaitType(t, seen, core.FrameFlush)
 	awaitType(t, seen, core.FrameUserMessage)
 	_ = s.Post(&core.LLMTextDeltaFrame{Turn: "B", Gen: 2, Delta: "still current"})
 	awaitType(t, seen, core.FrameLLMTextDelta)
@@ -237,29 +237,50 @@ func TestFlushConcurrentCompletionCannotCommitOldTurnTwice(t *testing.T) {
 	close(start)
 	wg.Wait()
 	_ = s.Post(&core.WriteCompletionFrame{Turn: "A", Gen: 1, UnitID: 1, IsFinal: true})
-	_ = s.Post(&core.UserMessageFrame{Turn: "B", Gen: 2, Content: "next"})
-	// B reaching the edge proves all prior queued controls were processed.
-	for {
+	// Completions are swallowed (no output), so mark the control lane's progress with a second flush
+	// (of the now-current generation): both flushes reaching the edge prove every control posted before them was processed (control
+	// frames keep their order among themselves; no order is assumed against the data lane).
+	_ = s.Post(&core.FlushFrame{Gen: s.CurrentGeneration()})
+	commits := 0
+	for flushes := 0; flushes < 2; {
 		select {
 		case kind := <-seen:
-			if kind == core.FrameUserMessage {
-				goto drained
+			t.Logf("kind %v", kind)
+			switch kind {
+			case core.FrameFlush:
+				flushes++
+			case core.FrameAssistantMessage:
+				commits++
+			}
+		case <-time.After(time.Second):
+			t.Fatal("flushes did not complete")
+		}
+	}
+	// Every control is now processed; B (data lane) reaching the edge also drains what they emitted.
+	_ = s.Post(&core.UserMessageFrame{Turn: "B", Gen: s.CurrentGeneration(), Content: "next"})
+	for done := false; !done; {
+		select {
+		case kind := <-seen:
+			switch kind {
+			case core.FrameAssistantMessage:
+				commits++
+			case core.FrameUserMessage:
+				done = true
 			}
 		case <-time.After(time.Second):
 			t.Fatal("new turn did not complete")
 		}
 	}
-drained:
 	count := 0
 	for _, m := range ctx.Messages() {
 		if m.Role == core.RoleAssistant && m.TurnID == "A" {
 			count++
 		}
 	}
-	if count > 1 {
-		t.Fatalf("old turn committed %d times", count)
+	if count > 1 || commits > 1 {
+		t.Fatalf("old turn committed %d times (announced %d)", count, commits)
 	}
-	if s.CurrentGeneration() != 2 {
+	if s.CurrentGeneration() != 3 {
 		t.Fatalf("flush generation = %d", s.CurrentGeneration())
 	}
 }

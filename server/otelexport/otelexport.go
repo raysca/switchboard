@@ -186,10 +186,10 @@ type SessionTracer struct {
 
 	mu       sync.Mutex
 	root     trace.Span
-	rootCtx  context.Context
+	rootCtx  context.Context // trace parentage
 	turns    map[core.TurnID]trace.Span
-	turnCtxs map[core.TurnID]context.Context
-	open     map[*span]struct{} // unended non-root spans, closed when the root ends
+	turnCtxs map[core.TurnID]context.Context // trace parentage
+	open     map[*span]struct{}              // unended non-root spans, closed when the root ends
 }
 
 var serviceSpans = map[string]string{

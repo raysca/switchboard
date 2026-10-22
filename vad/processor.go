@@ -83,7 +83,7 @@ type pendingChunk struct {
 	samples  [ChunkSamples]float32
 	seq      uint64
 	due      time.Time
-	traceCtx context.Context
+	traceCtx context.Context // trace parentage
 }
 
 // Processor is an ordinary core.Processor that delegates inference to a shared Executor.

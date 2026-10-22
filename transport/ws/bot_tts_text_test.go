@@ -128,3 +128,55 @@ func TestBotTTSTextNeverFromANonFinalFrame(t *testing.T) {
 		t.Fatalf("a non-final frame sent text: %v", log)
 	}
 }
+
+// holdTap blocks the pacer's write-complete callback of the final frame (the
+// tap sees each released frame first) until released.
+type holdTap struct {
+	atFinal chan struct{}
+	release chan struct{}
+}
+
+func (h holdTap) Bot(f *core.OutputAudioFrame) {
+	if f.IsFinal {
+		close(h.atFinal)
+		<-h.release
+	}
+}
+func (holdTap) User(*core.InputAudioFrame) {}
+
+// (e) a barge-in that lands after the unit's final frame was admitted to the
+// socket must not be followed by that unit's bot-tts-text.
+func TestBotTTSTextIsDroppedWhenABargeInLandsAfterTheFinalFrame(t *testing.T) {
+	r := newOutputRig(t)
+	gen := r.sess.CurrentGeneration()
+	tap := holdTap{atFinal: make(chan struct{}), release: make(chan struct{})}
+	r.conn.SetAudioTap(tap)
+	if err := r.sess.Post(ttsFrame(gen, 1, 1, 1000, true, "Cut off.")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-tap.atFinal:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the final frame never reached the socket")
+	}
+	if err := r.sess.Post(&core.InterruptionFrame{Gen: gen}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.sess.Post(&core.FlushFrame{Gen: gen}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond) // the barge-in has landed
+	close(tap.release)
+	r.waitFor(t, "bot-interrupted", func(log []wireEvent) bool {
+		for _, ev := range log {
+			if ev.msg == "bot-interrupted" {
+				return true
+			}
+		}
+		return false
+	})
+	time.Sleep(100 * time.Millisecond)
+	if log := r.events(); len(ttsTexts(log)) != 0 {
+		t.Fatalf("a cut unit sent its text after the barge-in: %v", log)
+	}
+}

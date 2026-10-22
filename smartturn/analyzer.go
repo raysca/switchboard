@@ -147,9 +147,16 @@ func (a *Analyzer) clearLocked() {
 func (a *Analyzer) Close() {
 	a.mu.Lock()
 	if a.job != nil {
-		a.job.cancel()
+		a.abandonLocked(a.job)
 	}
 	a.mu.Unlock()
+}
+
+// abandonLocked drops a job nobody waits for any more (superseded or closed): its late result,
+// including the context.Canceled its own cancel causes, is ignored and counted nowhere.
+func (a *Analyzer) abandonLocked(j *job) {
+	j.done = true
+	j.cancel()
 }
 
 // verdict returns the cached/async result; degraded is true when the model
@@ -171,7 +178,7 @@ func (a *Analyzer) verdict(in turn.DetectionInput) (turn.AnalyzerResult, bool) {
 
 func (a *Analyzer) startLocked(key jobKey, turnStart, now time.Time) {
 	if a.job != nil {
-		a.job.cancel()
+		a.abandonLocked(a.job)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	j := &job{key: key, started: now, cancel: cancel}
@@ -209,8 +216,6 @@ func (a *Analyzer) finish(j *job, p float32, err error) {
 			reason = ReasonOverload
 		case errors.Is(err, ErrUnavailable):
 			reason = ReasonUnavailable
-		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-			reason = ReasonTimeout
 		}
 		a.failLocked(j, reason)
 		return

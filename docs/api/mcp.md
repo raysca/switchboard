@@ -1,6 +1,6 @@
 # MCP management API
 
-The MCP API is mounted under `/api/v1` behind the existing management bearer authentication. The server composes the service and mounts `mcp.Handler(service, management)` on the management listener; the listener authenticates first and propagates its trusted request ID. The `server/mcp.Handler` also independently fails closed if authentication is absent. Request and response bodies use JSON; responses are `no-store` through the shared API writer.
+The MCP API is mounted under `/api/v1/mcp-servers` behind the management bearer authentication. `Server.EnableManagement` (`server/management.go`) builds the service and installs `mcp.Handler(service)`; `mcp.Handler` takes only the service and performs no authentication of its own. The server's `/api/v1` entry point (`handleAPI` in `server/api_routes.go`) answers 503 `management_unavailable` when no management key is configured, authenticates every request (401, or 429 after repeated failures) and propagates its trusted request ID before routing to the handler, so the handler must never be mounted anywhere else. Request and response bodies use JSON; responses are `no-store` through the shared API writer.
 
 | Method and path | Purpose |
 |---|---|

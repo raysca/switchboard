@@ -19,7 +19,7 @@ const (
 
 type traceOperation struct {
 	kind   traceOperationKind
-	ctx    context.Context
+	ctx    context.Context // trace parentage
 	parent Span
 	proxy  *asyncSpan
 	event  TraceEvent

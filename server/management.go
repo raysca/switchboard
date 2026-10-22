@@ -119,7 +119,7 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 		m.recStop = stop
 		go sink.Janitor(jctx, time.Duration(s.cfg.Recording.RetentionDays)*24*time.Hour, time.Hour, s.logger)
 	}
-	s.mgmt = m
+	s.mgmt.Store(m)
 	s.logger.Info("management plane enabled", slog.String("dialect", s.cfg.Storage.Dialect), slog.Bool("retention", m.retention != nil))
 	return nil
 }
@@ -186,8 +186,7 @@ func envOr(name, fallback string) string {
 
 // closeManagement is called from Shutdown after calls have drained.
 func (s *Server) closeManagement() {
-	s.mgmt.close()
-	s.mgmt = nil
+	s.mgmt.Swap(nil).close() // nil-safe and idempotent: a second call closes nothing
 }
 
 // developmentStore returns a local SQLite DSN for the development profile, so a

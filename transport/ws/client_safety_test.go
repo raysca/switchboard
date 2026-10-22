@@ -41,6 +41,7 @@ func dialReady(t *testing.T, jti string, onReady func(*ws.Connection)) (*websock
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = c.Close(websocket.StatusNormalClosure, "") })
 	performHandshake(t, ctx, c)
 	return c, ctx
 }

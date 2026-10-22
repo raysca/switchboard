@@ -3,8 +3,11 @@ package vad
 import (
 	"bytes"
 	"errors"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -541,8 +544,12 @@ func TestWorkerProcess_PoisonChunkKillsOneWorkerNotAll(t *testing.T) {
 	if err := run(st0, 1); err != nil {
 		t.Fatalf("warm-up: %v", err)
 	}
-	if err := run(st0, poisonSeq); !errors.Is(err, ErrWorker) {
+	err = run(st0, poisonSeq)
+	if !errors.Is(err, ErrWorker) {
 		t.Fatalf("the poison chunk finished with %v, want ErrWorker", err)
+	}
+	if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) { // the cause stays inspectable
+		t.Fatalf("the poison chunk error %v lost its cause", err)
 	}
 	for end := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
 		if a, _ := exec.Capacity(); a == 2 {
@@ -557,5 +564,139 @@ func TestWorkerProcess_PoisonChunkKillsOneWorkerNotAll(t *testing.T) {
 	}
 	if err := run(st1, 2); err != nil {
 		t.Fatalf("a chunk on the other worker: %v", err)
+	}
+}
+
+// A worker that fails is logged with the tail of its stderr (the ORT/runtime diagnostics a crash
+// leaves), once: the next failure logs only what the next process wrote.
+func TestWorkerProcess_FailureLogsStderrTail(t *testing.T) {
+	logged := captureLogs(t)
+
+	exec, err := New(Config{Mode: "process", Workers: 2, Batch: 4, QueueCap: 256, IntraOp: 1, PerSessionLimit: 1, ParentDeadline: 200 * time.Millisecond, ParentGrace: 200 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exec.Close()
+	st := exec.Register(0) // session 0 -> worker 0
+	defer st.Close()
+	wp := exec.backend.(*workerProcessBackend).workers[0]
+
+	crash := func(marker string, wantRestarts int64) {
+		t.Helper()
+		_, _ = wp.stderr.Write([]byte(marker)) // what the process wrote before dying
+		// Killed but not reaped (HardKill reaps, and a worker found down between batches takes the
+		// restart path): the next batch hits the dead pipe, the path that logs.
+		var err error
+		for end := time.Now().Add(5 * time.Second); time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
+			wp.mu.Lock()
+			if wp.healthy && wp.cmd != nil {
+				err = wp.cmd.Process.Kill()
+				wp.mu.Unlock()
+				break
+			}
+			err = errors.New("worker never became healthy")
+			wp.mu.Unlock()
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan struct{})
+		if err := st.Submit(&Job{Seq: uint64(wantRestarts), Done: func(*Job) { close(done) }}); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("job after the kill did not finish")
+		}
+		for end := time.Now().Add(5 * time.Second); exec.Stats().Restarts < wantRestarts && time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
+		}
+	}
+	crash("first-failure-diagnostic", 1)
+	out := logged()
+	if !strings.Contains(out, "vad: worker failed") || !strings.Contains(out, "stderr=first-failure-diagnostic") {
+		t.Fatalf("failure not logged with its stderr tail:\n%s", out)
+	}
+	crash("second-failure-diagnostic", 2)
+	out = logged()
+	if !strings.Contains(out, "stderr=second-failure-diagnostic") || strings.Count(out, "first-failure-diagnostic") != 1 {
+		t.Fatalf("second failure must log only its own stderr:\n%s", out)
+	}
+}
+
+// captureLogs routes slog's default logger to a buffer until the test ends. It swaps a process-global,
+// so no vad test may use t.Parallel.
+func captureLogs(t *testing.T) func() string {
+	var mu sync.Mutex
+	var logs strings.Builder
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(lockedWriter{&mu, &logs}, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return func() string { mu.Lock(); defer mu.Unlock(); return logs.String() }
+}
+
+// A worker that dies during start or handshake leaves a stderr that is logged once, at that failure,
+// and does not reappear in the next failure's log.
+func TestWorkerProcess_StartFailureLogsStderrOnce(t *testing.T) {
+	logged := captureLogs(t)
+	exec, err := New(Config{Mode: "process", Workers: 1, Batch: 4, QueueCap: 256, IntraOp: 1, PerSessionLimit: 1, ParentDeadline: 200 * time.Millisecond, ParentGrace: 200 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exec.Close()
+	b := exec.backend.(*workerProcessBackend)
+	wp := b.workers[0]
+	good := b.cfg.WorkerBinary
+	bad := filepath.Join(t.TempDir(), "vadworker.sh")
+	if err := os.WriteFile(bad, []byte("#!/bin/sh\necho startup-failure-marker >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	b.cfg.WorkerBinary = bad // the worker is up and idle: nothing else reads cfg until the next respawn
+	if _, err := wp.start(); err == nil {
+		t.Fatal("start of a worker that exits at startup succeeded")
+	}
+	b.cfg.WorkerBinary = good
+	out := logged()
+	if !strings.Contains(out, "vad: worker failed") || strings.Count(out, "startup-failure-marker") != 1 {
+		t.Fatalf("startup failure not logged once with its stderr:\n%s", out)
+	}
+	_, _ = wp.stderr.Write([]byte("later-marker"))
+	wp.handleWorkerFailure(nil, ErrWorker, false)
+	out = logged()
+	if !strings.Contains(out, "stderr=later-marker") || strings.Count(out, "startup-failure-marker") != 1 {
+		t.Fatalf("a later failure must log only its own stderr:\n%s", out)
+	}
+}
+
+type lockedWriter struct {
+	mu *sync.Mutex
+	b  *strings.Builder
+}
+
+func (w lockedWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b.Write(p)
+}
+
+// A worker binary that cannot be started (missing, not executable) is logged once, not retried silently.
+func TestWorkerProcess_SpawnFailureIsLogged(t *testing.T) {
+	logged := captureLogs(t)
+	exec, err := New(Config{Mode: "process", Workers: 1, Batch: 4, QueueCap: 256, IntraOp: 1, PerSessionLimit: 1, ParentDeadline: 200 * time.Millisecond, ParentGrace: 200 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exec.Close()
+	b := exec.backend.(*workerProcessBackend)
+	wp := b.workers[0]
+	good := b.cfg.WorkerBinary
+	b.cfg.WorkerBinary = filepath.Join(t.TempDir(), "missing-vadworker")
+	if _, err := wp.start(); err == nil {
+		t.Fatal("start of a missing binary succeeded")
+	}
+	b.cfg.WorkerBinary = good
+	out := logged()
+	if strings.Count(out, "vad: worker failed") != 1 || !strings.Contains(out, "start worker") {
+		t.Fatalf("spawn failure not logged once:\n%s", out)
 	}
 }

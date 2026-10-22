@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -66,7 +68,7 @@ func TestOnRouteRecordsTimelineAndTraceSpans(t *testing.T) {
 	names := map[string]bool{}
 	attrs := map[string]string{} // span name -> attributes JSON
 	for end := time.Now().Add(3 * time.Second); len(names) < 3 && time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
-		spans, err := s.mgmt.store.Traces().Spans(t.Context(), pin.ID, "")
+		spans, err := s.mgmt.Load().store.Traces().Spans(t.Context(), pin.ID, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -105,5 +107,28 @@ func TestRouteEventsAfterManagementClosesDoNotRace(t *testing.T) {
 		}
 	}()
 	s.closeManagement()
+	<-done
+}
+
+// Readers that take the management plane (call setup, the demo endpoint) race closeManagement unless the
+// field is atomic.
+func TestManagementFieldReadersRaceCloseManagement(t *testing.T) {
+	s := apiTestServer(t)
+	t.Setenv("GOVOICE_DATABASE_DSN", filepath.Join(t.TempDir(), "mgmt.db"))
+	s.cfg.Storage.Dialect = "sqlite"
+	if err := s.EnableManagement(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			s.onRoute(NewSessionTimeline(1, 10, time.Minute), "")
+			s.onEndCall("")
+			s.handleDemo(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/demo", nil), "r")
+		}
+	}()
+	s.closeManagement()
+	s.closeManagement() // idempotent
 	<-done
 }

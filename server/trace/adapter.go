@@ -195,7 +195,7 @@ func (a *Adapter) filterAttributes(input map[string]any) map[string]any {
 	out := make(map[string]any)
 	for k, v := range input {
 		switch k {
-		case "status", "error.category", "reason", "from_step", "to_step", "mcp.server_id", "mcp.tool_name", "mcp.duration_ms":
+		case "status", "error.category", "reason", "from_step", "to_step", "mcp.server_id", "mcp.tool_name", "mcp.duration_ms", "mcp.tool_count":
 			switch val := v.(type) {
 			case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 				out[k] = val

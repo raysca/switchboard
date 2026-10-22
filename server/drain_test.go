@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -13,9 +14,11 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"go.uber.org/goleak"
 
 	"govoice/core"
 	"govoice/core/coretest"
+	"govoice/core/redact"
 	"govoice/transport/ws"
 )
 
@@ -189,6 +192,7 @@ func TestFinishCallWaitsForRecordingWhenReleasePanics(t *testing.T) {
 	if err := sess.Start(); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = sess.Close() })
 	s.mu.Lock()
 	s.activeCalls[sessionID] = &activeCall{sessionID: sessionID, principal: principal}
 	s.mu.Unlock()
@@ -249,6 +253,7 @@ func TestFinishCallRecordingPanicDoesNotStick(t *testing.T) {
 	if err := sess.Start(); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = sess.Close() })
 	s.mu.Lock()
 	s.activeCalls[sessionID] = &activeCall{sessionID: sessionID, principal: principal}
 	s.mu.Unlock()
@@ -274,10 +279,34 @@ func TestRecoverEachRunsStopAfterReleasePanics(t *testing.T) {
 				t.Fatalf("panic escaped recoverEach: %v", r)
 			}
 		}()
-		recoverEach(s.logger, 1, "releaseCall", func() { panic("release") })
-		recoverEach(s.logger, 1, "stopRecording", func() { stopped = true })
+		s.recoverEach(1, "releaseCall", func() { panic("release") })
+		s.recoverEach(1, "stopRecording", func() { stopped = true })
 	}()
 	if !stopped {
 		t.Fatal("stopRecording did not run after releaseCall panicked")
+	}
+}
+
+// A panic value can carry caller data (a card number in a provider error): it is redacted before it is logged.
+func TestRecoverEachRedactsThePanicValue(t *testing.T) {
+	s := apiTestServer(t)
+	var buf bytes.Buffer
+	s.logger = slog.New(slog.NewTextHandler(&buf, nil))
+	var err error
+	if s.redactor, err = redact.New(redact.Config{Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	s.recoverEach(1, "releaseCall", func() { panic("lookup failed for 4111 1111 1111 1111") })
+	if out := buf.String(); !strings.Contains(out, "panic during releaseCall") || strings.Contains(out, "4111 1111 1111 1111") {
+		t.Fatalf("panic value not redacted: %q", out)
+	}
+}
+
+// waitUntil returning on its deadline must not leave its polling goroutine behind.
+func TestWaitUntilStopsPollingWhenItReturns(t *testing.T) {
+	before := goleak.IgnoreCurrent()
+	waitUntil(context.Background(), 30*time.Millisecond, func() bool { return false })
+	if err := goleak.Find(before); err != nil {
+		t.Fatalf("waitUntil leaked its poller: %v", err)
 	}
 }

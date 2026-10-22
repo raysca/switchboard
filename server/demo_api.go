@@ -118,7 +118,8 @@ type demoStatusResp struct {
 }
 
 func (s *Server) handleDemo(w http.ResponseWriter, r *http.Request, requestID string) {
-	if s.mgmt == nil || s.flows == nil || s.mcpService == nil {
+	mgmt := s.mgmt.Load()
+	if mgmt == nil || s.flows == nil || s.mcpService == nil {
 		api.WriteError(w, http.StatusServiceUnavailable, "management_unavailable", "management storage is unavailable", requestID)
 		return
 	}
@@ -136,7 +137,7 @@ func (s *Server) handleDemo(w http.ResponseWriter, r *http.Request, requestID st
 			api.WriteError(w, http.StatusConflict, "demo_unavailable", "DENTAL_MCP_URL is not set on this server", requestID)
 			return
 		}
-		res, err := s.installDental(r.Context(), demoServers{svc: s.mcpService, store: s.mgmt.store}, s.flows, s.dentalEndpoint())
+		res, err := s.installDental(r.Context(), demoServers{svc: s.mcpService, store: mgmt.store}, s.flows, s.dentalEndpoint())
 		if err != nil {
 			s.logger.Warn("demo install failed", "err", s.redactor.Redact(err.Error()))
 			api.WriteError(w, http.StatusBadGateway, "demo_install_failed", "the demo could not be installed; check the server log", requestID)
@@ -165,7 +166,7 @@ func (s *Server) waitDemo(ctx context.Context) bool {
 // never stops the server: the admin UI button can retry.
 func (s *Server) autoInstallDemo() {
 	// Capture the services now: management teardown can nil s.mgmt while the goroutine runs.
-	m, flows, svc := s.mgmt, s.flows, s.mcpService
+	m, flows, svc := s.mgmt.Load(), s.flows, s.mcpService
 	if m == nil || flows == nil || svc == nil {
 		s.logger.Error("demo.auto_install is dental but management storage is disabled")
 		return
@@ -190,7 +191,7 @@ func (s *Server) autoInstallDemo() {
 		defer s.demoWG.Done()
 		defer func() {
 			if r := recover(); r != nil {
-				s.logger.Error("demo auto-install panicked", "panic", fmt.Sprint(r))
+				s.logger.Error("demo auto-install panicked", "panic", s.redactor.Redact(fmt.Sprint(r)))
 			}
 		}()
 		defer cancel()

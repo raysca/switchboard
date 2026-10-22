@@ -306,9 +306,3 @@ func ServeBlackHole(l net.Listener) (*BlackHole, func()) {
 		})
 	}
 }
-
-func (b *BlackHole) Accepted() int {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.accepted
-}

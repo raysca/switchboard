@@ -19,7 +19,7 @@ type slot struct {
 }
 
 type asyncState struct {
-	ctx      context.Context
+	ctx      context.Context // owner lifetime
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
 	inflight atomic.Int32

@@ -128,7 +128,7 @@ Metrics (unlabelled: step ids are tenant data): `voice_routes_total`, `voice_rou
 ### Alert: `GovoiceVADWorkerRestarts` (`increase(voice_vad_worker_restarts_total[10m]) > 5`)
 - **Meaning**: A native Silero VAD worker process crashed (e.g. segmentation fault) or became unresponsive.
 - **System Behavior**: The supervisor killed the faulty worker, reaped its PID, and respawned a clean worker. Other workers continued processing calls without disruption.
-- **Action**: Check `stderr` logs for VAD child worker diagnostic dumps (bounded to 64KB).
+- **Action**: Check the server log for `vad: worker failed` WARN lines; their `stderr` field is the child's last 4 KB (the child's buffer is bounded to 64 KB).
 
 ## Latency observers
 

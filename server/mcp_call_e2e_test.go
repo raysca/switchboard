@@ -30,6 +30,11 @@ type mcpCallRig struct {
 
 func newMCPCallRig(t *testing.T, mods ...func(*Config)) *mcpCallRig {
 	t.Helper()
+	// Registered before the flow rig so it closes after the rig's Shutdown: the calls' DELETEs
+	// still reach the MCP server and end its sessions.
+	mcp := mcptest.New(mcptest.Options{Token: "tok-1"})
+	ts := httptest.NewServer(mcp.Handler())
+	t.Cleanup(ts.Close)
 	g := newFlowRigE2E(t, newProbe(), append([]func(*Config){func(c *Config) {
 		c.MCP.AllowLocalHTTP = true
 		c.MCP.Timeout = 800 * time.Millisecond
@@ -37,9 +42,7 @@ func newMCPCallRig(t *testing.T, mods ...func(*Config)) *mcpCallRig {
 	vars := testProviderVars(t)
 	vars["MCP_TOKEN_TEST"] = "tok-1"
 	g.s.env = mapEnv(vars)
-	r := &mcpCallRig{flowRigE2E: g, mcp: mcptest.New(mcptest.Options{Token: "tok-1"})}
-	r.ts = httptest.NewServer(r.mcp.Handler())
-	t.Cleanup(r.ts.Close)
+	r := &mcpCallRig{flowRigE2E: g, mcp: mcp, ts: ts}
 	free, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

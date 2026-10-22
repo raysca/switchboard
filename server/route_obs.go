@@ -53,7 +53,7 @@ func (m *routeMetrics) write(w io.Writer) {
 func (s *Server) onRoute(tl *SessionTimeline, storedSessionID string) func(core.RouteEvent) {
 	// Taken now, not at each event: a retired step reports that it closed after the call, possibly after the
 	// server has closed management and cleared the field.
-	mgmt := s.mgmt
+	mgmt := s.mgmt.Load()
 	return func(e core.RouteEvent) {
 		s.metrics.route.observe(e)
 		switch e.Kind {
@@ -84,7 +84,7 @@ func (s *Server) onRoute(tl *SessionTimeline, storedSessionID string) func(core.
 
 // onEndCall records the call.end span for a call ended by a step's end_call tool.
 func (s *Server) onEndCall(storedSessionID string) func(stepID string) {
-	mgmt := s.mgmt // taken now: management teardown clears the field
+	mgmt := s.mgmt.Load() // taken now: management teardown clears the field
 	return func(stepID string) {
 		if mgmt == nil || mgmt.traces == nil || storedSessionID == "" {
 			return

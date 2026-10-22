@@ -108,11 +108,25 @@ func (c *cueController) onRoute(e core.RouteEvent) {
 	}
 }
 
+// afterFuncSafe is time.AfterFunc whose callback cannot take the process down:
+// a panic (a cue sound or player bug) lands on the call timeline, without the
+// panic value.
+func afterFuncSafe(d time.Duration, record func(TimelineEventType, string), fn func()) *time.Timer {
+	return time.AfterFunc(d, func() {
+		defer func() {
+			if recover() != nil {
+				record(EventError, "cue timer panicked")
+			}
+		}()
+		fn()
+	})
+}
+
 func (c *cueController) armLocked(d time.Duration) {
 	if c.timer != nil {
 		c.timer.Stop()
 	}
-	c.timer = time.AfterFunc(max(d, 5*time.Millisecond), c.check)
+	c.timer = afterFuncSafe(max(d, 5*time.Millisecond), c.record, c.check)
 }
 
 // check starts the cue once the call has been quiet for `after`.
@@ -138,7 +152,7 @@ func (c *cueController) check() {
 	c.playing = true
 	c.player.Start(c.sound())
 	c.record(EventCueStart, "")
-	c.capTmr = time.AfterFunc(c.cap, func() { c.finish("cap", true) })
+	c.capTmr = afterFuncSafe(c.cap, c.record, func() { c.finish("cap", true) })
 }
 
 // finish stops a playing cue; end also closes the waiting window so the cue
@@ -318,7 +332,7 @@ func (h *holdCue) armLocked(d time.Duration) {
 	if h.timer != nil {
 		h.timer.Stop()
 	}
-	h.timer = time.AfterFunc(max(d, 5*time.Millisecond), h.check)
+	h.timer = afterFuncSafe(max(d, 5*time.Millisecond), h.record, h.check)
 }
 
 func (h *holdCue) disarmLocked() {
@@ -350,7 +364,7 @@ func (h *holdCue) check() {
 	h.record(EventCueStart, "tool")
 	h.epoch++
 	epoch := h.epoch
-	h.capTmr = time.AfterFunc(h.cap, func() { h.capHit(epoch) })
+	h.capTmr = afterFuncSafe(h.cap, h.record, func() { h.capHit(epoch) })
 }
 
 func (h *holdCue) capHit(epoch uint64) {

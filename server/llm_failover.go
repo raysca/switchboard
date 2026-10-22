@@ -142,7 +142,7 @@ func (r *Registry) buildLLM(cfg *Config, call CallSpec, spec StageSpec, build fu
 	if len(cands) == 1 {
 		return cands[0].Proc, nil
 	}
-	budget, firstToken := llmFailoverTiming(cfg) // pair validated by ValidateConfig (server.New, LoadConfig)
+	budget, firstToken := llmFailoverTiming(cfg) // pair validated by ValidateConfig (server.New, LoadConfigProfile)
 	fo, err := core.NewLLMFailover(core.LLMFailoverConfig{
 		Candidates: cands, Classify: llmClassify, Allow: call.Failover.Allows,
 		SideEffects: effects.Load, Budget: budget, FirstTokenTimeout: firstToken, OnFailover: r.onLLMFailover,
