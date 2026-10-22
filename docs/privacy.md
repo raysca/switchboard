@@ -70,7 +70,7 @@ retention:
 
 `config/production.yaml` turns the job on with these values; `config/cloudrun.yaml`
 keeps content for 1 day and metadata for 7. OpenTelemetry export is configured
-separately: see [observability.md](observability.md#opentelemetry-export-optional).
+separately: see [observability.md](observability.md) (OpenTelemetry export).
 
 - **Who called:** a session stores `caller`, the label the integration chose
   (the `principal` of its voice token, at most 128 characters), and `end_reason`,
