@@ -1,6 +1,6 @@
 # Review remediation: release notes
 
-What changed between the review baseline (`1993240`, 2026-10-15) and the head of `feat/phase-9-closeout` (`87f906c` plus this document): 580 files, +38,643 / -41,213. The plans are in [plans](plans/2026-10-15-review-remediation.md); this page is the summary an operator, a library user and a reviewer need. Every number in "Measured" comes from a run recorded under `.superpowers/sdd/2026-10-15-review-remediation/p9/logs/9.7-*` (local, git-ignored); nothing there is estimated.
+What changed between the review baseline (`1993240`, 2026-10-15) and the head of `feat/phase-9-closeout` (`87f906c`, the final-review fixes up to `442ad79`, and this document): 580 files, +38,643 / -41,213. The plans are in [plans](plans/2026-10-15-review-remediation.md); this page is the summary an operator, a library user and a reviewer need. Every number in "Measured" comes from a run recorded under `.superpowers/sdd/2026-10-15-review-remediation/p9/logs/9.7-*` (local, git-ignored); nothing there is estimated.
 
 Phase 1 (correctness fixes) is merged as `946f646`, with `2e55347` restoring the free end-to-end gate. Phases 2 to 9 follow below.
 
@@ -20,6 +20,14 @@ Phase 1 (correctness fixes) is merged as `946f646`, with `2e55347` restoring the
 - `deploy/sbom.json` is no longer tracked; `make release-security` writes it (8.1). The `offline/contract` module is gone; its tests are `server/offlinecontract` and `make offline-test` runs them from `server/` (8.1).
 - The effective-config goldens key `StopSecs` became `Hold` (4.6f); the YAML tag is unchanged.
 
+REST API (`/api/v1`)
+- `PUT /api/v1/flows/{id}/mcp-tools` is removed. Send `mcp_tools` together with `config` on `PUT` or `PATCH /flows/{id}`; the selection is stored in the same version as the config (`mcp_tools` without `config` is refused; an empty list clears the selection).
+- The `409 version_conflict` response and `storage.ErrVersionConflict` are gone.
+- `GET /sessions/{id}/turns`: `tools` is now always `[{"name","status","duration_ms"}]` (an empty list for a turn without calls), built from the stored `tool_calls` rows.
+- MCP detach: `DetachResult.server` is omitted when the server has been deleted (`deleted: true`).
+- MCP routes answer `500 internal_error` when the store fails; a store failure was answered as 404 (lookups) or 400 (tool test) before. A missing server stays 404.
+- Added: `GET /flows/{id}/versions/{number}` (one earlier publish, read-only); `GET /server-config` carries `audio.cues` (the sound names a flow's `route_cue` may use) and a `turn` block (effective manager, min words, mute list, `max_mute_ms`, speech timeout, end of turn, Smart Turn availability and hold).
+
 ## 2. Wire (RTVI) additions
 
 - `bot-interrupted` is sent on barge-in (Phase 4). A protobuf interruption frame is deliberately not sent: Pipecat's own server makes the pinned client log a deserialisation error on every barge-in.
@@ -35,7 +43,19 @@ Phase 1 (correctness fixes) is merged as `946f646`, with `2e55347` restoring the
 - Phase 7: `OutputAudioFrame.Text`, `rtvi.TypeBotTTSText`, `Handler.FormatBotTTSText`.
 - 7b: `SpeakingStateFrame.Uninterruptible` and `turn.MuteCriticalOutput` removed.
 - Phase 8: the `tools/eval/scenarios` API is deleted (`SevenScenarios`, `ExtendedParityScenarios`, `AllScenarios`, `GetScenario`, `Scenario`).
-- Phase 9: `DefaultServerConfig`, `LoadConfig`, `PublicAddr`, `WithClock` and `BlackHole.Accepted` are test helpers now (moved to `_test.go` files), not importable. `deadcode` is a permanent check (`make deadcode`, pinned `v0.52.0`); `core/coretest` is its single allowlisted entry.
+- Further API changes between `1993240` and `442ad79` (checked symbol by symbol against both trees):
+  - Removed from `core`: `dtmf.OutputProcessor.Send`; `filter.Chain.Len` and `Chain.Delay`; `record.Config.SampleRate`; `tools.LoopConfig.OnAsyncResult` (use `AsyncSink`); `AsyncTracer.DroppedOperations`; `turn.TurnReasonInitialNoSpeech`; `turn.Observation.Semantic`; `turn.DetectionInput.Semantic` and `SemanticMaxAge`; `turn.Config.SemanticMaxAge` (the Phase 5 line above names `Config.Semantic`, which did not exist; the field was `SemanticMaxAge`).
+  - `core.STTCounters.STTCounts` returns three values (`rotations, rotationFailures, errors`), not four. This breaks any third-party STT implementer of the interface. `google.STTProcessor.STTCounts` follows, and `google.STTProcessor.DeduplicatedResults` is gone.
+  - Added: `core.ErrSTTUnavailable` (wrapped by the STT runner and the google and xAI adapters; `server/endreason.go` reads it), `resilience.Policy.OnRetry`, `transcript.Finalizer.Reset`, `tools.ToolLoop.WithFrames`, `OutputDTMFFrame.Result` (a buffered `chan<- error` that receives nil once the tones played or the reason they were not queued).
+  - `ToolCallFrame` and `ToolResultFrame` survive the generation fence (they implement `SurvivesGenerationFence`), so a result settles a call the client already saw.
+  - `Session.Start` always wraps the tracer in a new `AsyncTracer`; a tracer that already is one is no longer passed through.
+  - The 48 kHz to 16 kHz resampler carries leftover samples between chunks. The transcript processor resets its pending turns when the finalizer reports `ErrRetiredTurnLimit`.
+- Providers and transport (library users):
+  - `ErrProviderUnavailable` is removed from cartesia, deepgram, elevenlabs, nvidia and xai (google keeps its own).
+  - `ws.PacedWriter.AfterSelect` and `BeforeWriteAdmission` are removed; `rtvi.ErrUnsupportedDebugEvent` and `rtvi.ErrMissingDebugPayload` are removed; `ws.MaxEncodedFrameSize` went from 64 KB to 20 KB (the largest valid frame is a 16 KB message plus a few bytes).
+  - Config fields removed: deepgram and xAI `InterimResults`, elevenlabs `IncludeTimestamps`, cartesia `MaxSilenceSecs`, `MinVolume` and `Version` (the version is a constant), and `Now` on the cartesia, deepgram, elevenlabs and nvidia STT configs (google and xAI keep theirs).
+  - The `turn_label` span attribute is gone. `govoice-eval` lost its `rtvi_wire` and `no_speech_timeout` self-checks.
+- Phase 9: `DefaultServerConfig`, `LoadConfig`, `PublicAddr`, `WithClock` and `BlackHole.Accepted` are test helpers now (moved to `_test.go` files), not importable. `deadcode` is a permanent check (`make deadcode`, pinned `v0.52.0`); `core/coretest` is its single allowlisted entry. `deadcode` is advisory in CI (`continue-on-error` in `.github/workflows/ci.yml`) and is not part of `make verify`; the docs link checker (`scripts/check-links.mjs`) is.
 
 ## 4. Behaviour changes
 
@@ -64,13 +84,21 @@ Phase 9 (user-visible)
 - A scripted line (`Say`) that is admitted just as a model turn starts is dropped silently, with a debug log only; before, it could reset the model turn. An idle prompt dropped this way counts as spent and is not asked again (9.5b). A `Say` refused earlier, while a model reply is already active, keeps the Phase 6 rule: the idle prompt is not spent and is asked again one wait later.
 - A client that stalls an RTVI write on the run loop is closed as `slow_client` within about 1.5 s (the write bound is 1 s; worst case in the test 1.505 s) instead of ending the call on the 2 s watchdog (9.5a). `Connection.writeMu` is deleted; the websocket library serialises writes.
 - `server.waitUntil` no longer leaves its polling goroutine running after the wait returns (9.2); `Server.mgmt` is an atomic pointer, which fixes a real data race between `closeManagement` and the route, end-call and demo handlers (`1213d2c`).
-- The resampler general path allocates one buffer per chunk (7 to 1) (9.5c). A VAD worker that fails to start or handshake is logged once with its stderr tail (9.5d).
+- The resampler general path allocates one buffer per chunk (7 to 1) (9.5c). A VAD worker that fails to spawn, start or handshake, or whose pipe fails mid-call, is logged at WARN (`vad: worker failed`) with the last 4 KB of its stderr (the buffer holds 64 KB) (9.5d, `324b5d7`).
+
+Final-review fixes (`5bb357a..442ad79`)
+- A panic in a WebSocket goroutine (reader, ping, ready watchdog, pacer) or in `onSessionReady` closes that connection with 1011 instead of crashing the process (`3be4def`). The same commit contains panics in the turn recorder writer (`server/call.go`), the cue and hold timers, the STT-outage hang-up goroutine, and the echo and google LLM stream goroutines (reported as a stream error).
+- A TTS watchdog retry rejects frames from the abandoned candidate, so the same audio is no longer heard twice (`5bb357a`).
+- The LLM first-token watchdog runs its failover on the run loop, like TTS (`18d3b24`).
+- A stopped STT stream emits no transcript (`eac00d6`).
+- `bot-tts-text` is not sent for a unit a barge-in cut (`1d556c8`).
+- Store errors and panic values are redacted before they are logged (`3be4def`); the context-summary retry pause uses monotonic time (`8453cc8`); causes are wrapped with `%w` in the VAD, Smart Turn and provider errors so `errors.Is` sees both the sentinel and the cause (`60bdb0f`).
 
 ## 5. Privacy and security
 
 - Trace spans record the error type only (1.2). Secrets are read from the environment only. Tool arguments and results are never stored or sent; idle lines are redacted in the recording sidecar; DTMF A to D are redacted in traces.
 - One SSRF rule, `netpool.AllowedIP`, used by openai and nvidia (6.2).
-- The ORT headers (31 files, 30,186 lines) are no longer vendored; `make ort` fetches the runtime (see the macOS pin under Known gaps).
+- The vendored ONNX Runtime tree (`third_party/onnxruntime-osx-arm64-1.29.0`: headers plus LICENSE, ThirdPartyNotices, README and cmake files; 31 files, 30,186 lines) is no longer vendored; `make ort` fetches the runtime (see the macOS pin under Known gaps).
 
 ## 6. Measured
 
@@ -87,7 +115,7 @@ Baseline `1993240` against head `87f906c`, same machine (Apple M4 Pro, 12 cores)
 | docs/superpowers and docs/history (records) | 14 | 14,206 | 3 | +14,203 |
 | Other docs | 56 | 253 | 251 | +2 |
 | Other (scripts, Make, CI, config, deploy) | 47 | 742 | 767 | -25 |
-| Vendored (`third_party` headers) | 31 | 0 | 30,186 | -30,186 |
+| Vendored (`third_party` ORT tree) | 31 | 0 | 30,186 | -30,186 |
 | Generated (`deploy/sbom.json`) | 1 | 0 | 1,879 | -1,879 |
 | Total | 580 | 38,643 | 41,213 | -2,570 |
 
@@ -103,11 +131,13 @@ Baseline `1993240` against head `87f906c`, same machine (Apple M4 Pro, 12 cores)
 
 | | Base | Head |
 |---|---|---|
-| Go `Test/Benchmark/Fuzz/Example` functions (all modules) | 2,019 | 2,355 |
+| Go `Test/Benchmark/Fuzz/Example` functions (all modules) | 2,041 | 2,394 |
 | Vitest tests | 677 | 795 |
 | Playwright (`flows` + `oneport` configs) | 40 | 53 |
 | `go vet` findings | 0 | 0 |
 | staticcheck 0.8.2 findings | 25 | 13 |
+
+Go counts are `git grep -hE '^func (Test|Benchmark|Fuzz|Example)' <rev> -- '*_test.go' | wc -l` at `1993240` and at `442ad79` (a count of declarations, not of executed subtests). The 2,019 / 2,355 recorded earlier came from a run at `87f906c`.
 
 staticcheck by id, base to head: U1000 9 to 0, ST1011 2 to 0, S1002 1 to 0; unchanged: SA1019 8, S1040 1, SA4000 1, SA4006 1, ST1013 1, ST1018 1.
 
@@ -153,7 +183,9 @@ staticcheck by id, base to head: U1000 9 to 0, ST1011 2 to 0, S1002 1 to 0; unch
 Line target. The master plan asked for at least 5,000 lines removed net. It is not met and no code was deleted to reach it: total net is -2,570 over 580 files (the figure was -3,244 over 553 files after Phase 8; Phase 9 added tests, the check scripts and this document). Non-test Go is -277. Almost all of the large negative number is outside code: vendored ORT headers -30,186 and the SBOM -1,879. Test Go grew by 12,946 lines.
 
 Behaviour
-- A VAD worker found down between batches is not logged. The batch is handed to a live worker; only a failed start or handshake logs the stderr tail.
+- When a call has exactly one STT provider, a `Send` failure on its stream ends the call (pre-existing; the four providers on the shared runner now share it).
+- `ttsunit.Config.LookAhead` (Google's two-unit look-ahead) has no effect when TTS fallbacks are configured: the failover wrapper drives one unit at a time (`TTSFailover.cur`).
+- A VAD worker found down when a batch arrives, or one that hung past its deadline, is restarted without a log line; the batch of a down worker is handed to a live worker. Spawn, start, handshake and mid-call pipe failures log the stderr tail.
 - A client that stalls writes reaches `slow_client`, but under a real stall the close frame often cannot be sent, so the client sees close code 1006, not 1008.
 - The audio path can still hit the 2 s run-loop watchdog. This predates the remediation; 9.5a bounded only the run-loop RTVI writes.
 - Unbound interim text seeded into a turn (6.7) has a false-positive risk on Riva that needs a live provider to measure.
@@ -162,10 +194,17 @@ Behaviour
 - `turn_count` counts idle and greeting lines (documented in `docs/api/v1.md`).
 - Ping-failure close stays counted as `disconnect_client` (deliberate; `ws_ping_failures` has its own counter). U1 database columns (`turns.tools_json`, the two summary columns) are kept to avoid a migration.
 
+Review items carried, not fixed
+- Core: the session round holds an `RLock` across blocking operations; an abandoned executor is not reclaimed; preroll can emit empty frames; a per-frame `context.WithTimeout` allocates; LLM failover has unfixed edge cases; DTMF reports `ToolSucceeded` when the context ends.
+- Providers and transport: `cmd.Wait` runs under a lock in the VAD worker; xAI preroll drops the newest audio when full, ignores a 16 KB RTVI refusal, and rotates Google credentials on the run loop; the Google environment fallback is used by the examples only.
+- Server: cue timers can fire after hang-up; shutdown does not wait for in-flight HTTP requests; nvidia circuit endpoints are mixed in one breaker; `turnWarned` is unbounded.
+- Tooling: the `deadcode` run roots include `tools`, and `SetSystemInstruction` is not reported by it; the `silence_timeout` eval scenario is the same as `turn_completion`; one fixture is untracked; the macOS ORT sha256 is unpinned (see Build and tooling).
+
 Tests
+- Test-only seams remain in production code: the `AsyncSink` nil path, `Denoiser.Delay`, `Runner.Streams`, the `OutputUninterruptible` branches, `adjustCall`, `ttsUnitTimeout`, `gapHook` and the pacing hooks. Several tests use sleeps as synchronisation.
 - Two cross-lane tests depend on timing and are recorded rather than fixed: `providers/deepgram/stt_test.go:556` and `transport/ws/rtvi_integration_test.go:356`.
 - The smartturn timeout flake is tied to the 9.3 counter bug by reasoning and a deterministic probe; the original failure was never reproduced. The core flush flake is explained by the run loop choosing between the control and data lane at random when both are ready (9.4); the old test did not fail in 300 stress runs.
-- `goleak` is not yet on `core/smartturn`, `core/turn`, `core/record`, `core/tools`, `providers/xai`, `server/otelexport`, `server/runtime`, `offline/adapter`. It runs where goroutines are owned and checked in 9.2.
+- `goleak` is not yet on `smartturn`, `core/turn`, `core/record`, `core/tools`, `providers/xai`, `providers/google`, `providers/echo`, `core` itself, `server/otelexport`, `server/runtime`, `offline/adapter`. It runs where goroutines are owned and checked in 9.2.
 - Whole-package stress of `smartturn` takes about 45 s per iteration, so it was run on a filtered test set.
 - No deterministic test for an injected write error on `OnWriteComplete`; the denied-microphone path is covered by Vitest only.
 - The checked-in Playwright run on the echo stack cannot exercise a real Smart Turn model.
