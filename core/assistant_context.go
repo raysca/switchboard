@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -199,6 +200,7 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		um := f.(*UserMessageFrame)
 		if IsSayTurn(um.Turn) && p.modelActive.Load() {
 			// A model turn started after Say checked: the scripted line loses (its later frames are stale).
+			slog.Debug("assistant: scripted line dropped, a model turn started first", "turn", um.Turn)
 			return nil
 		}
 		p.activeTurn = um.Turn
