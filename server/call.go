@@ -57,13 +57,7 @@ func (s *Server) resolveCall(ctx context.Context, flowID, tokenID, caller string
 	}
 	rs.EndReason = ending.get
 	lat := newTurnLatencies()
-	history := newTurnRecorder(func(ctx context.Context, row storage.TurnRecord) error {
-		s.metrics.TurnsTotal.Add(1)
-		row = s.redactTurn(row)
-		return s.redactErr(s.store.Sessions().AddTurn(ctx, row))
-	}, func(ctx context.Context, rec storage.ToolCallRecord) error {
-		return s.redactErr(s.store.Traces().AddToolCall(ctx, rec))
-	}, rs.MCPTool, rs.Pin.ID, s.logger, lat)
+	var history *turnRecorder // set below; release runs for a panic before then too
 	release := func() {
 		// In-flight MCP tool calls are waited for, but never past the session
 		// teardown budget: a stuck remote tool must not pin the call forever.
@@ -71,17 +65,31 @@ func (s *Server) resolveCall(ctx context.Context, flowID, tokenID, caller string
 		defer cancel()
 		// Turn rows land before the session is ended, on their own budget so a
 		// slow drain cannot leave the session row active.
-		historyCtx, cancelHistory := context.WithTimeout(context.Background(), 2*time.Second)
-		history.close(historyCtx)
-		cancelHistory()
+		if history != nil {
+			historyCtx, cancelHistory := context.WithTimeout(context.Background(), 2*time.Second)
+			history.close(historyCtx)
+			cancelHistory()
+		}
 		if err := rs.Close(ctx); err != nil {
 			s.logger.Warn("flow session did not end cleanly", "session", rs.Pin.ID, "err", s.redactor.Redact(err.Error()))
 		}
 	}
+	handedBack := false
+	defer func() { // an error or a panic before the call is handed back ends the row and drops the pins
+		if !handedBack {
+			ending.set(storage.EndSetupFailed)
+			release()
+		}
+	}()
+	history = newTurnRecorder(func(ctx context.Context, row storage.TurnRecord) error {
+		s.metrics.TurnsTotal.Add(1)
+		row = s.redactTurn(row)
+		return s.redactErr(s.store.Sessions().AddTurn(ctx, row))
+	}, func(ctx context.Context, rec storage.ToolCallRecord) error {
+		return s.redactErr(s.store.Traces().AddToolCall(ctx, rec))
+	}, rs.MCPTool, rs.Pin.ID, s.logger, lat)
 	call, err := s.callSpec(ctx, rs)
 	if err != nil {
-		ending.set(storage.EndSetupFailed)
-		release()
 		return CallSpec{}, nil, err
 	}
 	call.History = history
@@ -89,6 +97,7 @@ func (s *Server) resolveCall(ctx context.Context, flowID, tokenID, caller string
 	if s.adjustCall != nil {
 		s.adjustCall(&call)
 	}
+	handedBack = true
 	return call, release, nil
 }
 
