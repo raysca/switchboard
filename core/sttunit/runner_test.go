@@ -663,9 +663,10 @@ func TestRunner_DrainTimeoutRecoversProviderClosePanic(t *testing.T) {
 	h.waitFor("open", func() bool { return conn.recvs.Load() >= 1 })
 	h.post(&core.UserStoppedSpeakingFrame{})
 	h.waitFor("drain timeout closed the stream", func() bool { return h.r.Streams() == 0 && conn.closes.Load() >= 1 })
-	h.waitFor("recovery logged", func() bool { return strings.Contains(logs.String(), "provider Close panicked") })
-	if out := logs.String(); !strings.Contains(out, "provider=fake") || !strings.Contains(out, "turn=turn-1-1") {
-		t.Fatalf("log lacks provider/turn: %s", out)
+	h.waitFor("recovery logged", func() bool { return strings.Contains(logs.String(), "recovered provider panic") })
+	// The panic value can carry provider or caller data: only its type is logged.
+	if out := logs.String(); !strings.Contains(out, "provider=fake") || !strings.Contains(out, "turn=turn-1-1") || !strings.Contains(out, "panic_type=string") || strings.Contains(out, "provider Close panicked") {
+		t.Fatalf("log lacks provider/turn/panic type, or leaks the value: %s", out)
 	}
 	h.waitFor("stt.stream span ended despite the panic", func() bool { return tr.ended("stt.stream") })
 	if err := h.sess.Err(); err != nil {

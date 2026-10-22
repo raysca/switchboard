@@ -542,7 +542,7 @@ func (r *Runner) sendFinish(ctx context.Context, st *stream, conn Conn) {
 			defer func() { // a provider's Close must not kill the daemon from a timer goroutine
 				if rec := recover(); rec != nil {
 					turn, _ := st.owner()
-					slog.Error("sttunit: recovered provider panic on drain timeout", "provider", r.cfg.Provider, "turn", turn, "panic", fmt.Sprint(rec))
+					slog.Error("sttunit: recovered provider panic on drain timeout", "provider", r.cfg.Provider, "turn", turn, "panic_type", fmt.Sprintf("%T", rec))
 				}
 			}()
 			r.release(st)

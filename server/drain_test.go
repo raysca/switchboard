@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -17,6 +18,7 @@ import (
 
 	"govoice/core"
 	"govoice/core/coretest"
+	"govoice/core/redact"
 	"govoice/transport/ws"
 )
 
@@ -277,11 +279,26 @@ func TestRecoverEachRunsStopAfterReleasePanics(t *testing.T) {
 				t.Fatalf("panic escaped recoverEach: %v", r)
 			}
 		}()
-		recoverEach(s.logger, 1, "releaseCall", func() { panic("release") })
-		recoverEach(s.logger, 1, "stopRecording", func() { stopped = true })
+		s.recoverEach(1, "releaseCall", func() { panic("release") })
+		s.recoverEach(1, "stopRecording", func() { stopped = true })
 	}()
 	if !stopped {
 		t.Fatal("stopRecording did not run after releaseCall panicked")
+	}
+}
+
+// A panic value can carry caller data (a card number in a provider error): it is redacted before it is logged.
+func TestRecoverEachRedactsThePanicValue(t *testing.T) {
+	s := apiTestServer(t)
+	var buf bytes.Buffer
+	s.logger = slog.New(slog.NewTextHandler(&buf, nil))
+	var err error
+	if s.redactor, err = redact.New(redact.Config{Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	s.recoverEach(1, "releaseCall", func() { panic("lookup failed for 4111 1111 1111 1111") })
+	if out := buf.String(); !strings.Contains(out, "panic during releaseCall") || strings.Contains(out, "4111 1111 1111 1111") {
+		t.Fatalf("panic value not redacted: %q", out)
 	}
 }
 

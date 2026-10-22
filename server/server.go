@@ -618,8 +618,8 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 			}
 		}
 		ending.set(storage.EndSetupFailed)
-		recoverEach(s.logger, sessionID, "releaseCall", releaseCall)
-		recoverEach(s.logger, sessionID, "stopRecording", stopRecording)
+		s.recoverEach(sessionID, "releaseCall", releaseCall)
+		s.recoverEach(sessionID, "stopRecording", stopRecording)
 		s.admission.ReleaseSession(principal, flowID)
 		s.metrics.SessionsFailedTotal.Add(1)
 		timeline.Record(TimelineEvent{Type: EventError, Details: s.redactor.Redact(err.Error())})
@@ -1428,13 +1428,13 @@ func waitUntil(ctx context.Context, max time.Duration, done func() bool) {
 	}
 }
 
-func recoverEach(log *slog.Logger, sessionID uint64, label string, fn func()) {
+func (s *Server) recoverEach(sessionID uint64, label string, fn func()) {
 	if fn == nil {
 		return
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			log.Error("panic during "+label, slog.Uint64("session", sessionID), slog.Any("panic", r))
+			s.logger.Error("panic during "+label, slog.Uint64("session", sessionID), "panic", s.redactor.Redact(fmt.Sprint(r)))
 		}
 	}()
 	fn()
@@ -1444,12 +1444,12 @@ func (s *Server) finishCall(sessionID uint64, principal, flowID string, session 
 	recDone := make(chan struct{})
 	go func() {
 		defer close(recDone)
-		recoverEach(s.logger, sessionID, "stopRecording", stopRecording)
+		s.recoverEach(sessionID, "stopRecording", stopRecording)
 	}()
 	defer func() {
 		<-recDone
 		if r := recover(); r != nil {
-			s.logger.Error("panic during session cleanup", slog.Uint64("session", sessionID), slog.Any("panic", r))
+			s.logger.Error("panic during session cleanup", slog.Uint64("session", sessionID), "panic", s.redactor.Redact(fmt.Sprint(r)))
 		}
 		s.mu.Lock()
 		delete(s.activeCalls, sessionID)
@@ -1479,7 +1479,7 @@ func (s *Server) finishCall(sessionID uint64, principal, flowID string, session 
 			}
 		}
 	}
-	recoverEach(s.logger, sessionID, "releaseCall", release)
+	s.recoverEach(sessionID, "releaseCall", release)
 }
 
 // logSetupFailure logs one warning for a call that could not be set up, so
