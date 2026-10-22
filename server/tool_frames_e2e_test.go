@@ -6,7 +6,7 @@ import (
 )
 
 // The MCP tool's call and result pass the voice stage of a real call, between the model and the transport.
-func TestMCPCallToolFramesAgentThroughTheCallPipeline(t *testing.T) {
+func TestMCPCallToolFramesFlowThroughTheCallPipeline(t *testing.T) {
 	r := newMCPCallRig(t)
 	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
 	c := r.dial(r.agentWith(id, hashes, true, nil, "lookup_order").ID)
