@@ -6,6 +6,7 @@ import {
   type VoiceClientState,
 } from "../../voice/VoiceClient";
 import type { BrowserAudioController } from "../../voice/audio";
+import { isTextOnly } from "./textOnly";
 import { PipecatDebugPanel } from "../../components/debug/PipecatDebugPanel";
 import { ActionButton, Status } from "../../components/primitives";
 import { NO_CALL, type CallInfo } from "./editor/useCallView";
@@ -55,6 +56,8 @@ export function FlowVoiceTest({
   }
 
   // Mirrors the server: only these readiness states may take calls.
+  // A flow whose speech-to-text is `silence` takes typed turns only: no microphone, no push to talk, no mute.
+  const textOnly = isTextOnly(draft?.config ?? flow.current_version?.config);
   const callable = flow.readiness.state === "ready" || flow.readiness.state === "ready_with_tool_warning";
   const voiceClient = voiceClientRef.current;
   // A call keeps the version it started on: remember it, so a publish during the call neither
@@ -110,8 +113,9 @@ export function FlowVoiceTest({
       flowId: flow.id,
       principal: `flow-test-${flow.id}`,
       wsBaseUrl,
-      pushToTalk,
+      pushToTalk: pushToTalk && !textOnly,
       draft,
+      textOnly,
     });
   };
 
@@ -141,7 +145,7 @@ export function FlowVoiceTest({
   } else if (state.isBotSpeaking) {
     speechStatusDescription = "Assistant speaking…";
   } else if (state.sessionState === "ready") {
-    speechStatusDescription = "Live call active — speak into your microphone";
+    speechStatusDescription = textOnly ? "Text-only call: type a message below" : "Live call active — speak into your microphone";
   }
 
 
@@ -169,13 +173,15 @@ export function FlowVoiceTest({
           {state.metrics.bargeInCount > 0 && <span className="flag">Interrupted: {state.metrics.bargeInCount}x</span>}
         </p>
         <div className="call-panel__controls">
-          <label className="stage__ptt">
-            <input type="checkbox" checked={pushToTalk} disabled={isConnectedOrReady || isConnecting} onChange={(e) => setPushToTalk(e.target.checked)} />
-            Push to talk
-          </label>
+          {!textOnly && (
+            <label className="stage__ptt">
+              <input type="checkbox" checked={pushToTalk} disabled={isConnectedOrReady || isConnecting} onChange={(e) => setPushToTalk(e.target.checked)} />
+              Push to talk
+            </label>
+          )}
           {!isConnectedOrReady && !isConnecting && (
             <ActionButton type="button" onClick={handleConnect} disabled={!keyValue || !callable || !!blocked} data-testid="start-voice-test-btn">
-              Start voice test
+              {textOnly ? "Start text test" : "Start voice test"}
             </ActionButton>
           )}
           {isConnecting && (
@@ -185,9 +191,11 @@ export function FlowVoiceTest({
           )}
           {isConnectedOrReady && (
             <>
-              <button type="button" className="action-button-small" onClick={handleToggleMute} data-testid="mute-btn" aria-pressed={state.isMuted}>
-                {state.isMuted ? "Unmute" : "Mute"}
-              </button>
+              {!textOnly && (
+                <button type="button" className="action-button-small" onClick={handleToggleMute} data-testid="mute-btn" aria-pressed={state.isMuted}>
+                  {state.isMuted ? "Unmute" : "Mute"}
+                </button>
+              )}
               {state.pushToTalk && (
                 <button
                   type="button"

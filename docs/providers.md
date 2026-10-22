@@ -107,6 +107,17 @@ An entry with an existing `id` replaces it, a new one is appended, and an overla
 
 - **Failure injection.** A step whose TTS voice is `brokenvoice` cannot be built, which the end-to-end suites use to fail a route. Stage-level failure injection for core tests lives in `core/coretest`, not here.
 
+## Silence (text only)
+
+`silence` is the provider for flows that have no server-side speech: a client that listens and speaks in the browser (the Web Speech API, a chat widget, a screen reader) sends typed turns and renders the reply text. It needs no key and is always detected, like `echo`; the UI labels it "Silence (text only)". Give it to **both** speech stages and pick a real provider for the model: `stt` model `text` and `tts` voice `none` are the only choices, and it has no model service. Design and rationale: [decisions/silence-provider.md](decisions/silence-provider.md).
+
+- **What a call does.** The client sends RTVI `send-text` turns and gets `user-transcription`, `bot-llm-started`, `bot-llm-text`, `bot-llm-stopped`, `bot-tts-text` and `bot-started-speaking`/`bot-stopped-speaking`. The speaking events open and close at once: the TTS makes one 20 ms frame of silence per unit with no delay, and the STT never transcribes (audio sent anyway is ignored).
+- **Quiet callers.** A caller who types is not silent. When the call's STT provider is `silence` and the flow sets no `idle` settings, the quiet-caller prompts and hang-up are off (`max_call_duration` still ends the call and is the only bound on a tab left open, so set a short one for kiosks, or set `idle` on the flow). A flow that sets `idle` gets exactly what it sets.
+- **Failover.** `silence` never fails, so it takes no fallbacks and cannot be one (a flow that says so is refused): a real voice must not fail over onto silence.
+- **Resilience.** Its stages are the real Google processors on in-process backends, with their own circuit breakers (`voice_{stt,tts}_circuit_state{provider="silence",endpoint="text"}`), apart from `echo`'s.
+- **Console.** The Test call panel does not ask for a microphone when the call's STT provider is `silence`; type in the message box.
+- **Privacy.** The browser's own recognition and synthesis are often cloud services run by the browser vendor: text-only flows keep audio off Switchboard, not off the vendor.
+
 ## Adding a provider
 
 A new provider needs code: an adapter under `providers/`, a factory registered in `server/registry.go`, and a packaged catalog file in `server/catalog/data/`. `server/catalog_adapters_test.go` checks that what the catalog assembles is what the adapter parses.

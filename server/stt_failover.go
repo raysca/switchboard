@@ -62,6 +62,8 @@ func (r *Registry) sttBreaker(provider string) *resilience.Breaker {
 		return r.googleSTTBreaker
 	case "echo":
 		return r.echoSTTBreaker
+	case silenceProvider:
+		return r.silenceSTTBreaker
 	case "xai":
 		return r.xaiSTTBreaker
 	case "offline":

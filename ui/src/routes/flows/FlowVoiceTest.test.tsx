@@ -678,6 +678,70 @@ describe("FlowVoiceTest", () => {
     expect(screen.queryByText(/this call is on v/i)).toBeNull();
   });
 
+  it("starts a text-only flow (silence speech-to-text) without a microphone, push to talk or mute", async () => {
+    const client = createMockClient();
+    const flow = createMockFlow();
+    flow.current_version = { ...flow.current_version!, config: { ...flow.current_version!.config, stt: { provider: "silence", model: "text" } } };
+    const audio = new BrowserAudioController();
+    const capture = vi.spyOn(audio, "startCapture").mockResolvedValue(undefined);
+    render(
+      <MemoryRouter>
+        <FlowVoiceTest flow={flow} client={client} keyValue="k" audioController={audio} wsBaseUrl="ws://127.0.0.1:9090/ws" />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByText("Push to talk")).toBeNull();
+    expect(screen.queryByTestId("start-voice-test-btn")).toHaveTextContent("Start text test");
+    await userEvent.setup().click(screen.getByTestId("start-voice-test-btn"));
+    await waitFor(() => expect(MockWebSocket.instances.length).toBe(1));
+    await screen.findByTestId("disconnect-btn");
+    expect(capture).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("mute-btn")).toBeNull();
+  });
+
+  it("treats a routed flow as text-only by its start step's speech-to-text", async () => {
+    const client = createMockClient();
+    const flow = createMockFlow();
+    flow.current_version = {
+      ...flow.current_version!,
+      config: {
+        start: "front",
+        steps: [
+          { id: "front", name: "Front desk", config: { stt: { provider: "silence", model: "text" }, llm: { provider: "echo", model: "m" }, tts: { provider: "silence", voice: "none" } } },
+          { id: "sales", name: "Sales", config: { llm: { provider: "echo", model: "m" }, tts: { provider: "echo", voice: "v" } } },
+        ],
+        routes: [{ id: "e1", from: "front", to: "sales", condition: "buy" }],
+      },
+    };
+    const audio = new BrowserAudioController();
+    const capture = vi.spyOn(audio, "startCapture").mockResolvedValue(undefined);
+    render(
+      <MemoryRouter>
+        <FlowVoiceTest flow={flow} client={client} keyValue="k" audioController={audio} wsBaseUrl="ws://127.0.0.1:9090/ws" />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByText("Push to talk")).toBeNull();
+    await userEvent.setup().click(screen.getByTestId("start-voice-test-btn"));
+    await screen.findByTestId("disconnect-btn");
+    expect(capture).not.toHaveBeenCalled(); // the later step has a real voice, but nobody speaks to it
+  });
+
+  it("a draft decides: a silence draft over a voice flow is text-only, and the reverse is not", async () => {
+    const client = createMockClient();
+    const audio = new BrowserAudioController();
+    const capture = vi.spyOn(audio, "startCapture").mockResolvedValue(undefined);
+    const draft = { config: { stt: { provider: "echo", model: "s" } } };
+    const flow = createMockFlow();
+    flow.current_version = { ...flow.current_version!, config: { stt: { provider: "silence", model: "text" } } };
+    render(
+      <MemoryRouter>
+        <FlowVoiceTest flow={flow} client={client} keyValue="k" audioController={audio} wsBaseUrl="ws://127.0.0.1:9090/ws" draft={draft} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("Push to talk")).toBeVisible(); // the draft listens, so the panel is the voice one
+    await userEvent.setup().click(screen.getByTestId("start-voice-test-btn"));
+    await waitFor(() => expect(capture).toHaveBeenCalled());
+  });
+
   it("refuses to start while it is blocked, and says why", () => {
     render(
       <MemoryRouter>

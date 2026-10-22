@@ -125,6 +125,10 @@ func (c Config) Chain(stage string) []Candidate {
 	return out
 }
 
+// SilenceProvider is the text-only speech provider (docs/decisions/silence-provider.md). It never fails, so it
+// has nothing to fail over from, and as a fallback it would swallow a real voice's audio or never transcribe.
+const SilenceProvider = "silence"
+
 // validateChains is the structural check (no registry needed): length,
 // duplicates, required fields, policy classes.
 func (c *Config) validateChains() error {
@@ -138,6 +142,9 @@ func (c *Config) validateChains() error {
 		}
 		seen := map[string]bool{}
 		for _, cand := range chain {
+			if cand.Provider == SilenceProvider {
+				return fmt.Errorf("%w: %s %q takes no fallbacks and cannot be one", ErrInvalidConfig, stage, SilenceProvider)
+			}
 			if cand.Index > 0 && (cand.Provider == "" || (stage == "llm" && strings.TrimSpace(cand.Model) == "")) {
 				return fmt.Errorf("%w: %s fallback %d needs a provider%s", ErrInvalidConfig, stage, cand.Index, map[bool]string{true: " and model"}[stage == "llm"])
 			}

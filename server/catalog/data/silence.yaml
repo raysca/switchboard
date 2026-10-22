@@ -1,0 +1,17 @@
+# Text-only speech (registerSilence): needs no key and recognises and speaks nothing, so a flow that names
+# it for both speech stages is driven by typed turns and answers in text. Pair it with a real model.
+id: silence
+name: Silence (text only)
+services:
+  stt:
+    keyless: true
+    custom: false
+    models:
+      - {id: text, label: Text only (no recognition), default: true}
+    languages:
+      - {id: en-US, label: English (US), default: true}
+  tts:
+    keyless: true
+    custom: false
+    voices:
+      - {id: none, label: No voice (text only), default: true}

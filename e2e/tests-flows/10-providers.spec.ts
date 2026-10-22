@@ -19,7 +19,9 @@ test("providers: the suite's provider is detected and only detected providers ar
     const available = providers.filter((p) => p.services[kind]?.available).map((p) => p.id);
     expect(offered, `${kind} provider options`).toEqual(["", ...available]);
     // The echo stack also gets placeholder google, xai and elevenlabs keys (global setup) so the dentistry demo's flow can be created (60-dental); only those three are tolerated.
-    const demoOnly = LIVE ? [] : ["google", "xai", "elevenlabs"];
+    // `silence` (text-only speech) is keyless and always available, so it is offered on every stack.
+    const keyless = ["silence"];
+    const demoOnly = LIVE ? keyless : [...keyless, "google", "xai", "elevenlabs"];
     expect(available.filter((id) => !demoOnly.includes(id)), "the child gets only the suite's provider variables").toEqual([PROVIDER]);
   }
 });

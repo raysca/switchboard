@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { ProviderStatus, ServerConfigDTO } from "../../../api/client";
 import { BackgroundSelect } from "./CallBehaviorFields";
 import { StageFields, type StageValue } from "../StageFields";
+import { TEXT_ONLY_PROVIDER } from "../textOnly";
 import { SettingHelp } from "./SettingHelp";
 import { MAX_FALLBACKS, updateStep, type FlowDraft, type DraftStep } from "./model";
 
@@ -207,7 +208,8 @@ function FallbackList({ kind, title, what, hint, items, providers, idPrefix, onC
           ))}
         </ol>
       )}
-      <StageFields kind={kind} providers={providers} idPrefix={idPrefix} value={draft} onChange={setDraft} />
+      {/* silence takes no fallbacks and cannot be one (server/flow/fallback.go) */}
+      <StageFields kind={kind} providers={providers.filter((p) => p.id !== TEXT_ONLY_PROVIDER)} idPrefix={idPrefix} value={draft} onChange={setDraft} />
       <button type="button" className="action-button-small" disabled={!ready} onClick={add}>
         Add {what} fallback
       </button>

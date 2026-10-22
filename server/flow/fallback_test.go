@@ -27,6 +27,27 @@ func fb(model string) string {
 	return `{"provider":"google","model":"` + model + `"}`
 }
 
+func TestSilenceTakesNoFallbacksAndIsNotOne(t *testing.T) {
+	text := `"stt":{"provider":"silence","model":"text"%s},"llm":{"provider":"google","model":"m"%s},"tts":{"provider":"silence","voice":"none"%s}`
+	cfg := func(sttFB, llmFB, ttsFB string) json.RawMessage {
+		return json.RawMessage("{" + fmt.Sprintf(text, sttFB, llmFB, ttsFB) + "}")
+	}
+	if _, err := DecodeConfig(cfg("", "", "")); err != nil {
+		t.Fatalf("a plain text-only flow must be valid: %v", err)
+	}
+	for name, c := range map[string]json.RawMessage{
+		"silence stt with a real fallback": cfg(`,"fallbacks":[{"provider":"google","model":"s"}]`, "", ""),
+		"silence tts with a real fallback": cfg("", "", `,"fallbacks":[{"provider":"google","voice":"v"}]`),
+		"silence as a model fallback":      cfg("", `,"fallbacks":[{"provider":"silence","model":"x"}]`, ""),
+		"silence as a real tts's fallback": json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"m"},"tts":{"provider":"google","voice":"v","fallbacks":[{"provider":"silence","voice":"none"}]}}`),
+		"silence as a real stt's fallback": json.RawMessage(`{"stt":{"provider":"google","model":"s","fallbacks":[{"provider":"silence","model":"text"}]},"llm":{"provider":"google","model":"m"},"tts":{"provider":"google","voice":"v"}}`),
+	} {
+		if _, err := DecodeConfig(c); !errors.Is(err, ErrInvalidConfig) {
+			t.Errorf("%s: err=%v, want ErrInvalidConfig", name, err)
+		}
+	}
+}
+
 func TestChainValidation(t *testing.T) {
 	bad := map[string]string{
 		"too long":       `,"fallbacks":[` + fb("a") + `,` + fb("b") + `,` + fb("c") + `]`,

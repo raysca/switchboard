@@ -112,6 +112,8 @@ interface ConnectOptions {
   pushToTalk?: boolean;
   /** An unpublished flow config to run instead of the published version (a test call). */
   draft?: { config: unknown; mcp_tools?: ToolSelection[] };
+  /** A text-only call (speech-to-text is `silence`): no microphone is requested and no audio is sent. */
+  textOnly?: boolean;
 }
 
 export class VoiceClient {
@@ -232,21 +234,23 @@ export class VoiceClient {
       currentBotStreamingText: "",
     });
 
-    // Step 1: Initialize Microphone
-    try {
-      await this.audioController.startCapture((pcmChunk) => {
-        this.sendAudioChunk(pcmChunk);
-      });
-    } catch (err: unknown) {
-      if (attempt !== this.attempt) return;
-      const audioErr = err as BrowserAudioError;
-      const category =
-        audioErr.type === "permission_denied" ? "mic" : "connection";
-      this.updateState({
-        sessionState: "error",
-        error: { category, message: audioErr.message, fatal: true },
-      });
-      return;
+    // Step 1: Initialize Microphone (a text-only call has none)
+    if (!options.textOnly) {
+      try {
+        await this.audioController.startCapture((pcmChunk) => {
+          this.sendAudioChunk(pcmChunk);
+        });
+      } catch (err: unknown) {
+        if (attempt !== this.attempt) return;
+        const audioErr = err as BrowserAudioError;
+        const category =
+          audioErr.type === "permission_denied" ? "mic" : "connection";
+        this.updateState({
+          sessionState: "error",
+          error: { category, message: audioErr.message, fatal: true },
+        });
+        return;
+      }
     }
     // disconnect() ran while the mic was opening: it already released the mic,
     // and stopping capture here would stop a newer attempt's mic.

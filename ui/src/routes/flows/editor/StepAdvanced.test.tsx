@@ -41,6 +41,15 @@ describe("StepAdvanced", () => {
     expect(last(onChange).llm).not.toHaveProperty("fallbacks");
   });
 
+  it("never offers silence as a fallback: it takes none and cannot be one", () => {
+    const silence: ProviderStatus = { id: "silence", display_name: "Silence (text only)", capabilities: ["tts"], detected: true, env: [], services: { tts: svc } };
+    render(<StepAdvanced graph={g0} step={g0.steps[0]} providers={[...providers, silence]} onChange={vi.fn()} />);
+    const voice = screen.getByRole("group", { name: "Voice fallbacks" });
+    const offered = [...voice.querySelectorAll("option")].map((o) => (o as HTMLOptionElement).value);
+    expect(offered).toContain("google");
+    expect(offered).not.toContain("silence");
+  });
+
   it("stops at 2 fallbacks, as the server allows", async () => {
     const user = userEvent.setup();
     render(<Harness onChange={vi.fn()} />);

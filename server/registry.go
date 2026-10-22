@@ -168,6 +168,8 @@ type Registry struct {
 	googleSTTBreaker *resilience.Breaker
 	// The simulated provider keeps its own breakers, apart from Google's.
 	echoLLMBreaker, echoSTTBreaker, echoTTSBreaker *resilience.Breaker
+	// The text-only speech provider (silence) has its own, so an outage of it never touches echo's.
+	silenceSTTBreaker, silenceTTSBreaker *resilience.Breaker
 	// One xAI breaker per stage: an STT or TTS outage must not block the LLM.
 	xaiLLMBreaker, xaiSTTBreaker, xaiTTSBreaker *resilience.Breaker
 	// The local stack keeps its own breakers too: an outage there must not open xAI's circuits.
@@ -280,6 +282,8 @@ func NewRegistry() *Registry {
 		echoLLMBreaker:       resilience.NewBreaker(resilience.DefaultConfig()),
 		echoSTTBreaker:       resilience.NewBreaker(resilience.DefaultConfig()),
 		echoTTSBreaker:       resilience.NewBreaker(resilience.DefaultConfig()),
+		silenceSTTBreaker:    resilience.NewBreaker(resilience.DefaultConfig()),
+		silenceTTSBreaker:    resilience.NewBreaker(resilience.DefaultConfig()),
 		xaiLLMBreaker:        resilience.NewBreaker(resilience.DefaultConfig()),
 		xaiSTTBreaker:        resilience.NewBreaker(resilience.DefaultConfig()),
 		xaiTTSBreaker:        resilience.NewBreaker(resilience.DefaultConfig()),
@@ -482,6 +486,7 @@ func NewRegistry() *Registry {
 	registerXAISpeech(r)
 	r.registerNvidia()
 	registerEcho(r)
+	registerSilence(r)
 	registerOffline(r)
 
 	return r
@@ -642,6 +647,9 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 		}
 	}
 	idleCfg := cfg.Idle.forCall(call.Idle)
+	if call.Idle == nil && call.STT.Provider == silenceProvider {
+		idleCfg.UserTimeout = 0 // a caller who types is not silent: only an explicit flow setting turns the nudges on
+	}
 	if err := idleCfg.validate(cfg.DTMF.Aggregate, cfg.DTMF.AggregateTimeout); err != nil {
 		return fail(fmt.Errorf("flow idle settings: %w", err)) // the server's DTMF rules changed since the flow was published
 	}
@@ -975,6 +983,14 @@ func (r *Registry) BindMetrics(m *Metrics) {
 		br.SetObserver(func(st resilience.State) {
 			m.circuits.set(stage, "echo", "simulated", circuitCode(string(st)))
 			r.circuit(stage, "echo", st)
+		})
+	}
+	// So do the text-only speech provider's (endpoint "text"; it has no model stage).
+	for stage, br := range map[string]*resilience.Breaker{"stt": r.silenceSTTBreaker, "tts": r.silenceTTSBreaker} {
+		m.circuits.set(stage, silenceProvider, "text", 0)
+		br.SetObserver(func(st resilience.State) {
+			m.circuits.set(stage, silenceProvider, "text", circuitCode(string(st)))
+			r.circuit(stage, silenceProvider, st)
 		})
 	}
 	// So do the local stack's (endpoint "local"), for the stages this build has.
