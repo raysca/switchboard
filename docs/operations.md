@@ -1,143 +1,10 @@
-# Switchboard — Production Deployment & Operations Runbook
+# Switchboard operations
 
-This runbook provides step-by-step instructions for deploying, operating, monitoring, and troubleshooting Switchboard in production environments.
-
----
-
-## 1. Supported Production Environments
-
-The container image is the V1 distribution. The production image is Debian bookworm. A host install on Ubuntu, Debian, or RHEL is not part of this release. Host resource numbers below are planning guidance, not a measured capacity result.
-
-The following table is planning guidance for a host that runs the image:
-
-| Distribution | Minimum Version | Architecture | C Runtime Requirement |
-|---|---|---|---|
-| **Ubuntu Linux** | 22.04 LTS (Jammy) | `amd64`, `arm64` | glibc >= 2.34 |
-| **Debian Linux** | 12 (Bookworm) | `amd64`, `arm64` | glibc >= 2.34 |
-| **Red Hat Enterprise Linux** | 9.x | `amd64`, `arm64` | glibc >= 2.34 |
-
-### Host Resource Recommendations (Per 250 Concurrent Calls)
-- **CPU**: 8 dedicated vCPUs (or modern bare-metal cores)
-- **Memory**: 8 GB RAM
-- **File Descriptors**: `LimitNOFILE=65536`
-- **Processes / Threads**: `LimitNPROC=4096`
-- **Network**: 1 Gbps NIC with low jitter connectivity to Google Cloud (`us-central1` recommended)
-
-### Sizing VAD workers and CPU headroom
-
-Measured with `tools/loadtest` (see `docs/benchmarks/capacity.md`; Apple M4 Pro, echo provider, so these are framework-only figures):
-
-- **`vad.workers`**: Silero needs about 76 µs of one core per 32 ms window per call when unbatched, and about 52 µs at batch 8. That is about 2.4 ms of CPU per call-second in the worst case, so one worker (single-threaded) saturates near 400 calls. Size for 50% worker utilisation: `vad.workers = max(2, ceil(peak_concurrent_calls / 200))`. The default of 4 covers about 800 calls. More workers do not help latency below that. Re-measure on slower x86 cores, which can be 2 to 3 times slower per window.
-- **CPU headroom matters more than worker count.** A VAD worker that has not answered a batch in about 150 ms is killed and respawned. When the host or container is CPU-starved (oversubscribed nodes, or a CPU limit that throttles in 100 ms periods), healthy workers can be killed. You then see `voice_vad_worker_restarts_total` increase, `vad_unavailable` admission rejects while every worker is down, and growth in `voice_vad_stale_chunks_total`, all with normal latency. Keep the steady state below about 70% of the CPU allotment. Prefer CPU requests without a tight CPU limit. Do not co-locate a load generator with the server when measuring capacity.
-- **Admission limits**: set `limits.max_sessions` from a load test on the target hardware with real providers, at most about 70% of the session count where the p95 voice-to-voice budget or any of the failure counters above first break.
+Day-2 operation of a running Switchboard: health and drain, rolling deploys, incidents, and the tuning notes for features that need operator attention. Installing and configuring it (build, configuration files, environment variables, Compose, systemd, Cloud Run, TLS, monitoring, security checklist) is in [deployment.md](deployment.md).
 
 ---
 
-## 2. Deployment Path A: Container (Docker / Podman)
-
-### Step 1: Build the Hardened Image
-```bash
-docker build -t govoice:local -f deploy/Dockerfile .
-```
-The Dockerfile builds a multi-stage image running as unprivileged user `govoice` (`uid=10001`), utilizing `tini` as PID 1 to ensure zombie child VAD worker processes are reaped correctly.
-
-### Step 2: Configure Environment & Secrets
-Store secrets in `/etc/govoice/secrets/`:
-```bash
-sudo mkdir -p /etc/govoice/secrets
-sudo chmod 700 /etc/govoice/secrets
-
-# Generate a strong 32+ character admission secret
-openssl rand -hex 32 | sudo tee /etc/govoice/secrets/auth_secret.key
-sudo chmod 600 /etc/govoice/secrets/auth_secret.key
-```
-
-The server also requires the flow store and its secrets. It refuses to start without them:
-
-| Variable | Value |
-|---|---|
-| `TOKEN_SECRET` | Voice token signing secret (32+ characters). |
-| `GOVOICE_MANAGEMENT_API_KEY` | Management API bearer key, at least 32 bytes, different from `TOKEN_SECRET`. |
-| `GOVOICE_DATABASE_DSN` | Flow store DSN: a `postgres://` URL (`config/production.yaml` uses `storage.dialect: postgres`) or a SQLite file path. |
-Provider keys are environment variables too, read on demand and never stored: `GOOGLE_APPLICATION_CREDENTIALS` (path to a mounted service-account JSON file), `GOOGLE_API_KEY`, `XAI_API_KEY`, `OPENAI_API_KEY`, `NVIDIA_API_KEY`, `DEEPGRAM_API_KEY`, `CARTESIA_API_KEY`, `ELEVENLABS_API_KEY` and `MCP_TOKEN_<NAME>` for MCP servers; [providers.md](providers.md) has the full table. Set the ones you use, then create flows with `POST /api/v1/flows` (see `docs/quickstart.md`); `GET /api/v1/providers` shows which are detected. To rotate a key, change the variable and restart. Upgrading from a build with stored credentials: the schema changed in place and nothing is migrated; start from a fresh database and recreate flows.
-
-### Step 3: Run with Docker Compose
-Use the reference compose configuration in `deploy/docker-compose.yaml`:
-```bash
-docker compose -f deploy/docker-compose.yaml up -d
-```
-The container runs with `read_only: true`, `cap_drop: ALL`, and tmpfs mounted at `/tmp`. The compose file also starts a `postgres` service for the flow store; set `TOKEN_SECRET`, `GOVOICE_MANAGEMENT_API_KEY` and `POSTGRES_PASSWORD` before `up`, and put the provider variables in `deploy/govoice.env` (mode 600, read through `env_file`; mount a Google service-account file read-only and point `GOOGLE_APPLICATION_CREDENTIALS` at it). `deploy/smoke.sh` is the keyless release check (no provider key, costs nothing): it builds the image, starts it next to a throwaway Postgres and probes `/ready` and `/metrics` from outside the container, checks that xAI speech is in the build and that SIGTERM exits 0. `deploy/smoke-google.sh` runs the compose stack end to end with a Google service account (`GOOGLE_APPLICATION_CREDENTIALS` on the host, mounted read-only): it creates a flow, checks it is ready and issues a voice token.
-
-**Listeners.** `public_listen_addr` (`:8080`) serves `/ws` and `/health`. `admin_listen_addr` (`127.0.0.1:9090`, container loopback) serves the management API (`/api/v1`, bearer auth) and `/debug/timeline`; compose does not publish it, so run management calls with `docker exec govoice-server curl -H "Authorization: Bearer $GOVOICE_MANAGEMENT_API_KEY" http://127.0.0.1:9090/api/v1/...` (Kubernetes: `kubectl port-forward` or `exec`). `probe_listen_addr` (`0.0.0.0:9092`) serves only `/health`, `/ready` and `/metrics` without auth, so kubelet probes and Prometheus can reach the container; compose publishes it on `127.0.0.1` only. Never bind the admin listener beyond loopback, and keep the probe port off public ingress (cluster network only).
-
----
-
-## 3. Deployment Path B: Systemd Native Service
-
-The systemd unit is a reference file and is not required to run V1.
-
-The layout mirrors the container image (`deploy/Dockerfile`). The server finds `vadworker` and `turnworker` next to its own executable, so all three binaries go in the same directory. Build with `make build` (it uses `-tags xaispeech`; `make ort` fetches the ONNX Runtime for your platform).
-
-### Step 1: Install Binaries, Models and ONNX Runtime
-```bash
-# Create service user
-sudo useradd -r -s /usr/sbin/nologin -d /opt/govoice govoice
-
-# Binaries: server, vadworker and turnworker side by side
-sudo install -d -m 755 /opt/govoice/bin /opt/govoice/models /opt/govoice/lib /opt/govoice/third_party /var/log/govoice
-sudo install -m 755 bin/server bin/vadworker bin/turnworker /opt/govoice/bin/
-
-# Models: Silero VAD (the unit's GOVOICE_MODEL_PATH) and the Smart Turn model (turn.analyzer)
-sudo install -m 644 third_party/silero_vad.onnx /opt/govoice/models/silero_vad.onnx
-sudo install -m 644 third_party/smart_turn_v3.2_cpu.onnx /opt/govoice/third_party/smart_turn_v3.2_cpu.onnx
-
-# ONNX Runtime 1.29.0 for Linux (the unit's GOVOICE_ORT_LIB). The tarball URL and sha256 are in deploy/Dockerfile.
-sudo install -m 644 onnxruntime-linux-x64-1.29.0/lib/libonnxruntime.so /opt/govoice/lib/libonnxruntime.so
-sudo chown -R root:root /opt/govoice && sudo chown govoice:govoice /var/log/govoice
-```
-
-### Step 2: Install Configuration and Systemd Unit
-```bash
-sudo mkdir -p /etc/govoice
-sudo cp config/production.yaml /etc/govoice/production.yaml   # the unit reads production.yaml
-# On a host (not a container) probe_listen_addr "0.0.0.0:9092" binds every host interface: set it to
-# "127.0.0.1:9092" (or the private interface Prometheus scrapes) or firewall 9092 from the internet.
-
-# Copy and enable systemd unit
-sudo cp deploy/govoice.service /etc/systemd/system/govoice.service
-# /etc/govoice/env (mode 600) must set TOKEN_SECRET, GOVOICE_MANAGEMENT_API_KEY and
-# GOVOICE_DATABASE_DSN, plus the provider variables you use (see Path A, Step 2).
-sudo systemctl daemon-reload
-sudo systemctl enable --now govoice.service
-```
-
-### Step 3: Inspect Service Status
-```bash
-sudo systemctl status govoice.service
-journalctl -u govoice.service -f
-```
-
----
-
-## 4. Reverse Proxy & TLS Termination (Nginx)
-
-The public edge (`:8080`) must terminate TLS via a reverse proxy (e.g., Nginx or Envoy).
-
-### Install Nginx Configuration
-```bash
-sudo cp deploy/nginx.conf /etc/nginx/sites-available/govoice.conf
-sudo ln -s /etc/nginx/sites-available/govoice.conf /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
-```
-
-### Security Highlights of `deploy/nginx.conf`:
-1. **WSS Upgrades**: Passes `Upgrade` and `Connection "Upgrade"` headers properly.
-2. **Access Log Redaction**: Automatically redacts query tokens (`token=[REDACTED]`).
-3. **Admin Isolation**: the public vhost returns 404 for `/metrics` and `/debug/`. The management API listener (`9090`) is container loopback and never proxied; the internal-only vhost on `9091` proxies just `/health`, `/ready` and `/metrics` to the probe listener (`9092`).
-
----
-
-## 5. Routine Operations & Maintenance
+## 1. Routine Operations & Maintenance
 
 ### Checking Health & Readiness
 ```bash
@@ -185,7 +52,7 @@ docker stop -t 60 govoice-server   # at least drain_timeout + 5 s (50 s in produ
 
 ---
 
-## 6. Incident Troubleshooting & Failure Recovery
+## 2. Incident Troubleshooting & Failure Recovery
 
 ### Incident 1: Native VAD Worker Crash
 - **Symptoms**: Alert `GovoiceVADWorkerRestarts` (`increase(voice_vad_worker_restarts_total[10m]) > 5`) or `GovoiceVADUnavailable` (admission rejects with `reason="vad_unavailable"`).
@@ -198,7 +65,8 @@ docker stop -t 60 govoice-server   # at least drain_timeout + 5 s (50 s in produ
 ### Incident 2: Leaked Goroutines / Leaked Work
 - **Symptoms**: Alert `GovoiceLeakedWork` (`increase(voice_leaked_work_total[15m]) > 0`; `voice_leaked_sessions_total` counts the affected sessions).
 - **Underlying Mechanism**: A session was terminated, but a managed child task failed to exit within `TeardownTimeout: 2s`.
-- **Action Required**: Query the admin listener's `/debug/timeline?session=<ID>` for the affected session (inside the container, port 9090). Check if an external provider call hung without respecting context cancellation.
+- **Likely causes**: an external provider client ignored context cancellation, or a socket write blocked indefinitely without honoring write deadlines.
+- **Action Required**: Query the admin listener's `/debug/timeline?session=<ID>` for the affected session (inside the container, port 9090) to see which provider call was in flight at teardown. Check if an external provider call hung without respecting context cancellation.
 
 ### Incident 3: Cloud Provider Circuit Breakers Tripped
 - **Symptoms**: alert `GovoiceProviderCircuitOpen` (`voice_{stt,llm,tts}_circuit_state{provider="..."} == 1`; 0 = closed, 1 = open, 2 = half-open; Nvidia has one series per endpoint with an `endpoint` label; `echo` and `offline` have one series each, `endpoint="simulated"` and `endpoint="local"`); `/ready` lists the circuit as `open` under `circuits` (it stays 200, because only flows using that provider are affected). `voice_provider_errors_total{provider,stage}` shows which provider the errors came from (`failover` when the stage had fallbacks). The timelines (`/debug/timeline?session=<ID>`) of every live call whose start step uses that provider show the `circuit_state` change (the circuit is shared, so a call may show a change other calls caused) and their own `provider_retry` events. OpenAI-compatible, Deepgram, Cartesia and ElevenLabs circuits are not reported on the timeline (no observer); their calls show retries only.

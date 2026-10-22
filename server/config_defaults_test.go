@@ -18,7 +18,7 @@ func loadYAML(t *testing.T, body string) (*Config, error) {
 	return LoadConfig(p)
 }
 
-// Every default documented in docs/ (operations_runbook, quickstart, config
+// Every default documented in docs/ (operations, quickstart, config
 // comments) must come out of LoadConfig for a minimal YAML.
 func TestLoadConfig_DocumentedDefaults(t *testing.T) {
 	c, err := loadYAML(t, "profile: development\n")

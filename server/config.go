@@ -129,7 +129,7 @@ type Config struct {
 	} `yaml:"stt"`
 
 	// Failover tunes how long a flow stage with fallbacks waits on its
-	// primary (see docs/operations_runbook.md). Zero means the default.
+	// primary (see docs/operations.md). Zero means the default.
 	Failover struct {
 		// LLMBudget: no fallback is started later than this after the
 		// generation began (default 60s).

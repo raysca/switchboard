@@ -11,7 +11,7 @@ groups:
         labels: {severity: page}
         annotations:
           summary: "go-voice instance {{ $labels.instance }} is not scraped"
-          description: "Probe listener unreachable. Check the container, `/ready` and docs/operations_runbook.md."
+          description: "Probe listener unreachable. Check the container, `/ready` and docs/operations.md."
       - alert: GovoiceDraining
         expr: voice_draining == 1
         for: 10m

@@ -1,10 +1,10 @@
 # Switchboard deployment guide
 
-For operators who run Switchboard outside a laptop. It covers what the repository ships for deployment: the container image, a Docker Compose stack, a reference systemd unit, an nginx reverse proxy, and a Google Cloud Run demo deployment. Day-2 work (drain behaviour, incidents, tuning) is in [operations.md](operations_runbook.md); what the repository does not provide is listed at the end ([Not provided](#18-not-provided-by-this-repository)).
+For operators who run Switchboard outside a laptop. It covers what the repository ships for deployment: the container image, a Docker Compose stack, a reference systemd unit, an nginx reverse proxy, and a Google Cloud Run demo deployment. Day-2 work (drain behaviour, incidents, tuning) is in [operations.md](operations.md); what the repository does not provide is listed at the end ([Not provided](#18-not-provided-by-this-repository)).
 
 The container image is the V1 distribution. The systemd unit is a reference file and is not required to run V1. The runtime image is Debian bookworm. A host install on Ubuntu, Debian or RHEL is not part of this release, and the host numbers below are planning guidance, not a measured result.
 
-<!-- src: docs/operations_runbook.md:9,77; deploy/Dockerfile:52 -->
+<!-- src: former runbook; deploy/Dockerfile:52 -->
 
 Most paragraphs end with an HTML `src:` comment naming the files (and lines) that support it. The comments are invisible when rendered and keep this guide auditable; update them when you change the facts.
 
@@ -44,25 +44,25 @@ Compose publishes 8080 and 9092 on `127.0.0.1` only. It does **not** publish 909
 
 - Host planning guidance, not measured: 8 vCPU and 8 GB RAM per 250 concurrent calls, `LimitNOFILE=65536`, `LimitNPROC=4096`, and a low-jitter path to Google (`us-central1` recommended). The systemd unit sets the two limits.
 
-<!-- src: docs/operations_runbook.md:19-24; deploy/govoice.service:31-34 -->
+<!-- src: former runbook; deploy/govoice.service:31-34 -->
 
 - Measured, framework only (echo provider on an Apple M4 Pro, so no provider latency and not your hardware): Silero costs about 76 microseconds of one core per 32 ms window per call unbatched and about 52 microseconds at batch 8, so size `vad.workers = max(2, ceil(peak_concurrent_calls / 200))`. Keep steady-state CPU below about 70% of the allotment and prefer CPU requests without a tight CPU limit: a VAD worker that has not answered for about 150 ms is killed and respawned, so a throttled container shows `voice_vad_worker_restarts_total` and `vad_unavailable` rejects with normal latency. Set `limits.max_sessions` from a load test with your real providers, at most about 70% of the count where the p95 voice-to-voice budget or a failure counter first breaks. A 2-CPU container held 24 echo sessions at 0.58 cores (41.4 sessions per core).
 
-<!-- src: docs/benchmarks/capacity.md:61; docs/benchmarks/container-soak-churn-chaos.md:30-37; docs/operations_runbook.md:26-32 (moved here) -->
+<!-- src: docs/benchmarks/capacity.md:61; docs/benchmarks/container-soak-churn-chaos.md:30-37; former runbook  -->
 
 - Limits as shipped: compose caps the server at 4 CPU and 4096M (reservation 1 CPU and 1024M); the Cloud Run manifest sets 2 CPU and 2Gi, and `config/cloudrun.yaml` sets `max_sessions: 10`.
 
 <!-- src: deploy/docker-compose.yaml:50-57; deploy/gcp/govoice.service.yaml:32-35; config/cloudrun.yaml:41 -->
 
-- Google speech quota: about 100 concurrently speaking calls per project for Chirp 3 HD streaming (see [operations.md](operations_runbook.md#tts-streaming)).
+- Google speech quota: about 100 concurrently speaking calls per project for Chirp 3 HD streaming (see [operations.md](operations.md#tts-streaming)).
 
-<!-- src: docs/operations_runbook.md:256 -->
+<!-- src: docs/operations.md:124 -->
 
 ## 3. Build
 
 - Image: `docker build -t govoice:local -f deploy/Dockerfile .`. Build arguments are `VERSION`, `COMMIT` (both exported on the `voice_build_info` metric) and `BUILD_TAGS` (default `xaispeech`). The deploy workflow builds with `--build-arg VERSION="${SHA::7}" --build-arg COMMIT="${SHA}"`.
 
-<!-- src: docs/operations_runbook.md:40; deploy/Dockerfile:39-44; server/metrics.go:171; .github/workflows/deploy.yml:55 -->
+<!-- src: former runbook; deploy/Dockerfile:39-44; server/metrics.go:171; .github/workflows/deploy.yml:55 -->
 
 - What the image contains: `/opt/govoice/bin/{server,vadworker,turnworker}`, the Silero VAD model and the Smart Turn model (both sha256-checked at build), ONNX Runtime 1.29.0 (sha256-checked per architecture), `/etc/govoice/production.yaml` and `/etc/govoice/cloudrun.yaml`, and the admin UI embedded in the server binary (Node is a build stage only). It runs as user `govoice` (uid 10001) behind `tini`; the default command is `server -config /etc/govoice/production.yaml`. Exposed ports are 8080, 9090 and 9092.
 
@@ -74,7 +74,7 @@ Compose publishes 8080 and 9092 on `127.0.0.1` only. It does **not** publish 909
 
 - Host binaries: `make ort && make build` writes `bin/server`, `bin/vadworker` and `bin/turnworker`, built with `-tags xaispeech`. `make ui-embed` builds the admin UI into the server binary so that `public_admin` can serve it. The server finds `vadworker` and `turnworker` next to its own executable, so keep the three together.
 
-<!-- src: Makefile:19,26-45; docs/operations_runbook.md:79 -->
+<!-- src: Makefile:19,26-45; former runbook -->
 
 - Release hardening: `make release-security` checks that every `FROM` line and every compose image is digest-pinned, runs `govulncheck` v1.8.0, writes a module SBOM to `deploy/sbom.json` (git-ignored), builds the image as `govoice:release-security` and checks that the binaries and model exist in it, then scans the image with Trivy (falling back to Grype, then to a Trivy container). The scan fails on any fixed HIGH or CRITICAL finding.
 
@@ -174,9 +174,9 @@ Migrations run forward-only at startup and a failed migration aborts the start. 
 1. Put TLS files in a `certs` directory next to `nginx.conf` (git-ignored): `voice.example.com.crt` and `.key` for the public vhost, and `admin.crt` and `.key` for the internal 9091 vhost. The paths are fixed by `nginx.conf` and mounted by compose at `/etc/ssl/certs`; replace `voice.example.com` in the two `server_name` lines and in the file names with your host. For a throwaway test, `deploy/smoke-google.sh` creates a self-signed pair with `openssl req -x509 -newkey rsa:2048 -nodes -keyout deploy/certs/voice.example.com.key -out deploy/certs/voice.example.com.crt -days 2 -subj '/CN=localhost'` and copies it to `admin.crt` and `admin.key`.
 2. Put the provider variables in `deploy/govoice.env` and export `TOKEN_SECRET`, `GOVOICE_MANAGEMENT_API_KEY` and `POSTGRES_PASSWORD` (compose refuses to start without them).
 3. Start: `docker compose -f deploy/docker-compose.yaml up -d`.
-4. Call the management API from inside the container, because compose does not publish port 9090: `docker exec govoice-server curl -H "Authorization: Bearer $GOVOICE_MANAGEMENT_API_KEY" http://127.0.0.1:9090/api/v1/...`. Then follow [quickstart.md](quickstart.md#5-check-providers-create-a-flow-issue-a-token) to check providers, create a flow and issue a voice token. This nginx proxies only `/ws` and `/health`, so the admin UI is not reachable through it; the UI needs `public_admin` ([section 10](#10-path-c-google-cloud-run-the-demo-deployment)).
+4. Call the management API from inside the container, because compose does not publish port 9090 (on Kubernetes use `kubectl port-forward` or `exec`): `docker exec govoice-server curl -H "Authorization: Bearer $GOVOICE_MANAGEMENT_API_KEY" http://127.0.0.1:9090/api/v1/...`. Then follow [quickstart.md](quickstart.md#5-check-providers-create-a-flow-issue-a-token) to check providers, create a flow and issue a voice token. This nginx proxies only `/ws` and `/health`, so the admin UI is not reachable through it; the UI needs `public_admin` ([section 10](#10-path-c-google-cloud-run-the-demo-deployment)).
 
-<!-- src: deploy/nginx.conf:58,66,69-70,119-120; deploy/docker-compose.yaml:41-42,85-87; deploy/smoke-google.sh:18-23; docs/operations_runbook.md:67,71; server/deploy_contract_test.go (TestNginxCertificatesAreMounted) -->
+<!-- src: deploy/nginx.conf:58,66,69-70,119-120; deploy/docker-compose.yaml:41-42,85-87; deploy/smoke-google.sh:18-23; former runbook; server/deploy_contract_test.go (TestNginxCertificatesAreMounted) -->
 
 Container hardening as shipped: user 10001, read-only root filesystem, `cap_drop: ALL`, `no-new-privileges`, a 256M `noexec` tmpfs on `/tmp`, a named volume for `/var/log/govoice`, a `/health` healthcheck, `stop_grace_period: 60s`, and the server waits for the Postgres healthcheck. `tini` is PID 1: it reaps the worker child processes and forwards SIGTERM to the server for the drain.
 
@@ -213,11 +213,11 @@ journalctl -u govoice.service -f
 
 Before starting, set `probe_listen_addr` in the copied `production.yaml` to `127.0.0.1:9092` (or the private interface Prometheus scrapes), or firewall port 9092: on a host, `0.0.0.0:9092` binds every interface. The unit sets `Restart=always`, `TimeoutStopSec=60s` (longer than `drain_timeout` plus the 5 s process margin), `LimitNOFILE`/`LimitNPROC`, and sandboxing (`ProtectSystem=strict`, `NoNewPrivileges`, `ReadWritePaths=/tmp /var/log/govoice`). Because of `ProtectSystem=strict`, a SQLite database must live under one of those writable paths.
 
-<!-- src: docs/operations_runbook.md:79-118; deploy/govoice.service:17-45; config/production.yaml:12 -->
+<!-- src: former runbook; deploy/govoice.service:17-45; config/production.yaml:12 -->
 
 nginx on a host: `deploy/nginx.conf` is a complete `nginx.conf` (top-level `user`, `events` and `http`), not a site fragment, so install it as `/etc/nginx/nginx.conf` rather than into `sites-enabled`, then `sudo nginx -t && sudo systemctl reload nginx`. It resolves upstreams through Docker's DNS (`resolver 127.0.0.11`) and names them `govoice:8080` and `govoice:9092`: change the resolver and both upstream names for a host install, and check the `user nginx` line against your distribution.
 
-<!-- src: deploy/nginx.conf:4-15,50-52,79,89,130; docs/operations_runbook.md:127-131 (the runbook copies it into sites-available, which does not load a file of this shape) -->
+<!-- src: deploy/nginx.conf:4-15,50-52,79,89,130; former runbook (the runbook copies it into sites-available, which does not load a file of this shape) -->
 
 ## 10. Path C: Google Cloud Run (the demo deployment)
 
@@ -238,7 +238,7 @@ This is the deployment the repository automates, and it is a **demo**, not a pro
 
 **Signing in to the admin UI.** After the first deploy, `gcloud secrets versions access latest --secret=GOVOICE_MANAGEMENT_API_KEY --project <project> | scripts/admin-link.sh https://<service-url>` (also printed by the bootstrap), or `make admin-link URL=https://<service-url>` with the key in `GOVOICE_MANAGEMENT_API_KEY`. The link is `<url>/#key=<key>`: the key is in the URL fragment, which browsers never send to a server, and the admin UI reads it into memory and removes it from the address bar and history at once. The link is a credential: do not paste it into chat or tickets. The hosted UI never sends a keyless "are you signed in" request (that would count as a failed login below).
 
-<!-- src: deploy/gcp/bootstrap.sh:132-134; Makefile:203; docs/operations_runbook.md:290 -->
+<!-- src: deploy/gcp/bootstrap.sh:132-134; Makefile:203; former runbook -->
 
 **Local rehearsal.** `deploy/rehearsal/` runs the production image, the dentistry MCP server and an nginx that behaves like Cloud Run's front end on `http://localhost:8080`, with the development profile. Follow [its README](../deploy/rehearsal/README.md); it states what the rehearsal does not prove.
 
@@ -255,7 +255,7 @@ By default the management API (`/api/v1`) lives on the loopback admin listener a
 - `GET /api/v1/server-config` (key required, never cached) reports `client_ip` and `secure`; check it after each deploy. If `client_ip` is a Google front-end or load-balancer address, or `secure` is false, add the proxy's CIDR to `tls.trusted_proxies`; otherwise every caller shares one bucket in the per-IP rate limits and the handshake limiter (the auth throttle is global and unaffected). `deploy/smoke-cloudrun.sh` checks this for you.
 - End-to-end check: `make e2e-oneport` (echo provider, no secrets).
 
-<!-- src: moved from docs/operations_runbook.md:286-296; server/api_routes.go:35; server/config_validate.go:114-118; deploy/smoke-cloudrun.sh:30-39; Makefile:180 -->
+<!-- src: moved from the former runbook; server/api_routes.go:35; server/config_validate.go:114-118; deploy/smoke-cloudrun.sh:30-39; Makefile:180 -->
 
 ## 11. TLS and the reverse proxy
 
@@ -265,19 +265,19 @@ The public edge must terminate TLS, either at a proxy or in the server. `deploy/
 
 The server can also terminate TLS itself with `tls.cert_file` and `tls.key_file`; the production profile needs either that or `tls.trusted_proxy_mode` with `tls.trusted_proxies`. With a trusted proxy the client address is the right-most untrusted `X-Forwarded-For` entry (else `X-Real-IP`), and the proxy must be listed in `tls.trusted_proxies`, otherwise every caller shares the proxy's per-IP bucket. A multi-instance edge needs an upstream block with `proxy_next_upstream error http_503`; the repository does not provide one.
 
-<!-- src: server/server.go:409,1022-1036; server/config_validate.go:108-113; transport/ws/tls.go:55-86; docs/operations_runbook.md:170,173 -->
+<!-- src: server/server.go:409,1022-1036; server/config_validate.go:108-113; transport/ws/tls.go:55-86; docs/operations.md:37,40 -->
 
 ## 12. Health, readiness and probes
 
 `/health` is a cheap local liveness check (`{"status":"live"}`). `/ready` answers 200 `{"status":"ready","circuits":{...}}` only when initialisation has finished, the server is not draining, admission is enabled, a VAD worker is online and the flow store answers a ping; otherwise 503 `{"status":"unready","reason":...}`. Provider circuits are reported for diagnosis and never make the server unready. Point readiness at `/ready` on the probe port (9092) and liveness at `/health` (9092 or public 8080), and never use `/ready` for liveness: it is 503 for the whole drain and would kill the instance mid-drain. A Kubernetes sketch (the repository ships no manifests): `terminationGracePeriodSeconds: 60`, `lifecycle.preStop.exec.command: ["sleep","5"]`, `readinessProbe.httpGet: {path: /ready, port: 9092}`, `livenessProbe.httpGet: {path: /health, port: 9092}`.
 
-<!-- src: docs/observability.md:28-43; docs/operations_runbook.md:145-149,168,184 -->
+<!-- src: docs/observability.md:28-43; docs/operations.md:12-16,35,51 -->
 
 ## 13. Drain, rolling upgrades and rollback
 
-On SIGTERM the server marks itself unready (`/ready` returns 503, `voice_draining 1`), refuses new calls with HTTP 503 `server_draining` while keeping the public listener open, lets active calls run until `limits.drain_timeout` (45 s in `production.yaml`; `voice_drain_sessions_remaining` shows the rest), then sends each remaining call a fatal RTVI error `server_draining` and close 1001 and force-closes it. It exits 0 when all calls ended inside the deadline and 1 when calls had to be force-closed. The full sequence is in the [operations runbook](operations_runbook.md#graceful-drain-then-cancel-shutdown).
+On SIGTERM the server marks itself unready (`/ready` returns 503, `voice_draining 1`), refuses new calls with HTTP 503 `server_draining` while keeping the public listener open, lets active calls run until `limits.drain_timeout` (45 s in `production.yaml`; `voice_drain_sessions_remaining` shows the rest), then sends each remaining call a fatal RTVI error `server_draining` and close 1001 and force-closes it. It exits 0 when all calls ended inside the deadline and 1 when calls had to be force-closed. The full sequence is in the [operations guide](operations.md#graceful-drain-then-cancel-shutdown).
 
-<!-- src: server/server.go:1093-1175; cmd/server/main.go:129-133; config/production.yaml:55; docs/operations_runbook.md:152-165 -->
+<!-- src: server/server.go:1093-1175; cmd/server/main.go:129-133; config/production.yaml:55; docs/operations.md:19-32 -->
 
 - The grace period (`docker stop -t`, Compose `stop_grace_period`, systemd `TimeoutStopSec`, Kubernetes `terminationGracePeriodSeconds`) must be at least `drain_timeout` + `preStop` sleep + 5 s; the server budgets `drain_timeout + 5s`. Production: 45 + 5 + 5, so 60 s or more. Compose and the unit use 60 s; `docker stop` without `-t 60` defaults to 10 s and kills the process mid-drain.
 - Add `preStop: sleep 5` so endpoint removal reaches the load balancer before the drain starts, enable load-balancer connection draining, and roll one instance at a time.
@@ -287,21 +287,21 @@ On SIGTERM the server marks itself unready (`/ready` returns 503, `voice_drainin
 - After a crash, the next start ends the calls the old process left `active` in storage (see the operations runbook).
 - Cloud Run: the deploy workflow promotes a smoke-tested candidate as described in [section 10](#10-path-c-google-cloud-run-the-demo-deployment). After promotion the repository has no rollback script.
 
-<!-- src: server/lifecycle.go:5-11; deploy/docker-compose.yaml:49; deploy/govoice.service:25-27; server/lifecycle_budget_test.go; docs/operations_runbook.md:158,169-172,176-177,179-183; transport/token/token.go:27,173 -->
+<!-- src: server/lifecycle.go:5-11; deploy/docker-compose.yaml:49; deploy/govoice.service:25-27; server/lifecycle_budget_test.go; docs/operations.md:25,36-39,43-44,46-50; transport/token/token.go:27,173 -->
 
 ## 14. Scaling and limits
 
-The `limits` block in `config/production.yaml` sets the ceilings: `max_sessions` (250), `max_sessions_per_principal` (5), `max_sessions_per_ip` (5), `max_pending_handshakes` (100), `upgrade_timeout`, `ready_timeout`, `max_call_duration` (60m), `ping_interval` (15s) and `ping_timeout` (10s), and `drain_timeout` (45s); `max_sessions_per_flow`, `start_rate_per_principal` and `handshake_rate_per_ip` are commented defaults. A refused call gets an RTVI error (`capacity_exceeded`, `principal_limit`, `flow_limit` or `rate_limited`) and close 1013, counted in `voice_admission_rejects_total{reason}` with reasons `session_limit`, `vad_unavailable`, `principal_limit`, `flow_limit` and `start_rate_limit`. WebSocket upgrades are limited per source IP (`limits.handshake_rate_per_ip`, default 20 per second) and answered with HTTP 429 before the upgrade. Details are in the [operations runbook](operations_runbook.md#rolling-deploys-and-session-affinity).
+The `limits` block in `config/production.yaml` sets the ceilings: `max_sessions` (250), `max_sessions_per_principal` (5), `max_sessions_per_ip` (5), `max_pending_handshakes` (100), `upgrade_timeout`, `ready_timeout`, `max_call_duration` (60m), `ping_interval` (15s) and `ping_timeout` (10s), and `drain_timeout` (45s); `max_sessions_per_flow`, `start_rate_per_principal` and `handshake_rate_per_ip` are commented defaults. A refused call gets an RTVI error (`capacity_exceeded`, `principal_limit`, `flow_limit` or `rate_limited`) and close 1013, counted in `voice_admission_rejects_total{reason}` with reasons `session_limit`, `vad_unavailable`, `principal_limit`, `flow_limit` and `start_rate_limit`. WebSocket upgrades are limited per source IP (`limits.handshake_rate_per_ip`, default 20 per second) and answered with HTTP 429 before the upgrade. Details are in the [operations guide](operations.md#rolling-deploys-and-session-affinity).
 
-<!-- src: config/production.yaml:36-56; server/config_defaults.go:36-38; docs/operations_runbook.md:173-174 -->
+<!-- src: config/production.yaml:36-56; server/config_defaults.go:36-38; docs/operations.md:40-41 -->
 
 Several replicas need Postgres and sticky token issuance plus `/ws` (section 13), and the same `limits.max_call_duration` on every replica. Live-call control and draft test calls are held in the memory of one instance. SQLite and the Cloud Run demo are single-instance by design.
 
-<!-- src: docs/storage.md; docs/operations_runbook.md:172,177,182,244; deploy/gcp/govoice.service.yaml:17 -->
+<!-- src: docs/storage.md; docs/operations.md:39,44,49,112; deploy/gcp/govoice.service.yaml:17 -->
 
 ## 15. Monitoring and alerts
 
-Prometheus scrapes `:9092/metrics` (the probe listener). `deploy/alerts/govoice.rules.yml` holds 15 alert rules, tuned for `max_sessions: 250`: `GovoiceDown`, `GovoiceDraining`, `GovoiceSessionFailures`, `GovoiceNearCapacity`, `GovoiceAdmissionRejecting`, `GovoiceVADUnavailable`, `GovoiceVADWorkerRestarts`, `GovoiceLeakedWork`, `GovoiceGoroutineGrowth`, `GovoiceProviderCircuitOpen`, `GovoiceProviderErrors`, `GovoiceVoiceToVoiceSlow`, `GovoiceAuthFailureSpike`, `GovoiceSlowClients` and `GovoiceOTelLosingSpans`. A test fails when a rule or this document names a metric the server does not emit. Logs are JSON when `observability.json_format` is true (as in `production.yaml`), and the per-session timeline is on the admin listener (`/debug/timeline?session=<ID>`). OpenTelemetry export is optional and off by default. The metric catalogue and the OTel keys are in [observability.md](observability.md); the response to each alert is in the [operations runbook](operations_runbook.md).
+Prometheus scrapes `:9092/metrics` (the probe listener). `deploy/alerts/govoice.rules.yml` holds 15 alert rules, tuned for `max_sessions: 250`: `GovoiceDown`, `GovoiceDraining`, `GovoiceSessionFailures`, `GovoiceNearCapacity`, `GovoiceAdmissionRejecting`, `GovoiceVADUnavailable`, `GovoiceVADWorkerRestarts`, `GovoiceLeakedWork`, `GovoiceGoroutineGrowth`, `GovoiceProviderCircuitOpen`, `GovoiceProviderErrors`, `GovoiceVoiceToVoiceSlow`, `GovoiceAuthFailureSpike`, `GovoiceSlowClients` and `GovoiceOTelLosingSpans`. A test fails when a rule or this document names a metric the server does not emit. Logs are JSON when `observability.json_format` is true (as in `production.yaml`), and the per-session timeline is on the admin listener (`/debug/timeline?session=<ID>`). OpenTelemetry export is optional and off by default. The metric catalogue and the OTel keys are in [observability.md](observability.md); the response to each alert is in the [operations guide](operations.md).
 
 <!-- src: deploy/alerts/govoice.rules.yml:1-110; config/production.yaml:79-83; docs/observability.md:47-158; server/docs_contract_test.go:72 -->
 
@@ -348,7 +348,7 @@ Prometheus scrapes `:9092/metrics` (the probe listener). `deploy/alerts/govoice.
 | `smoke-cloudrun.sh` reports the server does not see https, or `client_ip` is a private address | the proxy chain is trusted wrongly | correct `tls.trusted_proxies` |
 | xAI TTS fails behind a proxy that blocks WebSockets | streaming TTS cannot connect | set `providers.xai_tts.disable_streaming: true` |
 
-<!-- src: server/management.go:36-47,84-91; server/config_validate.go:100-125; deploy/smoke-cloudrun.sh:33-39; docs/operations_runbook.md:158,172-173,191-194,204-209,254; deploy/nginx.conf:50-52 -->
+<!-- src: server/management.go:36-47,84-91; server/config_validate.go:100-125; deploy/smoke-cloudrun.sh:33-39; docs/operations.md:25,39-40,58-61,72-77,122; deploy/nginx.conf:50-52 -->
 
 Pre-deploy checklist:
 
