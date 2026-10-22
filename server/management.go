@@ -184,7 +184,7 @@ func (m *management) close() {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	m.stopSync(ctx) // before the store closes; a no-op once Shutdown stopped it
+	m.stopSync(ctx) // before the store closes
 	cancel()
 	if m.retention != nil {
 		m.retention.Stop()

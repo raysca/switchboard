@@ -77,10 +77,9 @@ type TurnDTO struct {
 
 // TurnToolDTO is one tool call of a turn; never its arguments or result.
 type TurnToolDTO struct {
-	Name          string `json:"name"`
-	Status        string `json:"status"`
-	DurationMS    int64  `json:"duration_ms"`
-	ErrorCategory string `json:"error_category,omitempty"`
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	DurationMS int64  `json:"duration_ms"`
 }
 
 // SessionTracesDTO aggregates trace spans, events, and tool calls for timeline rendering.
@@ -277,7 +276,7 @@ func (h tracesHandler) turns(w http.ResponseWriter, r *http.Request, id, request
 		if !c.EndedAt.IsZero() {
 			ms = max(c.EndedAt.Sub(c.StartedAt).Milliseconds(), 0)
 		}
-		byTurn[c.TurnID] = append(byTurn[c.TurnID], TurnToolDTO{Name: c.RemoteName, Status: c.Status, DurationMS: ms, ErrorCategory: c.ErrorCategory})
+		byTurn[c.TurnID] = append(byTurn[c.TurnID], TurnToolDTO{Name: c.RemoteName, Status: c.Status, DurationMS: ms})
 	}
 	dtos := make([]TurnDTO, 0, len(turns))
 	for _, turn := range turns {

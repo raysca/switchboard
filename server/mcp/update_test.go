@@ -26,26 +26,6 @@ func mcptestURL(t *testing.T) (*mcptest.Server, string) {
 	return srv, ts.URL
 }
 
-func TestReasonCode(t *testing.T) {
-	cases := map[error]string{
-		ErrInvalidEndpoint:      "invalid_endpoint",
-		ErrDestinationDenied:    "destination_denied",
-		ErrInvalidAuthEnv:       "invalid_auth_env",
-		ErrInvalidMetadata:      "invalid_metadata",
-		ErrTransportUnsupported: "transport_unsupported",
-		ErrLocalDisabled:        "transport_unsupported",
-		ErrNotFound:             "",
-	}
-	for err, want := range cases {
-		if got := ReasonCode(err); got != want {
-			t.Errorf("ReasonCode(%v)=%q, want %q", err, got, want)
-		}
-	}
-	if got := ReasonCode(errors.Join(errors.New("x"), ErrInvalidEndpoint)); got != "invalid_endpoint" {
-		t.Errorf("wrapped: %q", got)
-	}
-}
-
 func TestUpdateNameOnlyKeepsStateAndDoesNotSync(t *testing.T) {
 	r := newSyncRig(t)
 	ctx := context.Background()
@@ -123,6 +103,9 @@ func TestUpdateRejectsWithReasonCodes(t *testing.T) {
 		if err != nil && strings.Contains(err.Error(), "10.0.0.1") {
 			t.Errorf("%s: error reveals the address: %v", c.name, err)
 		}
+	}
+	if got := ReasonCode(ErrLocalDisabled); got != "transport_unsupported" {
+		t.Errorf("local disabled: reason %q", got)
 	}
 	if _, err = svc.Update(ctx, "missing", ServerUpdate{Name: ptr("x")}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing: %v", err)

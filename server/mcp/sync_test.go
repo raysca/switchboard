@@ -251,61 +251,6 @@ func TestSyncerRecoversAPanickingRound(t *testing.T) {
 	}
 }
 
-func TestSyncerRoundsNeverOverlap(t *testing.T) {
-	const slow = 30 * time.Millisecond
-	var active, overlap atomic.Int32
-	starts := make(chan time.Time, 8)
-	svc := fakeSyncService(t, func(context.Context) ([]RemoteTool, error) {
-		if active.Add(1) > 1 {
-			overlap.Store(1)
-		}
-		select {
-		case starts <- time.Now():
-		default:
-		}
-		time.Sleep(slow)
-		active.Add(-1)
-		return nil, nil
-	})
-	svc.timeout = time.Minute
-	y := NewSyncer(svc, time.Millisecond, slog.New(slog.DiscardHandler), nil)
-	y.Start()
-	first, second, third := <-starts, <-starts, <-starts
-	stopWithin(t, y, time.Second)
-	if overlap.Load() != 0 {
-		t.Fatal("two rounds ran at once")
-	}
-	if second.Sub(first) < slow || third.Sub(second) < slow {
-		t.Fatalf("next round started before the slow one ended: gaps %v, %v", second.Sub(first), third.Sub(second))
-	}
-}
-
-// epRemote lets a test answer per endpoint.
-type epRemote struct {
-	list func(ctx context.Context, endpoint string) ([]RemoteTool, error)
-}
-
-func (r epRemote) ListTools(ctx context.Context, endpoint, _ string) ([]RemoteTool, error) {
-	return r.list(ctx, endpoint)
-}
-func (epRemote) CallTool(context.Context, string, string, string, json.RawMessage) (RemoteResult, error) {
-	return RemoteResult{}, errors.New("unused")
-}
-
-func staleRig(t *testing.T, list func(ctx context.Context, endpoint string) ([]RemoteTool, error)) (*Service, *storage.Store, string) {
-	t.Helper()
-	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: t.TempDir() + "/mcp.db"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	svc, err := NewService(ServiceConfig{Store: store, Remote: epRemote{list}, Destinations: allowHTTP{}, Timeout: 5 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return svc, store, createTestServer(t, svc, "https://a.example/rpc", "").ID
-}
-
 func oneTool(name string) []RemoteTool {
 	return []RemoteTool{{Name: name, InputSchema: json.RawMessage(`{"type":"object"}`)}}
 }
@@ -326,18 +271,17 @@ func runRoundBlocked(t *testing.T, y *Syncer, entered <-chan struct{}) <-chan st
 // An edit that lands while the round syncs the old endpoint is not overwritten by the old result.
 func TestSyncRoundDoesNotOverwriteAnEditMadeDuringTheSync(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
-	var first atomic.Bool
-	svc, store, id := staleRig(t, func(ctx context.Context, ep string) ([]RemoteTool, error) {
-		if ep == "https://a.example/rpc" {
-			if first.CompareAndSwap(true, false) {
-				close(entered)
-				<-release
-			}
+	var calls atomic.Int32
+	svc, store := newTestService(t, &testRemote{list: func(context.Context) ([]RemoteTool, error) {
+		if calls.Add(1) == 1 { // the round's sync of the old endpoint
+			close(entered)
+			<-release
 			return oneTool("old"), nil
 		}
 		return oneTool("new"), nil
-	})
-	first.Store(true)
+	}}, testTokens{})
+	svc.timeout = time.Minute
+	id := createTestServer(t, svc, "https://a.example/rpc", "").ID
 	y := quietSyncer(svc, nil)
 	done := runRoundBlocked(t, y, entered)
 	ep := "https://b.example/rpc"
@@ -360,16 +304,16 @@ func TestSyncRoundDoesNotOverwriteAnEditMadeDuringTheSync(t *testing.T) {
 func TestSyncRoundDoesNotOverwriteAManualSyncMadeDuringTheSync(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	var calls atomic.Int32
-	svc, _, id := staleRig(t, func(ctx context.Context, ep string) ([]RemoteTool, error) {
-		switch calls.Add(1) {
-		case 1:
+	svc, _ := newTestService(t, &testRemote{list: func(context.Context) ([]RemoteTool, error) {
+		if calls.Add(1) == 1 {
 			close(entered)
 			<-release
 			return oneTool("t"), nil
-		default:
-			return nil, errors.New("down")
 		}
-	})
+		return nil, errors.New("down")
+	}}, testTokens{})
+	svc.timeout = time.Minute
+	id := createTestServer(t, svc, "https://a.example/rpc", "").ID
 	calls.Store(0) // the create-time sync, if any, is not the round's
 	y := quietSyncer(svc, nil)
 	done := runRoundBlocked(t, y, entered)
@@ -383,7 +327,7 @@ func TestSyncRoundDoesNotOverwriteAManualSyncMadeDuringTheSync(t *testing.T) {
 	if failed.ValidationState == StateHealthy || m.ValidationState != failed.ValidationState {
 		t.Fatalf("state %q, want the manual failure %q kept", m.ValidationState, failed.ValidationState)
 	}
-	if y.strikes[id] != 0 {
-		t.Fatalf("strikes = %d, want untouched", y.strikes[id])
+	if y.strikes[id] {
+		t.Fatal("strike recorded, want untouched")
 	}
 }

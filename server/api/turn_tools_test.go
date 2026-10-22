@@ -37,7 +37,7 @@ func TestTurnsCarryTheirToolCalls(t *testing.T) {
 		t.Fatalf("turns %s: %v", w.Body.String(), err)
 	}
 	// setupTracesHandler stores get_weather (status completed, no end) on the same turn, earlier.
-	want := []api.TurnToolDTO{{Name: "get_weather", Status: "completed", DurationMS: 0}, {Name: "lookup_order", Status: "failed", DurationMS: 150, ErrorCategory: "tool_error"}}
+	want := []api.TurnToolDTO{{Name: "get_weather", Status: "completed", DurationMS: 0}, {Name: "lookup_order", Status: "failed", DurationMS: 150}}
 	if !reflect.DeepEqual(resp.Data[0].Tools, want) {
 		t.Fatalf("tools %+v, want %+v", resp.Data[0].Tools, want)
 	}

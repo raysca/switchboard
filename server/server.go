@@ -1205,7 +1205,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if !s.waitDemo(graceCtx) {
 		s.logger.Warn("demo install still running at shutdown")
 	}
-	s.mgmt.Load().stopSync(graceCtx) // a sync round in progress ends before the store closes
 	s.closeManagement()
 	if s.otel != nil { // after calls drained so their final spans are flushed
 		if err := s.otel.Shutdown(context.WithoutCancel(ctx)); err != nil {

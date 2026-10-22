@@ -3,8 +3,12 @@ package mcp
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"math/rand/v2"
+	"slices"
 	"time"
+
+	"govoice/server/storage"
 )
 
 // Syncer re-syncs every enabled server in the background, one round at a time.
@@ -16,7 +20,7 @@ type Syncer struct {
 	interval time.Duration
 	logger   *slog.Logger
 	onResult func(ok bool)
-	strikes  map[string]int // server id -> consecutive failures; the loop goroutine only
+	strikes  map[string]bool // server ids with one unwritten failure on a healthy state; the loop goroutine only
 	cancel   context.CancelFunc
 	done     chan struct{}
 }
@@ -24,7 +28,7 @@ type Syncer struct {
 // NewSyncer returns a stopped syncer; interval must be > 0. onResult (may be
 // nil) is told the outcome of each server sync.
 func NewSyncer(s *Service, interval time.Duration, logger *slog.Logger, onResult func(ok bool)) *Syncer {
-	return &Syncer{svc: s, interval: interval, logger: logger, onResult: onResult, strikes: map[string]int{}, done: make(chan struct{})}
+	return &Syncer{svc: s, interval: interval, logger: logger, onResult: onResult, strikes: map[string]bool{}, done: make(chan struct{})}
 }
 
 // Start runs the loop until Stop. Call it once.
@@ -50,9 +54,6 @@ func (y *Syncer) Start() {
 
 // Stop cancels the round in progress and waits for the loop, at most until ctx ends.
 func (y *Syncer) Stop(ctx context.Context) error {
-	if y.cancel == nil {
-		return nil
-	}
 	y.cancel()
 	select {
 	case <-y.done:
@@ -76,9 +77,7 @@ func (y *Syncer) round(ctx context.Context) {
 		}
 		return
 	}
-	present := make(map[string]bool, len(servers))
 	for _, listed := range servers {
-		present[listed.ID] = true
 		// Work from a fresh read: an edit or manual Sync may have landed since the list.
 		m, err := y.svc.store.MCP().Server(ctx, listed.ID)
 		if err != nil || !m.Enabled || m.PendingDelete {
@@ -105,25 +104,19 @@ func (y *Syncer) round(ctx context.Context) {
 		if y.onResult != nil {
 			y.onResult(ok)
 		}
-		// Stored healthy with a count of 2 means something else (a manual Sync)
-		// healed it since: that is a fresh first strike too.
-		if !ok && m.ValidationState == StateHealthy && y.strikes[m.ID] != 1 {
-			y.strikes[m.ID] = 1
+		// A failure on a stored-healthy server (also one a manual Sync healed
+		// after a written failure) is a first strike: note it, write nothing.
+		if !ok && m.ValidationState == StateHealthy && !y.strikes[m.ID] {
+			y.strikes[m.ID] = true
 			continue
 		}
 		y.svc.writeResult(ctx, m.ID, r)
-		if ok {
-			delete(y.strikes, m.ID)
-		} else {
-			y.strikes[m.ID] = 2
-		}
+		delete(y.strikes, m.ID)
 		if r.State != m.ValidationState {
 			y.logger.Info("MCP server state changed", slog.String("mcp_server_id", m.ID), slog.String("from", m.ValidationState), slog.String("to", r.State))
 		}
 	}
-	for id := range y.strikes {
-		if !present[id] {
-			delete(y.strikes, id)
-		}
-	}
+	maps.DeleteFunc(y.strikes, func(id string, _ bool) bool {
+		return !slices.ContainsFunc(servers, func(l storage.MCPServer) bool { return l.ID == id })
+	})
 }
