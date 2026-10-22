@@ -1155,3 +1155,25 @@ func TestRunner_ProviderHangDoesNotStackSessionTasks(t *testing.T) {
 		t.Fatalf("the call failed: %v", err)
 	}
 }
+
+// A result a provider delivers after its stream was stopped (Recv that ignores the ctx) must not
+// become a transcript candidate.
+func TestRunner_StoppedStreamEmitsNothing(t *testing.T) {
+	conn := newFakeConn(t)
+	h := newHarness(t, Config{Dial: dialConn(conn)})
+	h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	h.audio(1)
+	h.waitFor("open", func() bool { return conn.recvs.Load() >= 1 })
+	h.r.mu.Lock()
+	st := h.r.active
+	h.r.mu.Unlock()
+	if st == nil {
+		t.Fatal("no active stream")
+	}
+	h.r.stop(st, nil)
+	h.r.emit(st, Result{Text: "late", Final: true, EndOfUtterance: true})
+	time.Sleep(50 * time.Millisecond) // a bounded wait for something that must not happen
+	if c := h.candidates(); len(c) != 0 {
+		t.Fatalf("a stopped stream emitted %+v", c)
+	}
+}

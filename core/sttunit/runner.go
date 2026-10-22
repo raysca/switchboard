@@ -697,19 +697,22 @@ func (r *Runner) invalidate(st *stream, cause error) {
 
 // emit turns a result into a candidate for the stream's turn.
 func (r *Runner) emit(st *stream, res Result) {
+	st.mu.Lock()
+	if st.stopped { // a result read after the stream was stopped is not the user's turn any more
+		st.mu.Unlock()
+		return
+	}
 	if res.Text == "" {
 		if res.Final { // an empty Final retracts what was heard: nothing is left uncommitted
-			st.mu.Lock()
 			if st.turn != "" {
 				st.lastText, st.settled = "", true
 			} else {
 				st.unboundText = ""
 			}
-			st.mu.Unlock()
 		}
+		st.mu.Unlock()
 		return
 	}
-	st.mu.Lock()
 	turn, gen := st.turn, st.gen
 	if turn != "" {
 		// Final, not Final && EndOfUtterance: a closing response need not carry
