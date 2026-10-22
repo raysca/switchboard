@@ -69,7 +69,7 @@ func TestDocsAndAlertRulesNameRealMetrics(t *testing.T) {
 		}
 		return string(b)
 	}
-	for _, f := range []string{"../docs/observability.md", "../docs/operations_runbook.md"} {
+	for _, f := range []string{"../docs/observability.md", "../docs/operations_runbook.md", "../docs/deployment.md"} {
 		check(f, read(f))
 	}
 

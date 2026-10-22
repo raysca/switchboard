@@ -61,6 +61,7 @@ provtest-results.json
 
 # Deploy secrets (provider keys for docker compose)
 deploy/govoice.env
+deploy/certs/
 
 # The built admin UI is embedded from here (make ui-embed); only the placeholder is committed.
 server/adminui/static/*

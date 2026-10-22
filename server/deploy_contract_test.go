@@ -32,17 +32,17 @@ func TestNginxCertificatesAreMounted(t *testing.T) {
 	}
 }
 
-func TestRunbookNamesContainerAsDistribution(t *testing.T) {
-	body, err := os.ReadFile("../docs/operations_runbook.md")
+func TestDeploymentDocNamesContainerAsDistribution(t *testing.T) {
+	body, err := os.ReadFile("../docs/deployment.md")
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(body)
 	if !strings.Contains(text, "The container image is the V1 distribution.") {
-		t.Fatal("runbook must name the container as the V1 distribution")
+		t.Fatal("deployment guide must name the container as the V1 distribution")
 	}
 	if !strings.Contains(text, "The systemd unit is a reference file and is not required to run V1.") {
-		t.Fatal("runbook must say the systemd unit is not required")
+		t.Fatal("deployment guide must say the systemd unit is not required")
 	}
 }
 
