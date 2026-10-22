@@ -175,7 +175,7 @@ describe("MCPView", () => {
     let done = false;
     const updateMCPServer = vi.fn().mockImplementation(async () => ((done = true), saved));
     const getMCPServers = vi.fn().mockImplementation(async () => (done ? [saved, crm] : [server(), crm]));
-    const getMCPServer = vi.fn().mockImplementation(async () => (done ? detail(saved) : detail()));
+    const getMCPServer = vi.fn().mockImplementation(async () => (done ? detail({ ...saved, discovery: { id: "d2", discovery_hash: "x", created_at: "", tools: [tool("fresh_tool", "f1")] } }) : detail()));
     const { user } = setup({ updateMCPServer, getMCPServers, getMCPServer });
     await user.click(await screen.findByRole("button", { name: "Edit" }));
     const name = screen.getByLabelText("Name");
@@ -186,6 +186,7 @@ describe("MCPView", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(updateMCPServer).toHaveBeenCalledWith("billing", { name: "billing2" });
     expect(await screen.findByRole("heading", { name: "billing2", level: 2 })).toBeVisible();
+    expect(await screen.findByText("fresh_tool")).toBeVisible(); // the tools the edit's re-sync found are re-read
     expect(screen.getAllByText(/^Unreachable/).length).toBeGreaterThan(0);
     expect(screen.queryByRole("dialog")).toBeNull();
   });

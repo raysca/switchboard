@@ -370,7 +370,7 @@ func TestFlowReadinessNamesAnEmptyMCPTokenVariable(t *testing.T) {
 // requires its tool not ready; restarting the endpoint makes both healthy again. Rounds come from a
 // short timer, so the strike counting is not asserted here.
 func TestMCPCallBackgroundSyncFailsAndHealsAServerAndFlowReadiness(t *testing.T) {
-	r := newMCPCallRig(t)
+	r := newMCPCallRig(t, func(c *Config) { c.MCP.SyncInterval = 0 })
 	var down atomic.Bool
 	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if down.Load() {
@@ -380,8 +380,8 @@ func TestMCPCallBackgroundSyncFailsAndHealsAServerAndFlowReadiness(t *testing.T)
 		r.mcp.Handler().ServeHTTP(w, req)
 	}))
 	t.Cleanup(live.Close)
-	// Config validation floors mcp.sync_interval at 30s, so this test runs its own Syncer on the
-	// server's MCP service (the 5m one EnableManagement started never ticks within the test).
+	// Config validation floors mcp.sync_interval at 30s, so the rig runs none (interval 0) and this
+	// test runs its own Syncer on the server's MCP service.
 	y := mcp.NewSyncer(r.s.mcpService, 30*time.Millisecond, slog.New(slog.DiscardHandler), nil)
 	y.Start()
 	t.Cleanup(func() { _ = y.Stop(context.Background()) })
@@ -394,7 +394,9 @@ func TestMCPCallBackgroundSyncFailsAndHealsAServerAndFlowReadiness(t *testing.T)
 				ValidationState string `json:"validation_state"`
 			}
 		}
-		_ = json.Unmarshal(w.Body.Bytes(), &d)
+		if err := json.Unmarshal(w.Body.Bytes(), &d); err != nil {
+			t.Fatalf("server detail %d %s: %v", w.Code, w.Body.String(), err)
+		}
 		got, err := r.s.flows.Get(t.Context(), a.ID)
 		if err != nil {
 			t.Fatal(err)
