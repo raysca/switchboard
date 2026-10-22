@@ -135,7 +135,7 @@ The variables an operator sets for the shipped server and scripts. Provider secr
 | `GOVOICE_ROOT`, `GOVOICE_MODEL_PATH`, `GOVOICE_ORT_LIB`, `GOVOICE_TURN_MODEL_PATH`, `LD_LIBRARY_PATH` | image and unit set them | server and worker processes | Where the Silero model, the Smart Turn model and ONNX Runtime live. The image sets the first three plus `LD_LIBRARY_PATH`; the unit sets the first three |
 | `ORT_DISABLE_TELEMETRY` | no | set by the server | Set to `1` before ONNX Runtime starts and passed to the workers; do not override it |
 | `GOOGLE_APPLICATION_CREDENTIALS` | per provider | server | A path to a service-account JSON file (STT, TTS, Vertex LLM) |
-| `GOOGLE_API_KEY` | per provider | server | Gemini API key (LLM). The Google credential resolver also falls back to `GEMINI_API_KEY` when no key is configured (`providers/google/credentials.go`, used by the programmatic examples); provider detection looks at `GOOGLE_API_KEY`, so set that name |
+| `GOOGLE_API_KEY` | per provider | server | Gemini API key (LLM). The Google credential resolver also falls back to `GEMINI_API_KEY` when no key is configured (`providers/google/credentials.go:155`); provider detection looks at `GOOGLE_API_KEY`, so set that name |
 | `XAI_API_KEY` | per provider | server | xAI LLM, STT, TTS |
 | `OPENAI_API_KEY`, `OPENAI_BASE_URL` | per provider | server | OpenAI or compatible LLM; a private base URL needs `providers.openai_llm.allow_private_base_url` |
 | `NVIDIA_API_KEY`, `NVIDIA_STT_FUNCTION_ID`, `NVIDIA_TTS_FUNCTION_ID` | per provider | server | Hosted NVIDIA only |
