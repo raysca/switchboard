@@ -343,8 +343,8 @@ type TurnConfig struct {
 	MinWords int  `yaml:"min_words"` // >0: barge-in needs this many words while the bot speaks
 	// Stop is the any-stop chain that ends a user turn (first decisive wins):
 	// speech-timeout | eager; a non-empty chain must include speech-timeout.
-	// Empty keeps the built-in silence timeout. SpeechTimeout overrides its
-	// 700ms default. "eager" ends the turn after EagerGrace (default 200ms)
+	// Empty means the gated speech timeout (`speech-timeout`). SpeechTimeout
+	// overrides its 600ms resume-window default. "eager" ends the turn after EagerGrace (default 200ms)
 	// of silence once the final transcript ends a sentence. There is no
 	// retraction after that: "Book a table. For two." becomes two user
 	// turns and the second barges in on the reply to the first. Only use

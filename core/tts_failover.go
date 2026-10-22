@@ -64,9 +64,9 @@ type TTSFailoverConfig struct {
 	UnitTimeout time.Duration
 }
 
-// TTSFailover is a TTS stage that runs synthesis units one at a time (providers
-// already synthesize strictly in order, so this costs no latency) and moves a
-// unit to the next candidate when the current one fails with a failover-class
+// TTSFailover is a TTS stage that runs synthesis units one at a time, which
+// disables a candidate's unary look-ahead (ttsunit.LookAhead), so each unit's
+// synthesis is paid serially, and moves a unit to the next candidate when the current one fails with a failover-class
 // error before any of that unit's output was released downstream.
 //
 // A candidate that fails after audio of a unit started is not replayed (the
