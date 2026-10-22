@@ -3,6 +3,7 @@ package smartturn
 import (
 	"context"
 	"errors"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -197,10 +198,30 @@ func TestAnalyzerTimeoutFallsBackToSpeechTimeout(t *testing.T) {
 	if endedAt != 700*time.Millisecond {
 		t.Fatalf("degraded turn ended at %v, want the 700ms speech timeout", endedAt)
 	}
-	if Fallbacks(ReasonTimeout) != before+1 {
-		t.Fatal("timeout fallback not counted")
+	if got := Fallbacks(ReasonTimeout) - before; got != 1 {
+		t.Fatalf("timeout fallbacks counted %d, want 1", got)
 	}
 	eventually(t, func() bool { return be.cancels.Load() == 1 })
+}
+
+// A job cancelled because a new silence superseded it, or because the analyzer closed, is not a
+// timeout: only a verdict missing its latency budget is (voice_smartturn_fallbacks_total{reason="timeout"}).
+func TestSupersededOrClosedJobCountsNoFallback(t *testing.T) {
+	clk := &fakeClock{now: time.Unix(1000, 0)}
+	be := newFake(0, nil) // never released: Infer returns ctx.Err() when cancelled
+	a := newTestAnalyzer(be, clk)
+	before := Fallbacks(ReasonTimeout)
+	a.verdict(input(clk, 100*time.Millisecond, "t1")) // job 1, inside the budget
+	clk.now = clk.now.Add(10 * time.Millisecond)
+	a.verdict(input(clk, 50*time.Millisecond, "t2")) // new silence key: job 1 superseded
+	a.Close()                                        // job 2 cancelled
+	eventually(t, func() bool { return be.cancels.Load() == 2 })
+	// finish runs right after Infer returns; give both goroutines a bounded window to (wrongly) count.
+	for end := time.Now().Add(100 * time.Millisecond); time.Now().Before(end); runtime.Gosched() {
+		if got := Fallbacks(ReasonTimeout) - before; got != 0 {
+			t.Fatalf("superseded/closed jobs counted %d timeout fallbacks, want 0", got)
+		}
+	}
 }
 
 func TestAnalyzerFailureReasons(t *testing.T) {
