@@ -20,4 +20,4 @@ Detach-and-delete preserves prior flow versions, discovery snapshots, session ru
 
 Management body parsing is bounded by the shared 64 KiB API decoder. Tool arguments, schema, and result limits are independently enforced by the MCP service. A successful test returns `execution_id`, `mcp_server_id`, `tool_name`, `status`, `duration_ms` (integer milliseconds), and sanitized JSON in `result`.
 
-The config-driven voice server does not construct the MCP service automatically because that runtime does not own a configured persistent storage handle. The injectable route can be mounted by supplying a composed service with the configured `storage.Store`, token source (`mcp.EnvTokens`), and remote client.
+The config-driven voice server builds the MCP service itself: `Server.EnableManagement` composes it from the configured `storage.Store`, the environment token source (`mcp.EnvTokens`), the SDK remote client and `mcp.timeout`, and mounts it behind the management API (`server/management.go`). Transport and security policy: [security/mcp.md](../security/mcp.md).

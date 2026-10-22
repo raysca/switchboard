@@ -16,7 +16,7 @@ This guide gets you up and running with a real, live voice conversation using Sw
 
 Provider keys come from the server's environment only: the server never stores them and no API accepts them. [providers.md](providers.md) lists every variable and what it unlocks.
 
-> **Upgrading from a build with stored credentials:** delete `.govoice-dev` (or any development database): the schema changed in place; nothing is migrated. Then set the provider variables below and recreate your flows (without `credential_id`). Self-hosted NVIDIA NIM and Riva endpoints are not supported in this release: `nvidia` always uses the hosted NIM (`integrate.api.nvidia.com`) and NVCF Riva endpoints, and `providers.nvidia.allow_private` is removed (a config that still sets it fails to load). They come back as catalog environment fields when needed.
+Coming from a build that stored credentials? See [security/credentials.md](security/credentials.md#upgrading-from-stored-credentials).
 
 ---
 
@@ -26,6 +26,9 @@ Provider keys come from the server's environment only: the server never stores t
 git clone https://github.com/example/go-voice.git
 cd go-voice
 
+# Fresh clone only: fetch the pinned ONNX Runtime (see Prerequisites)
+make ort
+
 # Build all server and worker binaries as well as examples
 make build
 ```
@@ -33,6 +36,9 @@ make build
 This generates:
 - `bin/server`: Config-driven voice edge server that runs stored flows
 - `bin/vadworker`: Isolated child worker process for Silero VAD
+- `bin/turnworker`: Isolated child worker process for the Smart Turn model
+
+To run it outside a laptop, see [deployment.md](deployment.md).
 
 ---
 
@@ -60,17 +66,7 @@ export GOOGLE_API_KEY="your-gemini-api-key"                  # optional: Google 
 # export XAI_API_KEY="your-xai-api-key"                      # optional: xAI LLM, STT and TTS
 ```
 
-| Variable | Unlocks |
-|---|---|
-| `GOOGLE_APPLICATION_CREDENTIALS` | Google STT, TTS, LLM (path to a service-account JSON file) |
-| `GOOGLE_API_KEY` | Google LLM |
-| `XAI_API_KEY` | xAI LLM, STT, TTS |
-| `OPENAI_API_KEY` (+ optional `OPENAI_BASE_URL`) | OpenAI-compatible LLM |
-| `NVIDIA_API_KEY` (+ `NVIDIA_STT_FUNCTION_ID`, `NVIDIA_TTS_FUNCTION_ID`) | NVIDIA LLM (and Riva STT, TTS) |
-| `DEEPGRAM_API_KEY` | Deepgram STT |
-| `CARTESIA_API_KEY` | Cartesia STT, TTS |
-| `ELEVENLABS_API_KEY` | ElevenLabs STT, TTS |
-| `MCP_TOKEN_<NAME>` | Bearer token of an MCP server (`auth_env`) |
+Every provider variable, and what it unlocks, is in the table in [providers.md](providers.md#environment-variables).
 
 To rotate a key, change the variable and restart the server.
 

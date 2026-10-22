@@ -1,23 +1,12 @@
 # Switchboard — Observability, Health & Telemetry
 
-This document details the configuration profiles, health and readiness endpoints, Prometheus metrics, per-session diagnostic timelines, and incident troubleshooting runbooks for Switchboard.
+This document details the configuration profiles, health and readiness endpoints, Prometheus metrics, per-session diagnostic timelines and OpenTelemetry export for Switchboard.
 
 ---
 
 ## 1. Configuration Profiles
 
-Switchboard uses validated YAML configuration files loaded via `server/config.go`. Unknown fields are rejected at startup (`KnownFields(true)`).
-
-### Profile Comparison
-
-| Setting | Development (`config/development.yaml`) | Production (`config/production.yaml`) |
-|---|---|---|
-| **Environment** | `development` | `production` |
-| **VAD Executor** | `sharded` (in-process) | `process` (isolated worker children) |
-| **Origin Verification** | Permissive (wildcard `*` or missing) | Strict domain allowlist |
-| **Token Secret** | Permissive (dev default permitted) | Strict: minimum 32 chars, file permissions `0600` |
-| **Admission Limits** | Relaxed for local tests | Bounded: 250 calls, 64 pending handshakes |
-| **Shutdown Drain** | 5 seconds | 30 seconds drain, 15 seconds force |
+Switchboard uses validated YAML configuration files loaded via `server/config.go`. Unknown fields are rejected at startup (`KnownFields(true)`). The shipped profiles (`config/development.yaml`, `config/production.yaml`, `config/cloudrun.yaml`) and what each sets are listed in [deployment.md](deployment.md#4-configuration-files), together with the checks the production profile enforces at startup.
 
 ---
 
@@ -46,7 +35,7 @@ Switchboard uses validated YAML configuration files loaded via `server/config.go
 
 ## 3. Prometheus Telemetry (Spec §35)
 
-The server exposes Prometheus metrics at `GET /metrics` on the probe and admin listeners. Alert rules: `deploy/alerts/govoice.rules.yml`. A test (`server/docs_contract_test.go`) fails if this document, the runbook or the rules name a metric the server does not emit.
+The server exposes Prometheus metrics at `GET /metrics` on the probe and admin listeners. Alert rules: `deploy/alerts/govoice.rules.yml`. A test (`server/docs_contract_test.go`) fails if this document, the operations guide, the deployment guide or the rules name a metric the server does not emit.
 
 ### Cardinality Discipline
 To prevent memory exhaustion in Prometheus and TSDB instances:
@@ -91,7 +80,7 @@ Every closed connection counts exactly one disconnect by cause (normal, client, 
 
 The wire message `bot-interrupted` (sent when the assistant's interruption barrier runs) has no metric of its own; it is visible in the client's RTVI log. It does not clear audio the client already buffered (`docs/compatibility/playback-clear-decision.json`).
 
-The series for smart-turn, audio filters, summaries, failover and warm-up are described in the runbook sections for those features.
+The series for smart-turn, audio filters, summaries, failover and warm-up are described in the feature sections of [operations.md](operations.md). The response to each alert (VAD worker restarts, leaked work, open circuits) is in its incident section there.
 
 
 ---
@@ -115,20 +104,6 @@ Metrics (unlabelled: step ids are tenant data): `voice_routes_total`, `voice_rou
 `provider_retry` is recorded each time an LLM or TTS request of the call is retried (`provider`, `details` `<stage> retry <n>`; `n` = 1 for the second attempt). `circuit_state` is recorded when a provider circuit the call uses changes state (`provider`, `details` `<stage> <closed|open|half_open>`); circuits are shared by every call, so each live call that uses the provider for that stage in its start step gets the event, whichever call's requests moved the circuit. Only the circuits exported as `voice_{stt,llm,tts}_circuit_state` report (google, xai, echo, offline, nvidia): a call on an OpenAI-compatible, Deepgram, Cartesia or ElevenLabs stage gets `provider_retry` events but no `circuit_state` (those breakers have no observer). A call that starts while a circuit is already open only learns of the next state change. STT stream dials do not record retries. Breaker reports from concurrent requests can arrive out of order, so a timeline can end on `open` while the circuit has closed again (the gauge has the same race).
 
 ---
-
-## 5. Incident Interpretation Runbook
-
-### Alert: `GovoiceLeakedWork` (`increase(voice_leaked_work_total[15m]) > 0`)
-- **Meaning**: A session was closed, but one or more background goroutines failed to exit within `TeardownTimeout` (2 seconds).
-- **Likely Causes**:
-  - An external provider client ignored context cancellation.
-  - A socket write blocked indefinitely without honoring write deadlines.
-- **Diagnostic Action**: Inspect the session timeline (`/debug/timeline?session=...`) to identify which provider call was in-flight at teardown.
-
-### Alert: `GovoiceVADWorkerRestarts` (`increase(voice_vad_worker_restarts_total[10m]) > 5`)
-- **Meaning**: A native Silero VAD worker process crashed (e.g. segmentation fault) or became unresponsive.
-- **System Behavior**: The supervisor killed the faulty worker, reaped its PID, and respawned a clean worker. Other workers continued processing calls without disruption.
-- **Action**: Check the server log for `vad: worker failed` WARN lines; their `stderr` field is the child's last 4 KB (the child's buffer is bounded to 64 KB).
 
 ## Latency observers
 
