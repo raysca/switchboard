@@ -3,8 +3,10 @@ package vad
 import (
 	"bytes"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -558,4 +560,77 @@ func TestWorkerProcess_PoisonChunkKillsOneWorkerNotAll(t *testing.T) {
 	if err := run(st1, 2); err != nil {
 		t.Fatalf("a chunk on the other worker: %v", err)
 	}
+}
+
+// A worker that fails is logged with the tail of its stderr (the ORT/runtime diagnostics a crash
+// leaves), once: the next failure logs only what the next process wrote.
+func TestWorkerProcess_FailureLogsStderrTail(t *testing.T) {
+	var mu sync.Mutex
+	var logs strings.Builder
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(lockedWriter{&mu, &logs}, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	logged := func() string { mu.Lock(); defer mu.Unlock(); return logs.String() }
+
+	exec, err := New(Config{Mode: "process", Workers: 2, Batch: 4, QueueCap: 256, IntraOp: 1, PerSessionLimit: 1, ParentDeadline: 200 * time.Millisecond, ParentGrace: 200 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exec.Close()
+	st := exec.Register(0) // session 0 -> worker 0
+	defer st.Close()
+	wp := exec.backend.(*workerProcessBackend).workers[0]
+
+	crash := func(marker string, wantRestarts int64) {
+		t.Helper()
+		_, _ = wp.stderr.Write([]byte(marker)) // what the process wrote before dying
+		// Killed but not reaped (HardKill reaps, and a worker found down between batches takes the
+		// restart path): the next batch hits the dead pipe, the path that logs.
+		var err error
+		for end := time.Now().Add(5 * time.Second); time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
+			wp.mu.Lock()
+			if wp.healthy && wp.cmd != nil {
+				err = wp.cmd.Process.Kill()
+				wp.mu.Unlock()
+				break
+			}
+			err = errors.New("worker never became healthy")
+			wp.mu.Unlock()
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan struct{})
+		if err := st.Submit(&Job{Seq: uint64(wantRestarts), Done: func(*Job) { close(done) }}); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("job after the kill did not finish")
+		}
+		for end := time.Now().Add(5 * time.Second); exec.Stats().Restarts < wantRestarts && time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
+		}
+	}
+	crash("first-failure-diagnostic", 1)
+	out := logged()
+	if !strings.Contains(out, "vad: worker failed") || !strings.Contains(out, "stderr=first-failure-diagnostic") {
+		t.Fatalf("failure not logged with its stderr tail:\n%s", out)
+	}
+	crash("second-failure-diagnostic", 2)
+	out = logged()
+	if !strings.Contains(out, "stderr=second-failure-diagnostic") || strings.Count(out, "first-failure-diagnostic") != 1 {
+		t.Fatalf("second failure must log only its own stderr:\n%s", out)
+	}
+}
+
+type lockedWriter struct {
+	mu *sync.Mutex
+	b  *strings.Builder
+}
+
+func (w lockedWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b.Write(p)
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os/exec"
 	"path/filepath"
 	"sync"
@@ -104,6 +105,19 @@ func (b *boundedBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return string(b.buf)
+}
+
+// tail returns the last n bytes and empties the buffer, so each failure reports only what its own process wrote.
+func (b *boundedBuffer) tail(n int) string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	t := b.buf
+	if len(t) > n {
+		t = t[len(t)-n:]
+	}
+	s := string(t)
+	b.buf = b.buf[:0]
+	return s
 }
 
 type workerProcess struct {
@@ -562,6 +576,7 @@ func (wp *workerProcess) handleWorkerFailure(jobs []*Job, err error, retry bool)
 	wp.mu.Lock()
 	wp.killAndReapLocked()
 	wp.mu.Unlock()
+	slog.Warn("vad: worker failed", "worker", wp.id, "error", err, "stderr", wp.stderr.tail(4096))
 
 	wp.inFlightMu.Lock()
 	for _, j := range jobs {
