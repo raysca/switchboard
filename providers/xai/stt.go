@@ -478,18 +478,9 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 	sendCtx, sendCancel := context.WithTimeout(st.ctx, 500*time.Millisecond)
 	defer sendCancel()
 
-	err := s.SendAudio(sendCtx, f.Samples)
-	if err != nil {
-		if st.ctx.Err() != nil { // torn down concurrently: not a provider failure
-			return e.Push(f)
-		}
-		st.endTrace(errors.New("provider_failure"))
-		p.stopStream(st)
-		provErr := MapError("stt", err)
-		if p.cfg.CircuitBreaker != nil {
-			p.cfg.CircuitBreaker.Report(err, classify)
-		}
-		return provErr
+	if err := s.SendAudio(sendCtx, f.Samples); err != nil {
+		p.streamWriteFailed(st, err, "xai audio send failed")
+		return e.Push(f)
 	}
 
 	p.RequestsTotal.Add(1)
@@ -928,17 +919,42 @@ func (p *STTProcessor) beginDrain(ctx context.Context, st *activeSTTStream) erro
 	}
 	s := st.stream
 	st.mu.Unlock()
-	err := s.CloseSend(ctx)
-	if err != nil {
-		st.endTrace(errors.New("provider_failure"))
-		p.stopStream(st)
-		st.mu.Lock()
-		st.closing = false
-		st.mu.Unlock()
-		return err
+	if err := s.CloseSend(ctx); err != nil {
+		p.streamWriteFailed(st, err, "xai audio.done send failed")
+		return nil
 	}
 	p.armDrainTimer(st)
 	return nil
+}
+
+// streamWriteFailed handles a failed write on a live stream like a failed
+// read: the stream is stopped and released (the next audio opens a fresh one),
+// the failure is counted and reported to the breaker once, and the error is
+// published, never returned (a ProcessFrame error ends the whole call). A bound
+// turn is invalidated so an STT failover replays it.
+func (p *STTProcessor) streamWriteFailed(st *activeSTTStream, err error, what string) {
+	if st.ctx.Err() != nil { // torn down concurrently: not a provider failure
+		return
+	}
+	st.endTrace(errors.New("provider_failure"))
+	p.releaseStream(st)
+	p.stopStream(st)
+	p.ErrorsTotal.Add(1)
+	if p.cfg.CircuitBreaker != nil {
+		p.cfg.CircuitBreaker.Report(err, classify)
+	}
+	providerErr := MapError("stt", err)
+	st.mu.Lock()
+	bound, gen := st.turnID != "", st.gen
+	st.mu.Unlock()
+	if bound {
+		p.failBoundStream(st, providerErr, what)
+	} else if p.session != nil {
+		if gen == 0 {
+			gen = p.session.CurrentGeneration()
+		}
+		_ = p.session.Reenter(&core.ErrorFrame{Err: providerErr, Gen: core.Generation(gen)}, core.Downstream, p.index+1, gen)
+	}
 }
 
 // failBoundStream retires the partial transcript of the stream's turn and
