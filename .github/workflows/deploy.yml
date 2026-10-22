@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       min_instances:
-        description: "Voice server minimum instances (1 keeps it warm; 0 stops idle spend and loses nothing: the demo reinstalls on start)"
+        description: "Switchboard minimum instances (1 keeps it warm and ready for calls; 0 stops idle spend, flows and calls stay in Cloud SQL, and the first call after idle waits for a cold start)"
         default: "1"
 permissions:
   contents: read
@@ -34,7 +34,8 @@ jobs:
       REGION: ${{ vars.GCP_REGION }}
       MIN_INSTANCES: ${{ inputs.min_instances || '1' }}
       SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
-      REGISTRY: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/govoice
+      REGISTRY: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/switchboard
+      PROVIDER_SECRETS: ${{ vars.GCP_PROVIDER_SECRETS }}   # optional provider keys bootstrap.sh found, space separated
     steps:
       - name: Validate inputs
         run: |
@@ -52,9 +53,9 @@ jobs:
       - name: Build and push the images
         run: |
           docker build -q -f deploy/Dockerfile.dental-mcp -t "${REGISTRY}/dental-mcp:${SHA}" .
-          docker build -q -f deploy/Dockerfile --build-arg VERSION="${SHA::7}" --build-arg COMMIT="${SHA}" -t "${REGISTRY}/govoice:${SHA}" .
+          docker build -q -f deploy/Dockerfile --build-arg VERSION="${SHA::7}" --build-arg COMMIT="${SHA}" -t "${REGISTRY}/switchboard:${SHA}" .
           docker push "${REGISTRY}/dental-mcp:${SHA}"
-          docker push "${REGISTRY}/govoice:${SHA}"
+          docker push "${REGISTRY}/switchboard:${SHA}"
 
       - name: Deploy the dentistry MCP server
         run: |
@@ -64,12 +65,25 @@ jobs:
             --member=allUsers --role=roles/run.invoker >/dev/null
           echo "DENTAL_MCP_URL=$(gcloud run services describe dental-mcp --region "${REGION}" --project "${PROJECT_ID}" --format='value(status.url)')/mcp" >> "$GITHUB_ENV"
 
-      - name: Deploy the voice server as a candidate (existing traffic stays on the serving revision)
+      - name: Mount the optional provider keys
         run: |
-          export IMAGE="${REGISTRY}/govoice:${SHA}"
-          envsubst '${REGION} ${PROJECT_ID} ${IMAGE} ${MIN_INSTANCES} ${DENTAL_MCP_URL}' < deploy/gcp/govoice.service.yaml > /tmp/govoice.yaml
+          PROVIDER_ENV=""
+          for s in ${PROVIDER_SECRETS}; do
+            case "${s}" in
+              OPENAI_API_KEY|DEEPGRAM_API_KEY|CARTESIA_API_KEY|NVIDIA_API_KEY) ;;
+              *) echo "GCP_PROVIDER_SECRETS may name only OPENAI_API_KEY, DEEPGRAM_API_KEY, CARTESIA_API_KEY and NVIDIA_API_KEY, got '${s}'" >&2; exit 1 ;;
+            esac
+            case "${PROVIDER_ENV}" in *"name: ${s}"*) echo "duplicate provider secret ${s}" >&2; exit 1 ;; esac
+            PROVIDER_ENV+=$'\n'"            - name: ${s}"$'\n'"              valueFrom: {secretKeyRef: {name: ${s}, key: latest}}"
+          done
+          { echo "PROVIDER_ENV<<__PROVIDER_ENV__"; printf '%s\n' "${PROVIDER_ENV}"; echo "__PROVIDER_ENV__"; } >> "$GITHUB_ENV"
+
+      - name: Deploy Switchboard as a candidate (existing traffic stays on the serving revision)
+        run: |
+          export IMAGE="${REGISTRY}/switchboard:${SHA}"
+          envsubst '${REGION} ${PROJECT_ID} ${IMAGE} ${MIN_INSTANCES} ${DENTAL_MCP_URL} ${PROVIDER_ENV}' < deploy/gcp/switchboard.service.yaml > /tmp/switchboard.yaml
           # The serving revision (100% traffic). "Not found" is the first deploy; any other failure stops the deploy.
-          if gcloud run services describe govoice --region "${REGION}" --project "${PROJECT_ID}" --format=json > /tmp/svc.json 2> /tmp/svc.err; then
+          if gcloud run services describe switchboard --region "${REGION}" --project "${PROJECT_ID}" --format=json > /tmp/svc.json 2> /tmp/svc.err; then
             PREV="$(jq -r '[.status.traffic[]? | select(.percent == 100) | .revisionName // empty][0] // empty' /tmp/svc.json)"
           elif grep -qiE 'not found|NOT_FOUND|could not be found' /tmp/svc.err; then
             PREV=""
@@ -78,12 +92,12 @@ jobs:
           fi
           if [ -n "${PREV}" ]; then
             # spec.traffic is a sibling of spec.template: keep 100% on the serving revision; the new one gets 0% and a tag.
-            printf '  traffic:\n    - revisionName: %s\n      percent: 100\n    - latestRevision: true\n      percent: 0\n      tag: candidate\n' "${PREV}" >> /tmp/govoice.yaml
+            printf '  traffic:\n    - revisionName: %s\n      percent: 100\n    - latestRevision: true\n      percent: 0\n      tag: candidate\n' "${PREV}" >> /tmp/switchboard.yaml
           fi
-          gcloud run services replace /tmp/govoice.yaml --region "${REGION}" --project "${PROJECT_ID}"
-          gcloud run services add-iam-policy-binding govoice --region "${REGION}" --project "${PROJECT_ID}" \
+          gcloud run services replace /tmp/switchboard.yaml --region "${REGION}" --project "${PROJECT_ID}"
+          gcloud run services add-iam-policy-binding switchboard --region "${REGION}" --project "${PROJECT_ID}" \
             --member=allUsers --role=roles/run.invoker >/dev/null
-          URL="$(gcloud run services describe govoice --region "${REGION}" --project "${PROJECT_ID}" --format='value(status.url)')"
+          URL="$(gcloud run services describe switchboard --region "${REGION}" --project "${PROJECT_ID}" --format='value(status.url)')"
           echo "SERVICE_URL=${URL}" >> "$GITHUB_ENV"
           echo "PREV_REVISION=${PREV}" >> "$GITHUB_ENV"
           if [ -n "${PREV}" ]; then echo "SMOKE_URL=https://candidate---${URL#https://}" >> "$GITHUB_ENV"; else echo "SMOKE_URL=${URL}" >> "$GITHUB_ENV"; fi
@@ -91,19 +105,19 @@ jobs:
       - name: Smoke test the candidate
         run: |
           set +x
-          GOVOICE_MANAGEMENT_API_KEY="$(gcloud secrets versions access latest --secret=GOVOICE_MANAGEMENT_API_KEY --project "${PROJECT_ID}")"
+          GOVOICE_MANAGEMENT_API_KEY="$(gcloud secrets versions access latest --secret=SWITCHBOARD_MANAGEMENT_API_KEY --project "${PROJECT_ID}")"
           export GOVOICE_MANAGEMENT_API_KEY
           echo "::add-mask::${GOVOICE_MANAGEMENT_API_KEY}"
           deploy/smoke-cloudrun.sh "${SMOKE_URL}"
 
       - name: Take the tag off a failed candidate
         if: failure() && env.PREV_REVISION != ''
-        run: gcloud run services update-traffic govoice --remove-tags candidate --region "${REGION}" --project "${PROJECT_ID}" || true
+        run: gcloud run services update-traffic switchboard --remove-tags candidate --region "${REGION}" --project "${PROJECT_ID}" || true
 
       - name: Promote the candidate
         run: |
           if [ -n "${PREV_REVISION}" ]; then
-            gcloud run services update-traffic govoice --to-latest --region "${REGION}" --project "${PROJECT_ID}"
-            gcloud run services update-traffic govoice --remove-tags candidate --region "${REGION}" --project "${PROJECT_ID}"
+            gcloud run services update-traffic switchboard --to-latest --region "${REGION}" --project "${PROJECT_ID}"
+            gcloud run services update-traffic switchboard --remove-tags candidate --region "${REGION}" --project "${PROJECT_ID}"
           fi
           echo "### Deployed ${SHA::7}: ${SERVICE_URL}" >> "$GITHUB_STEP_SUMMARY"

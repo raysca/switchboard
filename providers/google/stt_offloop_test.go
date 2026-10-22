@@ -525,3 +525,124 @@ func TestGoogleSTTTaskBudgetAtOpenReportsOncePerTurnAndKeepsTheCall(t *testing.T
 		t.Fatalf("counted %d provider errors", n)
 	}
 }
+
+// armedSendFailStream fails Send with a write error (not io.EOF) once armed.
+type armedSendFailStream struct {
+	*mockSTTStream
+	armed atomic.Bool
+}
+
+func (s *armedSendFailStream) Send(b []byte) error {
+	if s.armed.Load() {
+		return errors.New("write: broken pipe")
+	}
+	return s.mockSTTStream.Send(b)
+}
+
+type pushCount struct {
+	n    int
+	errs []*core.ErrorFrame
+}
+
+func (p *pushCount) Push(f core.Frame) error {
+	switch v := f.(type) {
+	case *core.InputAudioFrame:
+		p.n++
+	case *core.ErrorFrame:
+		p.errs = append(p.errs, v)
+	}
+	return nil
+}
+func (p *pushCount) PushDirection(core.Frame, core.Direction) error { return nil }
+
+type seqOpener struct {
+	opens   atomic.Int32
+	streams []STTStream
+}
+
+func (o *seqOpener) OpenStream(context.Context, STTConfig) (STTStream, error) {
+	return o.streams[o.opens.Add(1)-1], nil
+}
+
+// A live Send that fails is the stream's failure, like a failed Recv: counted
+// and reported once, never returned (a ProcessFrame error ends the whole
+// call), and the next audio opens a fresh stream for the turn.
+func TestGoogleSTTLiveSendFailureIsReportedNotFatal(t *testing.T) {
+	bad := &armedSendFailStream{mockSTTStream: newMockSTTStream()}
+	opener := &seqOpener{streams: []STTStream{bad, newMockSTTStream()}}
+	proc, session, sink := startGoogleProc(t, opener)
+	_ = session.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
+	attachedStream(t, proc)
+	bad.armed.Store(true)
+	out := &pushCount{}
+	if err := proc.ProcessFrame(context.Background(), &core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1}, core.Downstream, out); err != nil {
+		t.Fatalf("ProcessFrame err = %v, want nil", err)
+	}
+	if out.n != 1 {
+		t.Fatalf("audio pushed downstream = %d, want 1", out.n)
+	}
+	// Re-entered from the session (so STTFailover sees it), not pushed by the emitter.
+	if len(out.errs) != 0 {
+		t.Fatalf("error frames pushed on the emitter = %d, want 0", len(out.errs))
+	}
+	gwait(t, "error frame at the sink", 2*time.Second, func() bool { return len(countFrames[*core.ErrorFrame](sink)) == 1 })
+	if ef := countFrames[*core.ErrorFrame](sink)[0]; ef.Turn != "turn-1-1" || ef.Gen != 1 || !errors.Is(ef.Err, core.ErrSTTUnavailable) || errors.Is(ef.Err, core.ErrTranscriptInvalidated) {
+		t.Fatalf("error frame %+v", ef)
+	}
+	if n := proc.Errors.Load(); n != 1 {
+		t.Fatalf("errors counted = %d, want 1", n)
+	}
+	_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
+	gwait(t, "reopen", 2*time.Second, func() bool { return opener.opens.Load() == 2 })
+	time.Sleep(30 * time.Millisecond)
+	if n := len(countFrames[*core.ErrorFrame](sink)); n != 1 {
+		t.Fatalf("session error frames = %d, want exactly the one", n)
+	}
+}
+
+// With a fallback behind it, a Google live Send failure must reach STTFailover
+// (through the session, as a receive failure does) so the fallback takes over.
+func TestGoogleSTTLiveSendFailureFailsOver(t *testing.T) {
+	bad := &armedSendFailStream{mockSTTStream: newMockSTTStream()}
+	opener := &seqOpener{streams: []STTStream{bad, newMockSTTStream()}}
+	cfg := DefaultSTTConfig()
+	cfg.StreamOpener = opener
+	proc, err := NewSTTProcessor(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var switches atomic.Int32
+	w, err := core.NewSTTFailover(core.STTFailoverConfig{
+		Candidates: []core.STTCandidate{{Provider: "google", Proc: proc}, {Provider: "fb", Proc: &coretest.PassthroughProcessor{}}},
+		Classify:   func(error) string { return "server_error" },
+		OnFailover: func(_, to, _ string) {
+			if to == "fb" {
+				switches.Add(1)
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &coretest.PassthroughProcessor{}
+	pipe, _ := core.NewPipeline(w, sink)
+	session, _ := core.NewSession(43, pipe, core.DefaultResourceBudget())
+	if err := session.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	_ = session.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
+	attachedStream(t, proc)
+	bad.armed.Store(true)
+	_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
+	gwait(t, "failover to the fallback", 2*time.Second, func() bool { return switches.Load() == 1 })
+	time.Sleep(30 * time.Millisecond)
+	if n := switches.Load(); n != 1 {
+		t.Fatalf("switches = %d, want 1", n)
+	}
+	if n := len(countFrames[*core.ErrorFrame](sink)); n != 0 {
+		t.Fatalf("session error frames = %d, want 0 (the failover swallows it)", n)
+	}
+}

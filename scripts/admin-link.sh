@@ -6,7 +6,7 @@
 # chat or tickets, and prefer a private terminal.
 #
 #   GOVOICE_MANAGEMENT_API_KEY=... scripts/admin-link.sh https://switchboard.example.com
-#   gcloud secrets versions access latest --secret=GOVOICE_MANAGEMENT_API_KEY | scripts/admin-link.sh https://...
+#   gcloud secrets versions access latest --secret=SWITCHBOARD_MANAGEMENT_API_KEY | scripts/admin-link.sh https://...
 #   make admin-link URL=https://switchboard.example.com          (key from the environment)
 #   make admin-link                                              (the local dev stack's UI and key)
 set -euo pipefail

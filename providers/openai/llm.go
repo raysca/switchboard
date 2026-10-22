@@ -7,8 +7,8 @@
 // mean a translation shim larger than this file, and would couple vendors'
 // request bodies (xai sends store:false and Responses-only fields). So this is
 // a small standalone module: it sends only model/messages/tools/stream/
-// stream_options, nothing vendor-specific. The shared pieces that matter,
-// core/resilience (breaker, retry, timeout) and core/tools (ToolLoop), are
+// stream_options plus the optional temperature/top_p/max_tokens, nothing
+// vendor-specific. The shared pieces that matter, core/resilience (breaker, retry, timeout) and core/tools (ToolLoop), are
 // reused as is.
 package openai
 
@@ -57,6 +57,10 @@ type Config struct {
 	ToolDefinitions []core.ToolDefinition
 	ToolLoop        *coretools.ToolLoop
 	Timeout         time.Duration // bounds each request attempt
+	// Sampling: nil / 0 are left out of the request body (provider default).
+	Temperature     *float64
+	TopP            *float64
+	MaxOutputTokens int // sent as max_tokens
 	// AllowPrivate permits http:// and loopback/private addresses (self-hosted
 	// vLLM). Off, BaseURL must be https and resolve to a public address.
 	AllowPrivate   bool
@@ -223,6 +227,9 @@ type request struct {
 	Stream        bool            `json:"stream"`
 	StreamOptions map[string]bool `json:"stream_options,omitempty"`
 	Tools         []wireTool      `json:"tools,omitempty"`
+	Temperature   *float64        `json:"temperature,omitempty"`
+	TopP          *float64        `json:"top_p,omitempty"`
+	MaxTokens     int             `json:"max_tokens,omitempty"`
 }
 
 type chunk struct {
@@ -375,7 +382,8 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 	} else if f.Content != "" {
 		history = []core.Message{{Role: core.RoleUser, Content: f.Content, TurnID: f.Turn}}
 	}
-	req := request{Model: p.cfg.Model, Stream: true, Tools: p.tools}
+	req := request{Model: p.cfg.Model, Stream: true, Tools: p.tools,
+		Temperature: p.cfg.Temperature, TopP: p.cfg.TopP, MaxTokens: p.cfg.MaxOutputTokens}
 	if p.cfg.SystemPrompt != "" {
 		req.Messages = append(req.Messages, wireMsg{Role: "system", Content: p.cfg.SystemPrompt})
 	}

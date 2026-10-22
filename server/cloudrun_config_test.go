@@ -8,12 +8,12 @@ import (
 
 func TestCloudRunConfigLoadsInProduction(t *testing.T) {
 	t.Setenv("TOKEN_SECRET", "cloudrun-test-token-secret-0123456789abcdef")
-	t.Setenv("GOVOICE_DATABASE_DSN", t.TempDir()+"/govoice.db")
+	t.Setenv("GOVOICE_DATABASE_DSN", "postgres://switchboard:x@/switchboard?host=/cloudsql/p:r:i&sslmode=disable")
 	cfg, err := LoadConfig("../config/cloudrun.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Profile != ProfileProduction || cfg.Storage.Dialect != "sqlite" {
+	if cfg.Profile != ProfileProduction || cfg.Storage.Dialect != "postgres" {
 		t.Fatalf("profile=%s dialect=%s", cfg.Profile, cfg.Storage.Dialect)
 	}
 	if !cfg.PublicAdmin.Enabled || !cfg.OriginAllowSameHost || !cfg.TLS.TrustedProxyMode || !slices.Equal(cfg.TLS.TrustedProxies, []string{"169.254.0.0/16"}) {

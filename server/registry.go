@@ -40,7 +40,9 @@ type StageSpec struct {
 	// VoiceSettings (ElevenLabs TTS only; nil = provider defaults).
 	VoiceSettings *flow.ElevenLabsVoiceSettings
 	SystemPrompt  string
-	Secret        []byte
+	// Sampling (LLM only; zero = provider defaults). Copied to LLM fallbacks.
+	Sampling flow.LLMSampling
+	Secret   []byte
 
 	// LLM stage only: the flow's captured MCP tools and the call history
 	// the tool loop records into.
@@ -63,6 +65,15 @@ type StageSpec struct {
 	// OnRetry, if set, is told before each retried request (LLM and TTS
 	// factories copy it into their provider's retry policy).
 	OnRetry func(retry int)
+}
+
+// sampling unpacks the flow's sampling into the provider configs' shape
+// (providers cannot import server/flow): nil / 0 mean "provider default".
+func (s StageSpec) sampling() (temperature, topP *float64, maxOutputTokens int) {
+	if n := s.Sampling.MaxOutputTokens; n != nil {
+		maxOutputTokens = *n
+	}
+	return s.Sampling.Temperature, s.Sampling.TopP, maxOutputTokens
 }
 
 // toolLoopConfig is the default loop config with the stage's async hooks.
@@ -220,6 +231,7 @@ func googleSTTConfig(cfg *Config, spec StageSpec, breaker *resilience.Breaker) g
 func googleLLMConfig(spec StageSpec, breaker *resilience.Breaker) google.LLMConfig {
 	c := google.DefaultLLMConfig()
 	c.Model, c.SystemPrompt = spec.Model, spec.SystemPrompt
+	c.Sampling.Temperature, c.Sampling.TopP, c.Sampling.MaxOutputTokens = spec.sampling()
 	if len(spec.Tools) > 0 {
 		c.ToolDefinitions, c.ToolExecutor, c.ToolHistory = spec.Tools, spec.ToolExecutor, spec.History
 		c.ToolLoopConfig = spec.toolLoopConfig()
@@ -358,9 +370,7 @@ func NewRegistry() *Registry {
 			return nil, fmt.Errorf("openai.llm: %w", err)
 		}
 		br, _ := r.openaiBreakers.LoadOrStore(baseURL, resilience.NewBreaker(resilience.DefaultConfig()))
-		oaCfg := openai.Config{Model: spec.Model, BaseURL: baseURL, SystemPrompt: spec.SystemPrompt, APIKey: key, CircuitBreaker: br.(*resilience.Breaker),
-			AllowPrivate: cfg.Providers.OpenAILLM.AllowPrivateBaseURL}
-		oaCfg.RetryPolicy.OnRetry = spec.OnRetry
+		oaCfg := openAILLMConfig(cfg, spec, key, baseURL, br.(*resilience.Breaker))
 		if len(spec.Tools) > 0 {
 			loop, err := coretools.NewToolLoop(spec.Tools, spec.ToolExecutor, spec.History, spec.toolLoopConfig())
 			if err != nil {
@@ -497,11 +507,17 @@ func elevenlabsTTSConfig(cfg *Config, spec StageSpec) elevenlabs.TTSConfig {
 	return c
 }
 
-// apiKey validates an API key credential: a single non-empty token.
+// xaiLLMConfig is the xAI stage config, shared by xai.llm and offline.llm.
+func xaiLLMConfig(spec StageSpec, endpoint, key string, br *resilience.Breaker) xai.Config {
+	c := xai.Config{Model: spec.Model, Endpoint: endpoint, SystemPrompt: spec.SystemPrompt, APIKey: key, CircuitBreaker: br}
+	c.RetryPolicy.OnRetry = spec.OnRetry
+	c.Temperature, c.TopP, c.MaxOutputTokens = spec.sampling()
+	return c
+}
+
 // xaiLLMProcessor is the xAI Responses-API stage, shared by xai.llm and offline.llm.
 func xaiLLMProcessor(spec StageSpec, endpoint, key string, br *resilience.Breaker, who string) (core.Processor, error) {
-	xaiCfg := xai.Config{Model: spec.Model, Endpoint: endpoint, SystemPrompt: spec.SystemPrompt, APIKey: key, CircuitBreaker: br}
-	xaiCfg.RetryPolicy.OnRetry = spec.OnRetry
+	xaiCfg := xaiLLMConfig(spec, endpoint, key, br)
 	if len(spec.Tools) > 0 {
 		loop, err := coretools.NewToolLoop(spec.Tools, spec.ToolExecutor, spec.History, spec.toolLoopConfig())
 		if err != nil {
@@ -512,6 +528,15 @@ func xaiLLMProcessor(spec StageSpec, endpoint, key string, br *resilience.Breake
 	return xai.NewProcessor(xaiCfg)
 }
 
+func openAILLMConfig(cfg *Config, spec StageSpec, key, baseURL string, br *resilience.Breaker) openai.Config {
+	c := openai.Config{Model: spec.Model, BaseURL: baseURL, SystemPrompt: spec.SystemPrompt, APIKey: key, CircuitBreaker: br,
+		AllowPrivate: cfg.Providers.OpenAILLM.AllowPrivateBaseURL}
+	c.RetryPolicy.OnRetry = spec.OnRetry
+	c.Temperature, c.TopP, c.MaxOutputTokens = spec.sampling()
+	return c
+}
+
+// apiKey validates an API key credential: a single non-empty token.
 func apiKey(secret []byte) (string, error) {
 	key := strings.TrimSpace(string(secret))
 	if key == "" || strings.ContainsAny(key, " \t\r\n") {

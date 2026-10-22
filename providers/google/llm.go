@@ -32,6 +32,16 @@ type LLMConfig struct {
 	ToolHistory     *core.ConversationContext
 	ToolLoopConfig  tools.ToolLoopConfig
 	Provider        string // label on frames, usage and traces; empty means "google"
+	Sampling        Sampling
+}
+
+// Sampling tunes generation; nil / 0 keep the model's defaults. Note that on
+// Gemini 2.5 models maxOutputTokens also counts thinking tokens, so a low cap
+// can leave a short or empty reply.
+type Sampling struct {
+	Temperature     *float64
+	TopP            *float64
+	MaxOutputTokens int
 }
 
 // DefaultLLMConfig returns configuration matching v1-lock.json.
@@ -59,11 +69,11 @@ type LLMStreamChunk struct {
 
 // LLMStreamClient abstracts streamed content generation.
 type LLMStreamClient interface {
-	GenerateStream(ctx context.Context, model string, systemPrompt string, history []core.Message) (<-chan LLMStreamChunk, <-chan error, error)
+	GenerateStream(ctx context.Context, model string, systemPrompt string, history []core.Message, sampling Sampling) (<-chan LLMStreamChunk, <-chan error, error)
 }
 
 type LLMNativeToolStreamClient interface {
-	GenerateStreamWithNativeTools(ctx context.Context, model string, systemPrompt string, history []core.Message, nativeHistory []GoogleNativeExchange, definitions []core.ToolDefinition, identity core.ToolCall) (<-chan LLMStreamChunk, <-chan error, error)
+	GenerateStreamWithNativeTools(ctx context.Context, model string, systemPrompt string, history []core.Message, nativeHistory []GoogleNativeExchange, definitions []core.ToolDefinition, identity core.ToolCall, sampling Sampling) (<-chan LLMStreamChunk, <-chan error, error)
 }
 
 // GoogleNativeExchange retains one streamed model response occurrence for
@@ -118,34 +128,19 @@ func NewRealGoogleLLMClient(ctx context.Context, creds *ResolvedCredentials) (*R
 	return &RealGoogleLLMClient{client: client, pool: pool}, nil
 }
 
-func (c *RealGoogleLLMClient) GenerateStream(ctx context.Context, model string, systemPrompt string, history []core.Message) (<-chan LLMStreamChunk, <-chan error, error) {
-	return c.generateStreamWithNativeHistory(ctx, model, systemPrompt, history, nil, nil, core.ToolCall{})
+func (c *RealGoogleLLMClient) GenerateStream(ctx context.Context, model string, systemPrompt string, history []core.Message, sampling Sampling) (<-chan LLMStreamChunk, <-chan error, error) {
+	return c.generateStreamWithNativeHistory(ctx, model, systemPrompt, history, nil, nil, core.ToolCall{}, sampling)
 }
 
-func (c *RealGoogleLLMClient) GenerateStreamWithNativeTools(ctx context.Context, model, systemPrompt string, history []core.Message, nativeHistory []GoogleNativeExchange, definitions []core.ToolDefinition, identity core.ToolCall) (<-chan LLMStreamChunk, <-chan error, error) {
-	return c.generateStreamWithNativeHistory(ctx, model, systemPrompt, history, nativeHistory, definitions, identity)
+func (c *RealGoogleLLMClient) GenerateStreamWithNativeTools(ctx context.Context, model, systemPrompt string, history []core.Message, nativeHistory []GoogleNativeExchange, definitions []core.ToolDefinition, identity core.ToolCall, sampling Sampling) (<-chan LLMStreamChunk, <-chan error, error) {
+	return c.generateStreamWithNativeHistory(ctx, model, systemPrompt, history, nativeHistory, definitions, identity, sampling)
 }
 
-func (c *RealGoogleLLMClient) generateStreamWithNativeHistory(ctx context.Context, model, systemPrompt string, history []core.Message, nativeHistory []GoogleNativeExchange, definitions []core.ToolDefinition, identity core.ToolCall) (<-chan LLMStreamChunk, <-chan error, error) {
+func (c *RealGoogleLLMClient) generateStreamWithNativeHistory(ctx context.Context, model, systemPrompt string, history []core.Message, nativeHistory []GoogleNativeExchange, definitions []core.ToolDefinition, identity core.ToolCall, sampling Sampling) (<-chan LLMStreamChunk, <-chan error, error) {
 	contents := GoogleContentsWithNativeExchanges(history, nativeHistory)
-
-	var genConfig *genai.GenerateContentConfig
-	if systemPrompt != "" {
-		genConfig = &genai.GenerateContentConfig{
-			SystemInstruction: &genai.Content{
-				Parts: []*genai.Part{{Text: systemPrompt}},
-			},
-		}
-	}
-	if len(definitions) > 0 {
-		declarations, err := GoogleToolDeclarations(definitions)
-		if err != nil {
-			return nil, nil, errInvalidGoogleTool
-		}
-		if genConfig == nil {
-			genConfig = &genai.GenerateContentConfig{}
-		}
-		genConfig.Tools = []*genai.Tool{{FunctionDeclarations: declarations}}
+	genConfig, err := generateContentConfig(systemPrompt, definitions, sampling)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	chunkCh := make(chan LLMStreamChunk, 32)
@@ -219,6 +214,37 @@ func (c *RealGoogleLLMClient) generateStreamWithNativeHistory(ctx context.Contex
 	}()
 
 	return chunkCh, errCh, nil
+}
+
+// generateContentConfig is the request config: system prompt, tools and sampling. nil when none is set.
+func generateContentConfig(systemPrompt string, definitions []core.ToolDefinition, sampling Sampling) (*genai.GenerateContentConfig, error) {
+	var c genai.GenerateContentConfig
+	var set bool
+	if systemPrompt != "" {
+		c.SystemInstruction, set = &genai.Content{Parts: []*genai.Part{{Text: systemPrompt}}}, true
+	}
+	if len(definitions) > 0 {
+		declarations, err := GoogleToolDeclarations(definitions)
+		if err != nil {
+			return nil, errInvalidGoogleTool
+		}
+		c.Tools, set = []*genai.Tool{{FunctionDeclarations: declarations}}, true
+	}
+	if t := sampling.Temperature; t != nil {
+		v := float32(*t)
+		c.Temperature, set = &v, true
+	}
+	if t := sampling.TopP; t != nil {
+		v := float32(*t)
+		c.TopP, set = &v, true
+	}
+	if n := sampling.MaxOutputTokens; n > 0 {
+		c.MaxOutputTokens, set = int32(n), true
+	}
+	if !set {
+		return nil, nil
+	}
+	return &c, nil
 }
 
 // LLMProcessor implements core.Processor for Google Gemini LLM.
@@ -437,12 +463,12 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 			if len(p.cfg.ToolDefinitions) > 0 {
 				if nativeClient, ok := p.cfg.Client.(LLMNativeToolStreamClient); ok {
 					identity := core.ToolCall{SessionID: core.SessionID(strconv.FormatUint(p.session.ID(), 10)), TurnID: core.TurnID(turn), Generation: core.Generation(gen)}
-					chunkCh, errCh, err = nativeClient.GenerateStreamWithNativeTools(streamCtx, p.cfg.Model, p.cfg.SystemPrompt, getHistory(), nativeHistory, p.cfg.ToolDefinitions, identity)
+					chunkCh, errCh, err = nativeClient.GenerateStreamWithNativeTools(streamCtx, p.cfg.Model, p.cfg.SystemPrompt, getHistory(), nativeHistory, p.cfg.ToolDefinitions, identity, p.cfg.Sampling)
 				} else {
 					return nil, errGoogleToolClientUnsupported
 				}
 			} else {
-				chunkCh, errCh, err = p.cfg.Client.GenerateStream(streamCtx, p.cfg.Model, p.cfg.SystemPrompt, getHistory())
+				chunkCh, errCh, err = p.cfg.Client.GenerateStream(streamCtx, p.cfg.Model, p.cfg.SystemPrompt, getHistory(), p.cfg.Sampling)
 			}
 			if err != nil {
 				return nil, err
@@ -611,7 +637,10 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 			// it so failover and metrics see it, instead of ending the turn in silence.
 			p.Errors.Add(1)
 			cause := ErrEmptyReply
-			if finishReason != "" && finishReason != "STOP" && finishReason != "FINISH_REASON_UNSPECIFIED" {
+			if finishReason == "MAX_TOKENS" {
+				// Not a block: the cap was spent (on thinking) before any text.
+				cause = fmt.Errorf("%w: max_output_tokens reached before any text (thinking counts toward the cap)", ErrEmptyReply)
+			} else if finishReason != "" && finishReason != "STOP" && finishReason != "FINISH_REASON_UNSPECIFIED" {
 				cause = fmt.Errorf("%w (finish reason %s)", ErrBlockedReply, finishReason)
 			}
 			_ = p.session.Reenter(&core.ErrorFrame{Err: cause, Fatal: false, Turn: core.TurnID(turn), Gen: core.Generation(gen)}, core.Downstream, p.index+1, gen)

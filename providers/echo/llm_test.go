@@ -62,7 +62,7 @@ func text(chunks []google.LLMStreamChunk) (deltas []string, joined string) {
 
 func TestEchoReplyRepeatsTheCallerWordByWord(t *testing.T) {
 	c := NewLLMClient(LLMOptions{})
-	ch, errs, err := c.GenerateStream(context.Background(), "m", "sys", user("hi there"))
+	ch, errs, err := c.GenerateStream(context.Background(), "m", "sys", user("hi there"), google.Sampling{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,16 +79,39 @@ func TestEchoReplyRepeatsTheCallerWordByWord(t *testing.T) {
 
 func TestEchoLabelPrefixesTheReply(t *testing.T) {
 	c := NewLLMClient(LLMOptions{Label: "[front] "})
-	ch, errs, _ := c.GenerateStream(context.Background(), "m", "", user("hi"))
+	ch, errs, _ := c.GenerateStream(context.Background(), "m", "", user("hi"), google.Sampling{})
 	if _, joined := text(collect(t, ch, errs)); joined != "[front] You said: hi" {
 		t.Fatalf("reply %q", joined)
+	}
+}
+
+func TestEchoLabelShowsTheSamplingItWasGiven(t *testing.T) {
+	temp, topP := 0.3, 0.9
+	c := NewLLMClient(LLMOptions{Label: "[front] "})
+	for name, want := range map[string]struct {
+		s    google.Sampling
+		said string
+	}{
+		"all":   {google.Sampling{Temperature: &temp, TopP: &topP, MaxOutputTokens: 200}, "[front] {temperature=0.3 top_p=0.9 max_output_tokens=200} You said: hi"},
+		"zero":  {google.Sampling{Temperature: new(float64)}, "[front] {temperature=0} You said: hi"},
+		"unset": {google.Sampling{}, "[front] You said: hi"},
+	} {
+		ch, errs, _ := c.GenerateStream(context.Background(), "m", "", user("hi"), want.s)
+		if _, joined := text(collect(t, ch, errs)); joined != want.said {
+			t.Errorf("%s: reply %q, want %q", name, joined, want.said)
+		}
+	}
+	// No label, no sampling text: the unlabelled reply is unchanged.
+	ch, errs, _ := NewLLMClient(LLMOptions{}).GenerateStream(context.Background(), "m", "", user("hi"), google.Sampling{MaxOutputTokens: 5})
+	if _, joined := text(collect(t, ch, errs)); joined != "You said: hi" {
+		t.Errorf("unlabelled reply %q", joined)
 	}
 }
 
 func TestEchoFirstTokenAndWordDelays(t *testing.T) {
 	c := NewLLMClient(LLMOptions{Figures: LLMFigures{FirstToken: 50 * time.Millisecond, TokenDelay: 10 * time.Millisecond}, ExtraDelay: 5 * time.Millisecond})
 	start := time.Now()
-	ch, errs, _ := c.GenerateStream(context.Background(), "m", "", user("a b"))
+	ch, errs, _ := c.GenerateStream(context.Background(), "m", "", user("a b"), google.Sampling{})
 	first := <-ch
 	if first.Text == "" || time.Since(start) < 50*time.Millisecond {
 		t.Fatalf("first word after %v: %+v", time.Since(start), first)
@@ -104,7 +127,7 @@ func TestEchoFirstTokenAndWordDelays(t *testing.T) {
 func TestEchoStopsOnContextCancel(t *testing.T) {
 	c := NewLLMClient(LLMOptions{Figures: LLMFigures{TokenDelay: 200 * time.Millisecond}})
 	ctx, cancel := context.WithCancel(context.Background())
-	ch, errs, _ := c.GenerateStream(ctx, "m", "", user("a b c d e f"))
+	ch, errs, _ := c.GenerateStream(ctx, "m", "", user("a b c d e f"), google.Sampling{})
 	<-ch
 	cancel()
 	deadline := time.After(2 * time.Second)
@@ -128,7 +151,7 @@ var tools = []core.ToolDefinition{{Name: "transfer_to_sales", InputSchema: json.
 
 func TestEchoCallsTheToolNamedByAPhrase(t *testing.T) {
 	c := NewLLMClient(LLMOptions{Phrases: map[string]string{"transfer to sales": "transfer_to_sales"}})
-	ch, errs, _ := c.GenerateStreamWithNativeTools(context.Background(), "m", "", user("Please TRANSFER to sales now"), nil, tools, core.ToolCall{})
+	ch, errs, _ := c.GenerateStreamWithNativeTools(context.Background(), "m", "", user("Please TRANSFER to sales now"), nil, tools, core.ToolCall{}, google.Sampling{})
 	var calls []core.ToolCall
 	for _, ck := range collect(t, ch, errs) {
 		calls = append(calls, ck.ToolCalls...)
@@ -142,7 +165,7 @@ func TestEchoPassesJSONArgumentsToSpokenTools(t *testing.T) {
 	c := NewLLMClient(LLMOptions{Phrases: map[string]string{"call tool lookup_order": "mcp__x_lookup_order"}, Spoken: map[string]string{"mcp__x_lookup_order": "lookup_order"}})
 	defs := []core.ToolDefinition{{Name: "mcp__x_lookup_order", InputSchema: json.RawMessage(`{"type":"object"}`)}}
 	args := func(msg string) string {
-		ch, errs, _ := c.GenerateStreamWithNativeTools(context.Background(), "m", "", user(msg), nil, defs, core.ToolCall{})
+		ch, errs, _ := c.GenerateStreamWithNativeTools(context.Background(), "m", "", user(msg), nil, defs, core.ToolCall{}, google.Sampling{})
 		for _, ck := range collect(t, ch, errs) {
 			if len(ck.ToolCalls) > 0 {
 				return string(ck.ToolCalls[0].Arguments)
@@ -162,7 +185,7 @@ func TestEchoAnswersAfterToolResults(t *testing.T) {
 	c := NewLLMClient(LLMOptions{Spoken: map[string]string{"mcp__x_lookup_order": "lookup_order"}})
 	reply := func(m core.Message) string {
 		h := append(user("go"), m)
-		ch, errs, _ := c.GenerateStreamWithNativeTools(context.Background(), "m", "", h, nil, tools, core.ToolCall{})
+		ch, errs, _ := c.GenerateStreamWithNativeTools(context.Background(), "m", "", h, nil, tools, core.ToolCall{}, google.Sampling{})
 		_, joined := text(collect(t, ch, errs))
 		return joined
 	}
@@ -179,7 +202,7 @@ func TestEchoAnswersAfterToolResults(t *testing.T) {
 
 func TestEchoIgnoresPhrasesWithoutToolDefinitions(t *testing.T) {
 	c := NewLLMClient(LLMOptions{Phrases: map[string]string{"transfer to sales": "transfer_to_sales"}})
-	ch, errs, _ := c.GenerateStream(context.Background(), "m", "", user("transfer to sales"))
+	ch, errs, _ := c.GenerateStream(context.Background(), "m", "", user("transfer to sales"), google.Sampling{})
 	for _, ck := range collect(t, ch, errs) {
 		if len(ck.ToolCalls) != 0 {
 			t.Fatalf("tool call without definitions: %+v", ck)
@@ -233,7 +256,7 @@ func TestRealLLMProcessorRunsTheToolLoopAgainstEcho(t *testing.T) {
 func TestEchoNeverStreamsOneHugePiece(t *testing.T) {
 	long := strings.Repeat("hello ", 500)
 	c := NewLLMClient(LLMOptions{})
-	ch, errs, _ := c.GenerateStream(context.Background(), "m", "", user(long))
+	ch, errs, _ := c.GenerateStream(context.Background(), "m", "", user(long), google.Sampling{})
 	deltas, joined := text(collect(t, ch, errs))
 	if joined != "You said: "+long {
 		t.Fatalf("pieces must concatenate back to the reply")
@@ -250,7 +273,7 @@ func TestEchoCallIDsAreUniqueAcrossClients(t *testing.T) {
 	// different call is a "conflicting tool call correlation" in the real tool loop.
 	id := func() string {
 		c := NewLLMClient(LLMOptions{Phrases: map[string]string{"go": "t"}})
-		ch, errs, _ := c.GenerateStreamWithNativeTools(context.Background(), "m", "", user("go"), nil, tools, core.ToolCall{})
+		ch, errs, _ := c.GenerateStreamWithNativeTools(context.Background(), "m", "", user("go"), nil, tools, core.ToolCall{}, google.Sampling{})
 		for _, ck := range collect(t, ch, errs) {
 			if len(ck.ToolCalls) > 0 {
 				return ck.ToolCalls[0].ID
@@ -266,7 +289,7 @@ func TestEchoCallIDsAreUniqueAcrossClients(t *testing.T) {
 func TestEchoNeverStreamsOneHugeWord(t *testing.T) {
 	long := strings.Repeat("x", 5000) // typed text with no spaces, in the word-streaming mimic
 	c := NewLLMClient(LLMOptions{})
-	ch, errs, _ := c.GenerateStream(context.Background(), "m", "", user(long))
+	ch, errs, _ := c.GenerateStream(context.Background(), "m", "", user(long), google.Sampling{})
 	deltas, joined := text(collect(t, ch, errs))
 	if joined != "You said: "+long {
 		t.Fatal("pieces must concatenate back to the reply")
@@ -283,7 +306,7 @@ func TestEchoNeverStreamsOneHugeWord(t *testing.T) {
 func TestEchoReportsACancelledRequestOnTheErrorChannel(t *testing.T) {
 	c := NewLLMClient(LLMOptions{Figures: LLMFigures{FirstToken: 5 * time.Second}})
 	ctx, cancel := context.WithCancel(context.Background())
-	ch, errs, _ := c.GenerateStream(ctx, "m", "", user("hi"))
+	ch, errs, _ := c.GenerateStream(ctx, "m", "", user("hi"), google.Sampling{})
 	time.AfterFunc(20*time.Millisecond, cancel)
 	var got error
 	deadline := time.After(3 * time.Second)
@@ -311,7 +334,7 @@ func TestEchoReportsACancelledRequestOnTheErrorChannel(t *testing.T) {
 func TestEchoOnlyCallsAToolForTheUsersOwnLastMessage(t *testing.T) {
 	c := NewLLMClient(LLMOptions{Phrases: map[string]string{"transfer to sales": "transfer_to_sales"}})
 	history := append(user("please transfer to sales"), core.Message{Role: core.RoleAssistant, Content: "Sure."})
-	ch, errs, _ := c.GenerateStreamWithNativeTools(context.Background(), "m", "", history, nil, tools, core.ToolCall{})
+	ch, errs, _ := c.GenerateStreamWithNativeTools(context.Background(), "m", "", history, nil, tools, core.ToolCall{}, google.Sampling{})
 	for _, ck := range collect(t, ch, errs) {
 		if len(ck.ToolCalls) != 0 {
 			t.Fatalf("an older user message triggered a call: %+v", ck.ToolCalls)
@@ -321,7 +344,7 @@ func TestEchoOnlyCallsAToolForTheUsersOwnLastMessage(t *testing.T) {
 
 func TestEchoNeverStreamsAnEmptyPiece(t *testing.T) {
 	c := NewLLMClient(LLMOptions{})
-	ch, errs, _ := c.GenerateStream(context.Background(), "m", "", user(""))
+	ch, errs, _ := c.GenerateStream(context.Background(), "m", "", user(""), google.Sampling{})
 	for _, ck := range collect(t, ch, errs) {
 		if ck.Text == "" && !ck.IsDone {
 			t.Fatalf("empty piece %+v", ck)
@@ -333,7 +356,7 @@ func TestEchoReportsACancelledToolRequestToo(t *testing.T) {
 	c := NewLLMClient(LLMOptions{Phrases: map[string]string{"transfer to sales": "transfer_to_sales"}})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	ch, errs, _ := c.GenerateStreamWithNativeTools(ctx, "m", "", user("transfer to sales"), nil, tools, core.ToolCall{})
+	ch, errs, _ := c.GenerateStreamWithNativeTools(ctx, "m", "", user("transfer to sales"), nil, tools, core.ToolCall{}, google.Sampling{})
 	var got error
 	for ch != nil || errs != nil {
 		select {
@@ -364,7 +387,7 @@ func TestEchoCallsEveryMCPToolItsMessageNames(t *testing.T) {
 		Spoken:  map[string]string{"mcp__x_lookup_order": "lookup_order", "mcp__x_echo": "echo"},
 	})
 	defs := []core.ToolDefinition{{Name: "mcp__x_lookup_order", InputSchema: json.RawMessage(`{"type":"object"}`)}}
-	ch, errs, _ := c.GenerateStreamWithNativeTools(context.Background(), "m", "", user(`call tool lookup_order {"order_id":"42"} then call tool echo {"text":"hi"} and transfer to sales`), nil, defs, core.ToolCall{})
+	ch, errs, _ := c.GenerateStreamWithNativeTools(context.Background(), "m", "", user(`call tool lookup_order {"order_id":"42"} then call tool echo {"text":"hi"} and transfer to sales`), nil, defs, core.ToolCall{}, google.Sampling{})
 	var calls []core.ToolCall
 	for _, ck := range collect(t, ch, errs) {
 		calls = append(calls, ck.ToolCalls...)
@@ -432,7 +455,7 @@ func TestEchoLongestToolPhraseWins(t *testing.T) {
 	})
 	defs := []core.ToolDefinition{{Name: "mcp__x_get", InputSchema: json.RawMessage(`{"type":"object"}`)}}
 	for i := 0; i < 20; i++ { // map order must not matter
-		ch, errs, _ := c.GenerateStreamWithNativeTools(context.Background(), "m", "", user(`call tool get_order {"id":"7"}`), nil, defs, core.ToolCall{})
+		ch, errs, _ := c.GenerateStreamWithNativeTools(context.Background(), "m", "", user(`call tool get_order {"id":"7"}`), nil, defs, core.ToolCall{}, google.Sampling{})
 		var calls []core.ToolCall
 		for _, ck := range collect(t, ch, errs) {
 			calls = append(calls, ck.ToolCalls...)
@@ -447,7 +470,7 @@ func TestEchoLongestToolPhraseWins(t *testing.T) {
 // silent empty reply.
 func TestStreamPanicIsReportedAsError(t *testing.T) {
 	var c *LLMClient // a nil client panics inside the goroutine
-	chunks, errs, err := c.GenerateStream(t.Context(), "", "", nil)
+	chunks, errs, err := c.GenerateStream(t.Context(), "", "", nil, google.Sampling{})
 	if err != nil {
 		t.Fatal(err)
 	}

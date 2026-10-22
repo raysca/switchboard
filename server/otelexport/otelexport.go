@@ -193,7 +193,7 @@ type SessionTracer struct {
 }
 
 var serviceSpans = map[string]string{
-	"stt.request": "govoice.stt", "llm.request": "govoice.llm", "tts.request": "govoice.tts", "tool.execute": "govoice.tool",
+	"stt.stream": "govoice.stt", "llm.request": "govoice.llm", "tts.request": "govoice.tts", "tool.execute": "govoice.tool",
 }
 
 // StartSpan maps session/turn/service trace events to spans; every other

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Smoke test of a deployed Cloud Run revision. Costs nothing: no call is placed, no provider is called.
-# Usage: GOVOICE_MANAGEMENT_API_KEY=... deploy/smoke-cloudrun.sh https://govoice-xyz.a.run.app
+# Usage: GOVOICE_MANAGEMENT_API_KEY=... deploy/smoke-cloudrun.sh https://switchboard-xyz.a.run.app
+# (the variable is the one the server reads; the deployed secret behind it is SWITCHBOARD_MANAGEMENT_API_KEY)
 # SMOKE_LOCAL=1 downgrades the two checks that need a real public proxy chain (https seen, public client_ip)
 # to warnings, for the local rehearsal (deploy/rehearsal).
 set -euo pipefail

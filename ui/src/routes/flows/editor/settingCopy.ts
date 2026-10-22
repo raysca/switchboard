@@ -219,6 +219,26 @@ const COPY = {
     defaults: "1 (one after another). 1 to 16.",
     careful: "Parallel calls load your tool servers harder.",
   },
+  "llm.temperature": {
+    label: "Temperature",
+    what: "How varied the model's wording is. Lower is steadier and more repeatable; higher is more varied.",
+    when: "Lower for scripted or factual agents; higher for a more conversational one.",
+    defaults: "0 to 2. Empty: the model's own default. Applies to model fallbacks too.",
+    careful: "Some newer models only accept their default and reject a value here: every reply then fails and the caller hears silence. Fallback models are tried only if failover lists client errors.",
+  },
+  "llm.top_p": {
+    label: "Top P",
+    what: "Limits the model to the most likely words whose probabilities add up to this share. Lower is more focused.",
+    when: "Usually change this or temperature, not both.",
+    defaults: "0 to 1. Empty: the model's own default. Applies to model fallbacks too.",
+  },
+  "llm.max_output_tokens": {
+    label: "Max output tokens",
+    what: "The most the model may write in one reply. A reply that reaches the cap is cut off, and the caller hears it cut.",
+    when: "To keep spoken answers short.",
+    defaults: "1 to 8192. Empty: the model's own default. Applies to model fallbacks too. Not the history budget in Flow settings.",
+    careful: "Reasoning models (Gemini 2.5, GPT-OSS on NVIDIA, Grok reasoning models) count their thinking toward this cap, so a low cap can leave an empty reply. Leave it empty on these models, or use 1024 or more.",
+  },
   "tts.clean_text": {
     label: "Text cleaning",
     what: "Removes markdown, links and emoji so the voice does not read symbols aloud. Applies to every step of the call.",

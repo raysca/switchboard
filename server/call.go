@@ -388,7 +388,7 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 		exec = stepExecutor(rs.Executor, allowed, nil, nil, ender.hangUp(entry.ID))
 	}
 	fallbacks := s.resolveFallbacks(ctx, rs, "llm", cfg, &s.metrics.LLMFallbacksSkippedTotal, func(c flow.Candidate, secret []byte) StageSpec {
-		return StageSpec{Provider: c.Provider, Model: c.Model, SystemPrompt: cfg.LLM.SystemPrompt, Secret: secret, Tools: tools, ToolExecutor: exec, MaxParallel: maxParallel}
+		return StageSpec{Provider: c.Provider, Model: c.Model, SystemPrompt: cfg.LLM.SystemPrompt, Sampling: cfg.LLM.LLMSampling, Secret: secret, Tools: tools, ToolExecutor: exec, MaxParallel: maxParallel}
 	})
 	ttsFallbacks := s.resolveFallbacks(ctx, rs, "tts", cfg, &s.metrics.TTSFallbacksSkippedTotal, func(c flow.Candidate, secret []byte) StageSpec {
 		return StageSpec{Provider: c.Provider, Voice: c.Voice, Secret: secret}
@@ -401,7 +401,7 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 		LLMFallbacks: fallbacks, TTSFallbacks: ttsFallbacks, Failover: cfg.Failover,
 		STTFallbacks: s.sttFallbacks(ctx, rs, cfg),
 		STT:          StageSpec{Provider: cfg.STT.Provider, Model: cfg.STT.Model, Language: cfg.STT.Language, Secret: secrets["stt"]},
-		LLM: StageSpec{Provider: cfg.LLM.Provider, Model: cfg.LLM.Model, SystemPrompt: cfg.LLM.SystemPrompt, Secret: secrets["llm"],
+		LLM: StageSpec{Provider: cfg.LLM.Provider, Model: cfg.LLM.Model, SystemPrompt: cfg.LLM.SystemPrompt, Sampling: cfg.LLM.LLMSampling, Secret: secrets["llm"],
 			Tools: tools, ToolExecutor: exec, MaxParallel: maxParallel},
 		TTS:                 StageSpec{Provider: cfg.TTS.Provider, Voice: cfg.TTS.Voice, VoiceSettings: cfg.TTS.VoiceSettings, Secret: secrets["tts"]},
 		DisableTextCleaning: disableTextCleaning,
@@ -508,10 +508,10 @@ func (s *Server) stepSpec(ctx context.Context, rs *runtime.Session, g flow.Defin
 	maxParallel := s.maxParallel(cfg)
 	return StepSpec{
 		Name: n.Name, Greeting: cfg.GreetingText(),
-		LLM: StageSpec{Provider: cfg.LLM.Provider, Model: cfg.LLM.Model, SystemPrompt: cfg.LLM.SystemPrompt, Secret: secrets["llm"],
+		LLM: StageSpec{Provider: cfg.LLM.Provider, Model: cfg.LLM.Model, SystemPrompt: cfg.LLM.SystemPrompt, Sampling: cfg.LLM.LLMSampling, Secret: secrets["llm"],
 			Tools: tools, ToolExecutor: exec, MaxParallel: maxParallel},
 		LLMFallbacks: s.resolveFallbacks(ctx, rs, "llm", cfg, &s.metrics.LLMFallbacksSkippedTotal, func(c flow.Candidate, secret []byte) StageSpec {
-			return StageSpec{Provider: c.Provider, Model: c.Model, SystemPrompt: cfg.LLM.SystemPrompt, Secret: secret, Tools: tools, ToolExecutor: exec, MaxParallel: maxParallel}
+			return StageSpec{Provider: c.Provider, Model: c.Model, SystemPrompt: cfg.LLM.SystemPrompt, Sampling: cfg.LLM.LLMSampling, Secret: secret, Tools: tools, ToolExecutor: exec, MaxParallel: maxParallel}
 		}),
 		TTS: StageSpec{Provider: cfg.TTS.Provider, Voice: cfg.TTS.Voice, VoiceSettings: cfg.TTS.VoiceSettings, Secret: secrets["tts"]},
 		TTSFallbacks: s.resolveFallbacks(ctx, rs, "tts", cfg, &s.metrics.TTSFallbacksSkippedTotal, func(c flow.Candidate, secret []byte) StageSpec {

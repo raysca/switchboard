@@ -93,7 +93,7 @@ For a live microphone call use `make dev` and the console's test call, or `make 
 
 ## The LLM
 
-`offline/Modelfile` defines `govoice-test`: `llama3.2:3b` with `temperature 0` and `seed 42`, because the xai adapter does not send either, and repeatable flow tests need both. It was chosen because it completes a tool call and its result on `/v1/responses` (about 6 s on Apple Silicon); `gemma4` (9.6 GB) also does (about 10 s). Small models drift in wording after a tool result, so tool-dependent flow tests should assert outcomes, not wording. To try another model, change `FROM` in the Modelfile, rerun `make offline-models`, and check that a flow with a tool still calls it. Any server that implements `/v1/responses` with streaming and function calls works; only Ollama is verified.
+`offline/Modelfile` defines `govoice-test`: `llama3.2:3b` with `temperature 0` and `seed 42`, because the adapter sends neither unless a flow sets `llm.temperature` (there is no seed setting), and repeatable flow tests need both. It was chosen because it completes a tool call and its result on `/v1/responses` (about 6 s on Apple Silicon); `gemma4` (9.6 GB) also does (about 10 s). Small models drift in wording after a tool result, so tool-dependent flow tests should assert outcomes, not wording. To try another model, change `FROM` in the Modelfile, rerun `make offline-models`, and check that a flow with a tool still calls it. Any server that implements `/v1/responses` with streaming and function calls works; only Ollama is verified.
 
 ## Adapter configuration (environment)
 

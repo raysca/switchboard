@@ -14,6 +14,8 @@ Open <http://localhost:8080>, enter the management key, and the "Smile Dental fr
 (installed on start; the server retries for up to a minute while the MCP server comes up). With real keys,
 make the two demo calls from the Test call panel (see `docs/demo/dentistry.md`).
 
+Its Postgres lives in memory and is thrown away with the container (Cloud SQL keeps its data).
+
 What it does not prove: the production profile (the rehearsal runs the development profile so the MCP
 server can be reached over loopback; `server.yaml` differs from `config/cloudrun.yaml` only in profile,
 tls and mcp, enforced by a test) and Cloud Run's real proxy chain. On Docker Desktop the client address

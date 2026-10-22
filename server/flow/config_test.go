@@ -9,7 +9,7 @@ import (
 )
 
 func TestDecodeConfigIsStrictButAllowsDrafts(t *testing.T) {
-	for _, bad := range []string{`[]`, `{"stt":"google"}`, `{"pipeline":"default"}`, `{"llm":{"provider":"google","temperature":1}}`, `{"context":{"max_tokens":-1}}`} {
+	for _, bad := range []string{`[]`, `{"stt":"google"}`, `{"pipeline":"default"}`, `{"llm":{"provider":"google","frequency_penalty":1}}`, `{"context":{"max_tokens":-1}}`} {
 		if _, err := DecodeConfig(json.RawMessage(bad)); !errors.Is(err, ErrInvalidConfig) {
 			t.Errorf("%s: err=%v, want ErrInvalidConfig", bad, err)
 		}
@@ -131,5 +131,40 @@ func TestDecodeCallLimit(t *testing.T) {
 				t.Fatalf("err = %v, want %q", err, c.want)
 			}
 		})
+	}
+}
+
+func TestLLMSamplingValidationAndRoundTrip(t *testing.T) {
+	c, err := DecodeConfig(json.RawMessage(`{"llm":{"provider":"google","model":"m","temperature":0.4,"top_p":0.9,"max_output_tokens":256}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := c.LLM.LLMSampling
+	if s.Temperature == nil || *s.Temperature != 0.4 || s.TopP == nil || *s.TopP != 0.9 || s.MaxOutputTokens == nil || *s.MaxOutputTokens != 256 {
+		t.Fatalf("sampling=%+v", s)
+	}
+	out, _ := json.Marshal(c.LLM)
+	for _, k := range []string{`"temperature":0.4`, `"top_p":0.9`, `"max_output_tokens":256`} {
+		if !strings.Contains(string(out), k) {
+			t.Errorf("%s missing from %s", k, out)
+		}
+	}
+	zero, err := DecodeConfig(json.RawMessage(`{"llm":{"provider":"google","temperature":0,"top_p":0}}`))
+	if err != nil || zero.LLM.Temperature == nil || *zero.LLM.Temperature != 0 {
+		t.Fatalf("explicit zero must be kept: %v %+v", err, zero.LLM.LLMSampling)
+	}
+	null, err := DecodeConfig(json.RawMessage(`{"llm":{"provider":"google","temperature":null,"top_p":null,"max_output_tokens":null}}`))
+	if err != nil || null.LLM.LLMSampling != (LLMSampling{}) {
+		t.Fatalf("null = provider default: %v %+v", err, null.LLM.LLMSampling)
+	}
+	for _, bad := range []string{`"temperature":-0.1`, `"temperature":2.1`, `"top_p":-0.1`, `"top_p":1.1`, `"max_output_tokens":0`, `"max_output_tokens":-5`, `"max_output_tokens":8193`, `"max_output_tokens":1.5`, `"temperature":"hot"`} {
+		if _, err := DecodeConfig(json.RawMessage(`{"llm":{"provider":"google",` + bad + `}}`)); !errors.Is(err, ErrInvalidConfig) {
+			t.Errorf("%s: err=%v, want ErrInvalidConfig", bad, err)
+		}
+	}
+	for _, ok := range []string{`"temperature":2`, `"top_p":1`, `"max_output_tokens":1`, `"max_output_tokens":8192`} {
+		if _, err := DecodeConfig(json.RawMessage(`{"llm":{"provider":"google",` + ok + `}}`)); err != nil {
+			t.Errorf("%s rejected: %v", ok, err)
+		}
 	}
 }

@@ -235,7 +235,7 @@ func TestLiveGoogle_MultiTurnRoundTrip(t *testing.T) {
 	history := []core.Message{
 		{Role: core.RoleUser, Content: "Say 'hello' in one word."},
 	}
-	chunkCh, errCh, err := llmClient.GenerateStream(ctx, "gemini-2.5-flash", "You are a concise assistant.", history)
+	chunkCh, errCh, err := llmClient.GenerateStream(ctx, "gemini-2.5-flash", "You are a concise assistant.", history, Sampling{})
 	if err != nil {
 		t.Fatalf("real Google LLM generation failed: %v", err)
 	}

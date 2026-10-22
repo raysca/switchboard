@@ -267,7 +267,14 @@ type activeStream struct {
 	lastFinal    bool   // and whether it was final
 }
 
+// errCanceled marks a stream that ended because the call, stream or session was cancelled,
+// closed or rotated: its span ends complete, not failed.
+var errCanceled = errors.New("canceled")
+
 func (st *activeStream) endTrace(turn core.TurnID, gen core.Generation, err error) {
+	if errors.Is(err, errCanceled) {
+		err = nil
+	}
 	st.traceEnd.Do(func() {
 		if st.traceSpan == nil {
 			return
@@ -623,10 +630,19 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 		st.cancel()
 		_ = stream.Close()
 		provErr := MapError("stt", err)
+		p.Errors.Add(1)
 		if p.cfg.CircuitBreaker != nil {
 			p.cfg.CircuitBreaker.Report(provErr, classify)
 		}
-		return provErr
+		// Like a failed Recv: reported, not returned (a ProcessFrame error ends
+		// the call), and re-entered from the session so STTFailover sees it (an
+		// emitter push would bypass it). active is cleared, so the next audio
+		// opens a fresh stream.
+		if p.session != nil {
+			// Unavailable, like a failed open: a provider that accepts every open but fails
+			// every write ends the call through the server's two-strike stt_unavailable hang-up.
+			_ = p.session.Reenter(&core.ErrorFrame{Err: fmt.Errorf("%w: %w", core.ErrSTTUnavailable, provErr), Turn: core.TurnID(turn), Gen: core.Generation(turnGen)}, core.Downstream, p.index+1, turnGen)
+		}
 	}
 
 	return e.Push(f)
@@ -673,7 +689,7 @@ func (p *STTProcessor) openPrimaryStream(ctx context.Context) error {
 		p.mu.Unlock()
 		cancel()
 		if span != nil {
-			span.End(errors.New("canceled"))
+			span.End(nil)
 		}
 		return nil
 	}
@@ -682,7 +698,7 @@ func (p *STTProcessor) openPrimaryStream(ctx context.Context) error {
 		p.mu.Unlock()
 		cancel()
 		if span != nil {
-			span.End(errors.New("canceled"))
+			span.End(errors.New("provider_failure"))
 		}
 		p.refuseOpen(turn, gen, errTooManyStreams)
 		return nil
@@ -707,7 +723,7 @@ func (p *STTProcessor) openPrimaryStream(ctx context.Context) error {
 		}
 		p.mu.Unlock()
 		cancel()
-		st.endTrace(core.TurnID(turn), core.Generation(gen), errors.New("canceled"))
+		st.endTrace(core.TurnID(turn), core.Generation(gen), errCanceled)
 		if errors.Is(err, core.ErrSessionClosed) {
 			return nil
 		}
@@ -819,7 +835,7 @@ func (p *STTProcessor) openFailed(st *activeStream, err error, heldAudioLost boo
 	}
 	p.mu.Unlock()
 	if stopped {
-		st.endTrace(core.TurnID(turn), core.Generation(gen), errors.New("canceled"))
+		st.endTrace(core.TurnID(turn), core.Generation(gen), errCanceled)
 		return
 	}
 	st.endTrace(core.TurnID(turn), core.Generation(gen), errors.New("provider_failure"))
@@ -968,7 +984,7 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 			p.active, p.dialFailed = nil, true
 		}
 		p.mu.Unlock()
-		st.endTrace(core.TurnID(turn), core.Generation(gen), errors.New("canceled"))
+		st.endTrace(core.TurnID(turn), core.Generation(gen), errCanceled)
 		st.cancel()
 		_ = st.stream.Close()
 		if !errors.Is(err, core.ErrTooManyTasks) { // the local task budget is not a provider error
@@ -1002,10 +1018,10 @@ func (p *STTProcessor) receive(ctx context.Context, st *activeStream) {
 	for {
 		select {
 		case <-st.ctx.Done():
-			traceFailure = errors.New("canceled")
+			traceFailure = errCanceled
 			return
 		case <-ctx.Done():
-			traceFailure = errors.New("canceled")
+			traceFailure = errCanceled
 			return
 		default:
 		}
@@ -1021,7 +1037,7 @@ func (p *STTProcessor) receive(ctx context.Context, st *activeStream) {
 			p.mu.Unlock()
 
 			if errors.Is(err, context.Canceled) || st.ctx.Err() != nil {
-				traceFailure = errors.New("canceled")
+				traceFailure = errCanceled
 				return
 			}
 			if isSTTIdleOrClosed(err) {

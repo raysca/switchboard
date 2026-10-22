@@ -43,7 +43,7 @@ func TestDeployWorkflowShape(t *testing.T) {
 	for _, needle := range []string{
 		"google-github-actions/auth@", "workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}",
 		"github.event.workflow_run.conclusion == 'success'", "github.event.workflow_run.head_sha",
-		"envsubst", "gcloud run services replace", "candidate", "update-traffic", "smoke-cloudrun.sh",
+		"envsubst", "deploy/gcp/switchboard.service.yaml", "PROVIDER_ENV", "OPENAI_API_KEY|DEEPGRAM_API_KEY|CARTESIA_API_KEY|NVIDIA_API_KEY", "gcloud run services replace", "candidate", "update-traffic", "smoke-cloudrun.sh",
 		// A fork PR whose branch is also called main must never deploy: only our own pushes to main, or a dispatch from main.
 		"github.event.workflow_run.event == 'push'", "github.event.workflow_run.head_repository.full_name == github.repository",
 		"github.ref == 'refs/heads/main'", `^[0-9]+$`,

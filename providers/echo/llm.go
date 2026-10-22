@@ -45,15 +45,15 @@ func NewLLMClient(o LLMOptions) *LLMClient {
 	return c
 }
 
-func (c *LLMClient) GenerateStream(ctx context.Context, _, _ string, history []core.Message) (<-chan google.LLMStreamChunk, <-chan error, error) {
-	return c.stream(ctx, history, false)
+func (c *LLMClient) GenerateStream(ctx context.Context, _, _ string, history []core.Message, sampling google.Sampling) (<-chan google.LLMStreamChunk, <-chan error, error) {
+	return c.stream(ctx, history, false, sampling)
 }
 
-func (c *LLMClient) GenerateStreamWithNativeTools(ctx context.Context, _, _ string, history []core.Message, _ []google.GoogleNativeExchange, defs []core.ToolDefinition, _ core.ToolCall) (<-chan google.LLMStreamChunk, <-chan error, error) {
-	return c.stream(ctx, history, len(defs) > 0)
+func (c *LLMClient) GenerateStreamWithNativeTools(ctx context.Context, _, _ string, history []core.Message, _ []google.GoogleNativeExchange, defs []core.ToolDefinition, _ core.ToolCall, sampling google.Sampling) (<-chan google.LLMStreamChunk, <-chan error, error) {
+	return c.stream(ctx, history, len(defs) > 0, sampling)
 }
 
-func (c *LLMClient) stream(ctx context.Context, history []core.Message, hasTools bool) (<-chan google.LLMStreamChunk, <-chan error, error) {
+func (c *LLMClient) stream(ctx context.Context, history []core.Message, hasTools bool, sampling google.Sampling) (<-chan google.LLMStreamChunk, <-chan error, error) {
 	chunks := make(chan google.LLMStreamChunk, 8)
 	errs := make(chan error, 1)
 	go func() {
@@ -89,7 +89,7 @@ func (c *LLMClient) stream(ctx context.Context, history []core.Message, hasTools
 		// A cancelled or timed-out request is reported, not just ended: the processor reads two closed
 		// channels as a finished reply, and a timeout would pass for a silent empty answer.
 		fail := func(err error) { errs <- err }
-		words := c.pieces(history)
+		words := c.pieces(history, sampling)
 		if err := wait(ctx, c.o.Figures.FirstToken); err != nil {
 			fail(err)
 			return
@@ -113,10 +113,13 @@ func (c *LLMClient) stream(ctx context.Context, history []core.Message, hasTools
 
 // pieces is what the model says, in streaming order: the label, then the answer to a tool result or
 // the caller's words repeated; one word per piece, as a model streams.
-func (c *LLMClient) pieces(history []core.Message) []string {
+func (c *LLMClient) pieces(history []core.Message, sampling google.Sampling) []string {
 	var parts []string
 	if c.o.Label != "" {
 		parts = append(parts, c.o.Label)
+		if s := samplingLabel(sampling); s != "" { // proves the flow's sampling reached the model call
+			parts = append(parts, s)
+		}
 	}
 	if n := len(history); n > 0 && history[n-1].Kind == core.MessageToolResult {
 		parts = append(parts, c.toolAnswer(history[n-1]))
@@ -130,6 +133,24 @@ func (c *LLMClient) pieces(history []core.Message) []string {
 		}
 	}
 	return out
+}
+
+// samplingLabel renders the set parameters, e.g. "{temperature=0.3 top_p=0.9 max_output_tokens=200} ".
+func samplingLabel(s google.Sampling) string {
+	var b []string
+	if s.Temperature != nil {
+		b = append(b, "temperature="+strconv.FormatFloat(*s.Temperature, 'g', -1, 64))
+	}
+	if s.TopP != nil {
+		b = append(b, "top_p="+strconv.FormatFloat(*s.TopP, 'g', -1, 64))
+	}
+	if s.MaxOutputTokens > 0 {
+		b = append(b, "max_output_tokens="+strconv.Itoa(s.MaxOutputTokens))
+	}
+	if len(b) == 0 {
+		return ""
+	}
+	return "{" + strings.Join(b, " ") + "} "
 }
 
 // maxPiece bounds one streamed piece, as a real model's tokens are small: one huge delta would make

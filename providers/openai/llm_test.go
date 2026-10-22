@@ -94,7 +94,7 @@ func TestStreamingTextUsageAndRequestShape(t *testing.T) {
 	if body["model"] != "llama-3.3-70b" || body["stream"] != true || body["stream_options"].(map[string]any)["include_usage"] != true {
 		t.Fatalf("body %v", body)
 	}
-	for _, leak := range []string{"store", "input", "reasoning", "search_parameters", "tools"} {
+	for _, leak := range []string{"store", "input", "reasoning", "search_parameters", "tools", "temperature", "top_p", "max_tokens"} {
 		if _, ok := body[leak]; ok {
 			t.Fatalf("vendor-specific %q leaked: %v", leak, body)
 		}
@@ -446,5 +446,60 @@ func TestToolLoopFramesReachTheSession(t *testing.T) {
 	}
 	if strings.Join(got, ",") != "call:call_a,result:call_a:succeeded,text:done" {
 		t.Fatalf("frames %v", got)
+	}
+}
+
+func TestSamplingParametersReachTheRequestBody(t *testing.T) {
+	zero, topP := 0.0, 0.9
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &body)
+		sse(w, `{"choices":[{"delta":{"content":"ok"}}]}`, "[DONE]")
+	}))
+	defer srv.Close()
+	run(t, Config{BaseURL: srv.URL + "/v1", Model: "m", APIKey: "k", Temperature: &zero, TopP: &topP, MaxOutputTokens: 200})
+	if body["temperature"] != 0.0 || body["top_p"] != 0.9 || body["max_tokens"] != 200.0 {
+		t.Fatalf("body %v", body)
+	}
+}
+
+// Sampling is part of the request that is re-sent after a tool round, not only the first.
+func TestSamplingReachesTheSecondToolRoundRequest(t *testing.T) {
+	var mu sync.Mutex
+	var bodies []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		var m map[string]any
+		_ = json.Unmarshal(b, &m)
+		mu.Lock()
+		bodies = append(bodies, m)
+		n := len(bodies)
+		mu.Unlock()
+		if n == 1 {
+			sse(w, `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_a","function":{"name":"weather","arguments":"{}"}}]}}]}`, "[DONE]")
+			return
+		}
+		sse(w, `{"choices":[{"delta":{"content":"done"}}]}`, "[DONE]")
+	}))
+	defer srv.Close()
+	defs := []core.ToolDefinition{{Name: "weather", Description: "d", InputSchema: json.RawMessage(`{"type":"object"}`)}}
+	loop, err := coretools.NewToolLoop(defs, core.ToolExecutorFunc(func(_ context.Context, c core.ToolCall) (core.ToolResult, error) {
+		return core.ToolResult{CallID: c.ID, Status: core.ToolSucceeded, Result: json.RawMessage(`{}`)}, nil
+	}), core.NewConversationContext(core.ContextConfig{}), coretools.DefaultToolLoopConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	temp, topP := 0.3, 0.9
+	run(t, Config{BaseURL: srv.URL, ToolDefinitions: defs, ToolLoop: loop, HTTPClient: srv.Client(), Temperature: &temp, TopP: &topP, MaxOutputTokens: 200})
+	mu.Lock()
+	defer mu.Unlock()
+	if len(bodies) != 2 {
+		t.Fatalf("requests = %d, want 2", len(bodies))
+	}
+	for i, b := range bodies {
+		if b["temperature"] != 0.3 || b["top_p"] != 0.9 || b["max_tokens"] != 200.0 {
+			t.Fatalf("request %d lost sampling: %v", i+1, b)
+		}
 	}
 }

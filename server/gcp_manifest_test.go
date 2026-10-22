@@ -10,12 +10,12 @@ import (
 )
 
 // Every secret name the deployed services and the bootstrap script must agree on.
-var gcpSecretNames = []string{"TOKEN_SECRET", "GOVOICE_MANAGEMENT_API_KEY", "XAI_API_KEY", "ELEVENLABS_API_KEY", "GOOGLE_API_KEY", "GOOGLE_SA_KEY", "DENTAL_MCP_TOKEN"}
+var gcpSecretNames = []string{"TOKEN_SECRET", "SWITCHBOARD_MANAGEMENT_API_KEY", "SWITCHBOARD_DATABASE_DSN", "XAI_API_KEY", "ELEVENLABS_API_KEY", "GOOGLE_API_KEY", "GOOGLE_SA_KEY", "DENTAL_MCP_TOKEN"}
 
 // The placeholders the workflow's envsubst fills in; any other ${VAR} in a manifest is a typo.
 var gcpSample = map[string]string{
-	"REGION": "us-central1", "PROJECT_ID": "demo-proj", "IMAGE": "us-central1-docker.pkg.dev/demo-proj/govoice/govoice:abc123",
-	"MIN_INSTANCES": "1", "DENTAL_MCP_URL": "https://dental-mcp-abc.a.run.app/mcp",
+	"REGION": "us-central1", "PROJECT_ID": "demo-proj", "IMAGE": "us-central1-docker.pkg.dev/demo-proj/switchboard/switchboard:abc123",
+	"MIN_INSTANCES": "1", "PROVIDER_ENV": "", "DENTAL_MCP_URL": "https://dental-mcp-abc.a.run.app/mcp",
 }
 
 type manifest struct {
@@ -104,12 +104,13 @@ func secretEnv(t *testing.T, m manifest) map[string]string {
 }
 
 func TestVoiceServiceManifest(t *testing.T) {
-	m := renderManifest(t, "../deploy/gcp/govoice.service.yaml")
+	m := renderManifest(t, "../deploy/gcp/switchboard.service.yaml")
 	a, spec := m.Spec.Template.Metadata.Annotations, m.Spec.Template.Spec
 	c := spec.Containers[0]
 	for k, want := range map[string]string{
 		"autoscaling.knative.dev/minScale": "1", "autoscaling.knative.dev/maxScale": "1",
 		"run.googleapis.com/execution-environment": "gen2", "run.googleapis.com/cpu-throttling": "false",
+		"run.googleapis.com/cloudsql-instances": "demo-proj:us-central1:switchboard-db",
 	} {
 		if a[k] != want {
 			t.Errorf("annotation %s = %q, want %q", k, a[k], want)
@@ -118,7 +119,7 @@ func TestVoiceServiceManifest(t *testing.T) {
 	if spec.TimeoutSeconds != 3600 || spec.ContainerConcurrency != 20 || c.Resources.Limits["cpu"] != "2" || c.Resources.Limits["memory"] != "2Gi" {
 		t.Errorf("sizing: timeout=%d concurrency=%d limits=%v", spec.TimeoutSeconds, spec.ContainerConcurrency, c.Resources.Limits)
 	}
-	if spec.ServiceAccountName != "govoice-runtime@demo-proj.iam.gserviceaccount.com" {
+	if spec.ServiceAccountName != "switchboard-runtime@demo-proj.iam.gserviceaccount.com" {
 		t.Errorf("service account = %q", spec.ServiceAccountName)
 	}
 	if strings.Join(c.Args, " ") != "-- /opt/govoice/bin/server -config /etc/govoice/cloudrun.yaml" || len(c.Command) != 1 || c.Command[0] != "/usr/bin/tini" {
@@ -128,7 +129,7 @@ func TestVoiceServiceManifest(t *testing.T) {
 		t.Errorf("probe/port: %+v %+v", c.StartupProbe, c.Ports)
 	}
 	want := map[string]string{
-		"TOKEN_SECRET": "TOKEN_SECRET", "GOVOICE_MANAGEMENT_API_KEY": "GOVOICE_MANAGEMENT_API_KEY",
+		"TOKEN_SECRET": "TOKEN_SECRET", "GOVOICE_MANAGEMENT_API_KEY": "SWITCHBOARD_MANAGEMENT_API_KEY", "GOVOICE_DATABASE_DSN": "SWITCHBOARD_DATABASE_DSN",
 		"XAI_API_KEY": "XAI_API_KEY", "ELEVENLABS_API_KEY": "ELEVENLABS_API_KEY", "GOOGLE_API_KEY": "GOOGLE_API_KEY",
 		"MCP_TOKEN_DENTAL": "DENTAL_MCP_TOKEN",
 	}
@@ -152,7 +153,7 @@ func TestVoiceServiceManifest(t *testing.T) {
 	if len(spec.Volumes) != 1 || spec.Volumes[0].Secret.SecretName != "GOOGLE_SA_KEY" || c.VolumeMounts[0].MountPath != "/secrets/google" {
 		t.Errorf("the Google key must be a mounted secret file: %+v %+v", spec.Volumes, c.VolumeMounts)
 	}
-	if env["GOVOICE_DATABASE_DSN"] != "/tmp/govoice.db" || env["DENTAL_MCP_URL"] != "https://dental-mcp-abc.a.run.app/mcp" {
+	if env["DENTAL_MCP_URL"] != "https://dental-mcp-abc.a.run.app/mcp" {
 		t.Errorf("env = %v", env)
 	}
 }
@@ -184,6 +185,42 @@ func TestManifestSecretsAreTheOnesTheBootstrapCreates(t *testing.T) {
 	for _, name := range gcpSecretNames {
 		if !strings.Contains(string(boot), name) {
 			t.Errorf("bootstrap.sh does not create secret %s", name)
+		}
+	}
+}
+
+// The workflow builds PROVIDER_ENV from GCP_PROVIDER_SECRETS and envsubst puts it into the env list: the
+// result must stay valid YAML with one secret-backed entry per name, and an empty list must change nothing.
+func TestProviderEnvInjectionKeepsTheManifestValid(t *testing.T) {
+	raw, err := os.ReadFile("../deploy/gcp/switchboard.service.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := []string{"OPENAI_API_KEY", "DEEPGRAM_API_KEY"}
+	var inject strings.Builder
+	for _, n := range names { // the exact shape deploy.yml builds
+		inject.WriteString("\n            - name: " + n + "\n              valueFrom: {secretKeyRef: {name: " + n + ", key: latest}}")
+	}
+	for _, withKeys := range []bool{false, true} {
+		sample := map[string]string{}
+		for k, v := range gcpSample {
+			sample[k] = v
+		}
+		if withKeys {
+			sample["PROVIDER_ENV"] = inject.String()
+		}
+		var m manifest
+		if err := yaml.Unmarshal([]byte(os.Expand(string(raw), func(k string) string { return sample[k] })), &m); err != nil {
+			t.Fatalf("withKeys=%v: %v", withKeys, err)
+		}
+		got := secretEnv(t, m)
+		for _, n := range names {
+			if (got[n] == n) != withKeys {
+				t.Errorf("withKeys=%v: env %s = %q", withKeys, n, got[n])
+			}
+		}
+		if got["TOKEN_SECRET"] != "TOKEN_SECRET" || got["MCP_TOKEN_DENTAL"] != "DENTAL_MCP_TOKEN" {
+			t.Errorf("withKeys=%v: the fixed secrets were lost: %v", withKeys, got)
 		}
 	}
 }

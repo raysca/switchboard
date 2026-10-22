@@ -68,6 +68,30 @@ describe("StepAdvanced", () => {
     expect(input).toHaveValue(1);
   });
 
+  it("sets sampling for any LLM provider: numbers, clamped to range, removed when emptied", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Harness onChange={onChange} />);
+    for (const name of ["Temperature", "Top P", "Max output tokens"]) expect(screen.getByLabelText(name)).toHaveValue(null);
+    await user.type(screen.getByLabelText("Temperature"), "0");
+    expect(last(onChange).llm).toMatchObject({ temperature: 0 }); // zero is a value, not "unset"
+    await user.clear(screen.getByLabelText("Temperature"));
+    await user.type(screen.getByLabelText("Temperature"), "5");
+    await user.type(screen.getByLabelText("Top P"), "0.9");
+    await user.type(screen.getByLabelText("Max output tokens"), "99999");
+    await user.tab(); // blur shows the stored (clamped) value
+    expect(screen.getByLabelText("Temperature")).toHaveValue(2);
+    expect(screen.getByLabelText("Max output tokens")).toHaveValue(8192);
+    expect(last(onChange).llm).toEqual({ provider: "google", model: "gemini", temperature: 2, top_p: 0.9, max_output_tokens: 8192 });
+    await user.clear(screen.getByLabelText("Max output tokens"));
+    await user.type(screen.getByLabelText("Max output tokens"), "12.6");
+    expect(last(onChange).llm).toMatchObject({ max_output_tokens: 13 }); // a whole number
+    await user.clear(screen.getByLabelText("Temperature"));
+    await user.clear(screen.getByLabelText("Top P"));
+    await user.clear(screen.getByLabelText("Max output tokens"));
+    expect(last(onChange).llm).toEqual({ provider: "google", model: "gemini" });
+  });
+
   it("shows the four voice settings only for ElevenLabs and stores them by omission", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();

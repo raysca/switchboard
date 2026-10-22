@@ -83,7 +83,7 @@ func TestGoogleMimicReproducesTheBenchmarks(t *testing.T) {
 		t.Parallel()
 		c := NewLLMClient(LLMOptions{Figures: MimicGoogle.LLM()})
 		start := time.Now()
-		ch, _, _ := c.GenerateStream(context.Background(), "m", "", user("hi"))
+		ch, _, _ := c.GenerateStream(context.Background(), "m", "", user("hi"), google.Sampling{})
 		<-ch
 		within(t, "first word", time.Since(start), 700*time.Millisecond)
 	})

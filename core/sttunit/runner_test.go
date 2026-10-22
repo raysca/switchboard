@@ -453,21 +453,62 @@ func TestRunner_LateResultOfOldGenerationIsFenced(t *testing.T) {
 	}
 }
 
-func TestRunner_SendFailureFailsTheFrameAndReleases(t *testing.T) {
-	conn := newFakeConn(t)
-	h := newHarness(t, Config{Dial: dialConn(conn)})
+// A failed live Send is that stream's failure, handled like a failed Recv: one
+// error frame, the frame still passes, and the next audio dials a fresh stream
+// for the same turn. A ProcessFrame error would end the whole call.
+func TestRunner_SendFailureIsReportedNotFatal(t *testing.T) {
+	conn1, conn2 := newFakeConn(t), newFakeConn(t)
+	var reports atomic.Int32
+	br := resilience.NewBreaker(resilience.Config{FailureThreshold: 100, Cooldown: time.Hour})
+	var n atomic.Int32
+	h := newHarness(t, Config{
+		Breaker:  br,
+		Classify: func(error) resilience.Verdict { reports.Add(1); return resilience.Verdict{Retryable: true} },
+		Dial: func(context.Context) (Conn, error) {
+			if n.Add(1) == 1 {
+				return conn1, nil
+			}
+			return conn2, nil
+		},
+	})
 	h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
-	h.waitFor("open", func() bool { return conn.recvs.Load() >= 1 })
+	h.waitFor("open", func() bool { return conn1.recvs.Load() >= 1 })
 	broken := errors.New("broken pipe")
-	conn.setSendErr(broken)
-	err := h.r.ProcessFrame(context.Background(), &core.InputAudioFrame{Samples: []byte{1, 0}}, core.Downstream, discard{})
-	if !errors.Is(err, broken) {
-		t.Fatalf("ProcessFrame err = %v, want the send error (STTFailover.syncFailure needs it)", err)
+	conn1.setSendErr(broken)
+	pushed := &pushRecorder{}
+	if err := h.r.ProcessFrame(context.Background(), &core.InputAudioFrame{Samples: []byte{1, 0}}, core.Downstream, pushed); err != nil {
+		t.Fatalf("ProcessFrame err = %v, want nil (a send failure must not end the call)", err)
 	}
+	if pushed.n != 1 {
+		t.Fatalf("audio frames pushed downstream = %d, want 1", pushed.n)
+	}
+	h.waitFor("error frame", func() bool { return len(h.errorFrames()) == 1 })
+	ef := h.errorFrames()[0]
+	// ErrSTTUnavailable lets the server's two-strike stt_unavailable hang-up end a provider that fails every write.
+	if !errors.Is(ef.Err, broken) || !errors.Is(ef.Err, core.ErrSTTUnavailable) || errors.Is(ef.Err, core.ErrTranscriptInvalidated) || ef.Turn != "turn-1-1" {
+		t.Fatalf("error frame %+v", ef)
+	}
+	h.waitFor("released and closed", func() bool { return h.r.Streams() == 0 && conn1.isClosed() })
 	if _, _, n := h.r.STTCounts(); n != 1 {
 		t.Fatalf("errors counted = %d", n)
 	}
-	h.waitFor("released and closed", func() bool { return h.r.Streams() == 0 && conn.isClosed() })
+	if got := reports.Load(); got != 1 {
+		t.Fatalf("breaker reports = %d, want 1", got)
+	}
+	h.audio(2)
+	h.waitFor("redial", func() bool { return h.dials.Load() == 2 && conn2.recvs.Load() >= 1 })
+	conn2.results <- recvResult{res: Result{Text: "hello", Final: true, EndOfUtterance: true}}
+	h.waitFor("candidate from the new stream", func() bool { return len(h.candidates()) >= 1 })
+	if c := h.candidates()[0]; c.Turn != "turn-1-1" || c.Text != "hello" {
+		t.Fatalf("candidate %+v", c)
+	}
+}
+
+type pushRecorder struct{ n int }
+
+func (p *pushRecorder) Push(core.Frame) error { p.n++; return nil }
+func (p *pushRecorder) PushDirection(core.Frame, core.Direction) error {
+	return nil
 }
 
 // Live audio arriving while a flush pass is sending joins the pre-roll and
@@ -716,6 +757,14 @@ func (s *syncBuf) String() string {
 type spanTracer struct {
 	mu   sync.Mutex
 	done map[string]bool
+	errs map[string][]error
+}
+
+// endErrs returns the errors the named span ended with, one per End.
+func (t *spanTracer) endErrs(name string) []error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]error(nil), t.errs[name]...)
 }
 
 func (t *spanTracer) StartSpan(_ context.Context, ev core.TraceEvent) core.Span {
@@ -735,12 +784,14 @@ type recSpan struct {
 
 func (*recSpan) SetAttribute(string, any) {}
 func (*recSpan) AddEvent(core.TraceEvent) {}
-func (s *recSpan) End(error) {
+func (s *recSpan) End(err error) {
 	s.t.mu.Lock()
 	defer s.t.mu.Unlock()
 	if s.t.done == nil {
 		s.t.done = map[string]bool{}
+		s.t.errs = map[string][]error{}
 	}
+	s.t.errs[s.name] = append(s.t.errs[s.name], err)
 	s.t.done[s.name] = true
 }
 
@@ -1063,6 +1114,7 @@ func TestRunner_StalledSendAndFailingRecvReportOnce(t *testing.T) {
 // pre-roll flush (unbound and bound), or a failure after the first report.
 func TestRunner_EachFailurePathReportsOnce(t *testing.T) {
 	broken := errors.New("broken pipe")
+	liveSendConn := newFakeConn(t)
 	for _, tc := range []struct {
 		name   string
 		dial   func(release chan struct{}) func(context.Context) (Conn, error)
@@ -1073,6 +1125,14 @@ func TestRunner_EachFailurePathReportsOnce(t *testing.T) {
 			return func(context.Context) (Conn, error) { return nil, broken }
 		}, func(h *harness) {
 			h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+			h.audio(1)
+		}, 1},
+		{"live send", func(release chan struct{}) func(context.Context) (Conn, error) {
+			return dialConn(liveSendConn)
+		}, func(h *harness) {
+			h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+			h.waitFor("open", func() bool { return liveSendConn.recvs.Load() >= 1 })
+			liveSendConn.setSendErr(broken)
 			h.audio(1)
 		}, 1},
 		{"flush unbound", func(release chan struct{}) func(context.Context) (Conn, error) {
@@ -1176,5 +1236,55 @@ func TestRunner_StoppedStreamEmitsNothing(t *testing.T) {
 	time.Sleep(50 * time.Millisecond) // a bounded wait for something that must not happen
 	if c := h.candidates(); len(c) != 0 {
 		t.Fatalf("a stopped stream emitted %+v", c)
+	}
+}
+
+// A stream cancelled by the session closing is not a failure: its span ends
+// complete (nil), or every call would export an errored STT span.
+func TestRunner_CancelledStreamSpanEndsComplete(t *testing.T) {
+	conn := newFakeConn(t)
+	tr := &spanTracer{}
+	h := newHarnessTraced(t, Config{Dial: dialConn(conn)}, core.DefaultResourceBudget(), tr)
+	h.audio(1) // idle audio: an unbound stream, open until hangup
+	h.waitFor("open", func() bool { return conn.recvs.Load() >= 1 })
+	_ = h.sess.Close()
+	h.waitFor("span ended", func() bool { return tr.ended("stt.stream") })
+	if errs := tr.endErrs("stt.stream"); len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("cancelled stream span ended with %v, want one nil", errs)
+	}
+}
+
+// A failed dial still ends the span as a failure.
+func TestRunner_FailedDialSpanEndsFailed(t *testing.T) {
+	tr := &spanTracer{}
+	h := newHarnessTraced(t, Config{Dial: func(context.Context) (Conn, error) { return nil, errors.New("refused") }}, core.DefaultResourceBudget(), tr)
+	h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	h.waitFor("error frame", func() bool { return len(h.errorFrames()) == 1 })
+	h.waitFor("span ended", func() bool { return tr.ended("stt.stream") })
+	if errs := tr.endErrs("stt.stream"); len(errs) != 1 || errs[0] == nil {
+		t.Fatalf("failed dial span ended with %v, want one error", errs)
+	}
+}
+
+// stop with the cancel sentinel (session closed while opening, flush stopped) ends the span
+// complete; with a provider failure it ends failed.
+func TestRunner_StopCancelSentinelEndsComplete(t *testing.T) {
+	for _, tc := range []struct {
+		err    error
+		failed bool
+	}{{errCanceled, false}, {errProviderFailure, true}} {
+		conn := newFakeConn(t)
+		tr := &spanTracer{}
+		h := newHarnessTraced(t, Config{Dial: dialConn(conn)}, core.DefaultResourceBudget(), tr)
+		h.audio(1)
+		h.waitFor("open", func() bool { return conn.recvs.Load() >= 1 })
+		h.r.mu.Lock()
+		st := h.r.active
+		h.r.mu.Unlock()
+		h.r.stop(st, tc.err)
+		h.waitFor("span ended", func() bool { return tr.ended("stt.stream") })
+		if errs := tr.endErrs("stt.stream"); len(errs) != 1 || (errs[0] != nil) != tc.failed {
+			t.Fatalf("stop(%v): span ended with %v", tc.err, errs)
+		}
 	}
 }

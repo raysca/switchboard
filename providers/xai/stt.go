@@ -235,7 +235,15 @@ func (st *activeSTTStream) firstFinal(turn string, gen uint64) {
 		st.traceSpan.AddEvent(core.NewTraceEvent("stt.first_final", time.Now(), st.traceSession, core.TurnID(turn), core.Generation(gen), st.tracePolicy, nil))
 	})
 }
+
+// errCanceled marks a stream that ended because the call, stream or session was cancelled,
+// closed or rotated: its span ends complete, not failed.
+var errCanceled = errors.New("canceled")
+
 func (st *activeSTTStream) endTrace(err error) {
+	if errors.Is(err, errCanceled) {
+		err = nil
+	}
 	st.traceEnd.Do(func() {
 		if st.traceSpan == nil {
 			return
@@ -478,18 +486,9 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 	sendCtx, sendCancel := context.WithTimeout(st.ctx, 500*time.Millisecond)
 	defer sendCancel()
 
-	err := s.SendAudio(sendCtx, f.Samples)
-	if err != nil {
-		if st.ctx.Err() != nil { // torn down concurrently: not a provider failure
-			return e.Push(f)
-		}
-		st.endTrace(errors.New("provider_failure"))
-		p.stopStream(st)
-		provErr := MapError("stt", err)
-		if p.cfg.CircuitBreaker != nil {
-			p.cfg.CircuitBreaker.Report(err, classify)
-		}
-		return provErr
+	if err := s.SendAudio(sendCtx, f.Samples); err != nil {
+		p.streamWriteFailed(st, err, "xai audio send failed")
+		return e.Push(f)
 	}
 
 	p.RequestsTotal.Add(1)
@@ -520,14 +519,14 @@ func (p *STTProcessor) ensure(ctx context.Context) error {
 	if p.closed || p.active != nil {
 		p.mu.Unlock()
 		cancel()
-		span.End(errors.New("canceled"))
+		span.End(nil)
 		return nil
 	}
 	if p.live >= maxLiveStreams { // earlier opens are still hanging: lose this turn, keep the session's tasks
 		p.dialFailed = true
 		p.mu.Unlock()
 		cancel()
-		span.End(errors.New("canceled"))
+		span.End(errors.New("provider_failure"))
 		p.refuseOpen(turn, gen, errTooManyStreams)
 		return nil
 	}
@@ -550,7 +549,7 @@ func (p *STTProcessor) ensure(ctx context.Context) error {
 		p.mu.Unlock()
 		p.releaseStream(st)
 		p.stopStream(st)
-		st.endTrace(errors.New("canceled"))
+		st.endTrace(errCanceled)
 		if errors.Is(err, core.ErrSessionClosed) {
 			return nil
 		}
@@ -624,7 +623,7 @@ func (p *STTProcessor) run(ctx context.Context, st *activeSTTStream) {
 	if st.ctx.Err() != nil { // stopped while opening: stopStream had no stream to close
 		_ = s.Close()
 		p.releaseStream(st)
-		st.endTrace(errors.New("canceled"))
+		st.endTrace(errCanceled)
 		return
 	}
 	st.traceSpan.AddEvent(core.NewTraceEvent("stt.start", time.Now(), st.traceSession, core.TurnID(turn), core.Generation(gen), st.tracePolicy, nil))
@@ -644,7 +643,7 @@ func (p *STTProcessor) openFailed(st *activeSTTStream, err error) {
 	p.releaseStream(st)
 	p.stopStream(st)
 	if stopped {
-		st.endTrace(errors.New("canceled"))
+		st.endTrace(errCanceled)
 		return
 	}
 	st.endTrace(errors.New("provider_failure"))
@@ -683,7 +682,7 @@ func (p *STTProcessor) receive(ctx context.Context, st *activeSTTStream) {
 		msg, err := st.stream.Recv(st.ctx)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || st.ctx.Err() != nil {
-				traceFailure = errors.New("canceled")
+				traceFailure = errCanceled
 				return
 			}
 			st.mu.Lock()
@@ -763,7 +762,7 @@ func (p *STTProcessor) receive(ctx context.Context, st *activeSTTStream) {
 			}
 			if sendErr != nil {
 				if st.ctx.Err() != nil {
-					traceFailure = errors.New("canceled")
+					traceFailure = errCanceled
 					return
 				}
 				p.ErrorsTotal.Add(1)
@@ -772,7 +771,8 @@ func (p *STTProcessor) receive(ctx context.Context, st *activeSTTStream) {
 				if p.cfg.CircuitBreaker != nil {
 					p.cfg.CircuitBreaker.Report(sendErr, classify)
 				}
-				p.failBoundStream(st, providerErr, "xai buffered audio send failed")
+				p.noRedial(st)
+				p.failBoundStream(st, fmt.Errorf("%w: %w", core.ErrSTTUnavailable, providerErr), "xai buffered audio send failed")
 				return
 			}
 		case "transcript.partial":
@@ -928,17 +928,62 @@ func (p *STTProcessor) beginDrain(ctx context.Context, st *activeSTTStream) erro
 	}
 	s := st.stream
 	st.mu.Unlock()
-	err := s.CloseSend(ctx)
-	if err != nil {
-		st.endTrace(errors.New("provider_failure"))
-		p.stopStream(st)
-		st.mu.Lock()
-		st.closing = false
-		st.mu.Unlock()
-		return err
+	if err := s.CloseSend(ctx); err != nil {
+		p.streamWriteFailed(st, err, "xai audio.done send failed")
+		return nil
 	}
 	p.armDrainTimer(st)
 	return nil
+}
+
+// noRedial stops the rest of st's turn from dialing again after a failed write. The failure retires
+// the turn's (turn, gen) in the transcript finalizer, so a stream reopened for the same pair would
+// have its transcript dropped. With no fallback the remaining speech of that turn is lost and the
+// next turn (dialFailed is cleared when it starts) recovers; with fallbacks STTFailover replays the
+// turn to the next candidate (failBoundStream).
+func (p *STTProcessor) noRedial(st *activeSTTStream) {
+	p.mu.Lock()
+	if p.active == st {
+		p.dialFailed = true
+	}
+	p.mu.Unlock()
+}
+
+// streamWriteFailed handles a failed write on a live stream like a failed
+// read: the stream is stopped and released (the next audio opens a fresh one),
+// the failure is counted and reported to the breaker once, and the error is
+// published, never returned (a ProcessFrame error ends the whole call). A bound
+// turn is invalidated so an STT failover replays it. The st.ctx check is the only guard against a
+// double report (a failed buffered flush on the receive goroutine racing a live write): a narrow
+// window that costs one extra counted error, so no compare-and-swap.
+func (p *STTProcessor) streamWriteFailed(st *activeSTTStream, err error, what string) {
+	if st.ctx.Err() != nil { // torn down concurrently: not a provider failure
+		return
+	}
+	st.endTrace(errors.New("provider_failure"))
+	st.mu.Lock()
+	bound, gen := st.turnID != "", st.gen
+	st.mu.Unlock()
+	if bound {
+		p.noRedial(st)
+	}
+	p.releaseStream(st)
+	p.stopStream(st)
+	p.ErrorsTotal.Add(1)
+	if p.cfg.CircuitBreaker != nil {
+		p.cfg.CircuitBreaker.Report(err, classify)
+	}
+	providerErr := MapError("stt", err)
+	if bound {
+		// Unavailable, like a failed dial: a provider that accepts every dial but fails every
+		// write ends the call through the server's two-strike stt_unavailable hang-up.
+		p.failBoundStream(st, fmt.Errorf("%w: %w", core.ErrSTTUnavailable, providerErr), what)
+	} else if p.session != nil {
+		if gen == 0 {
+			gen = p.session.CurrentGeneration()
+		}
+		_ = p.session.Reenter(&core.ErrorFrame{Err: providerErr, Gen: core.Generation(gen)}, core.Downstream, p.index+1, gen)
+	}
 }
 
 // failBoundStream retires the partial transcript of the stream's turn and

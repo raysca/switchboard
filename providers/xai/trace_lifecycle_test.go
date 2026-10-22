@@ -172,3 +172,41 @@ func TestXAITTSTraceFirstAudioOnce(t *testing.T) {
 		t.Fatalf("request starts=%d", got)
 	}
 }
+
+// A stream cancelled by the session closing ends its span complete (nil), not failed.
+func TestXAISTTTraceCancelledStreamEndsComplete(t *testing.T) {
+	stream := &mockSTTStream{messages: []*STTMessage{{Type: "transcript.created"}}}
+	cfg := DefaultSTTConfig()
+	cfg.StreamOpener = &mockSTTOpener{stream: stream}
+	p, err := NewSTTProcessor(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pipe, _ := core.NewPipeline(p)
+	s, _ := core.NewSession(402, pipe, core.DefaultResourceBudget())
+	r := &lifecycleRecorder{}
+	if err := s.SetTracer(r, core.TracePolicy{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Post(&core.TurnEventFrame{Kind: core.TurnEventStarted, Turn: "turn-cancel", Gen: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Post(&core.InputAudioFrame{Samples: make([]byte, 640), SampleRate: 16000, Channels: 1, Gen: 1}); err != nil {
+		t.Fatal(err)
+	}
+	waitLifecycle(t, func() bool { return r.providerStartCount("stt.stream", "turn-cancel") == 1 })
+	_ = s.Close()
+	waitLifecycle(t, func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return len(r.endErrors["stt.stream"]) == 1
+	})
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if e := r.endErrors["stt.stream"]; e[0] != nil {
+		t.Fatalf("cancelled stream ended with %v, want nil", e)
+	}
+}

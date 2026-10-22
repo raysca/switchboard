@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Local development stack and examples. Run through make:
 #   make dev                                   server + admin UI, seeded with "Dev Assistant", a "Dealership desk" graph and test MCP servers
+#   make dev-fresh                             the same stack in .govoice-dev-fresh/, wiped on every start and not seeded: no flows, so /onboarding is the first-run wizard
 #   make example-web                           custom web client (needs `make dev` running)
 #   make example-cli [TEXT="..."]              CLI call to the dev flow (voice clip, or a text turn)
 #   make admin-link                            a magic link that signs the admin UI in (no pasting)
@@ -197,7 +198,10 @@ cmd_up() {
   spawn mcptest ./bin/mcptest -addr "127.0.0.1:$MCPTEST_PORT" -blackhole-addr "127.0.0.1:$MCPTEST_HOLE_PORT"
   for _ in $(seq 1 50); do curl -fsS "$MCPTEST_URL/_record" >/dev/null 2>&1 && break; sleep 0.1; done
 
-  if flow_id="$(node scripts/dev-seed.mjs)"; then
+  # GOVOICE_DEV_SEED=0 (make dev-fresh) starts with no flows, so /onboarding opens the first-run wizard.
+  if [[ "${GOVOICE_DEV_SEED:-1}" == "0" ]]; then
+    echo "dev: not seeding (GOVOICE_DEV_SEED=0): open /onboarding for the first-run wizard"
+  elif flow_id="$(node scripts/dev-seed.mjs)"; then
     [[ -n "$flow_id" ]] && set_env GOVOICE_DEV_FLOW_ID "$flow_id" && GOVOICE_DEV_FLOW_ID="$flow_id"
   else
     echo "dev: seeding failed (see [seed] output); the stack still runs" >&2

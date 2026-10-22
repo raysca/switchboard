@@ -131,6 +131,9 @@ func (st *stream) event(name string) {
 }
 
 func (st *stream) endTrace(err error) {
+	if errors.Is(err, errCanceled) { // cancelled/closed streams end complete, not failed
+		err = nil
+	}
 	st.traceEnd.Do(func() {
 		if st.span == nil {
 			return
@@ -291,7 +294,7 @@ func (r *Runner) beginTurn(ctx context.Context, turn string, gen uint64) {
 // The dial runs on the stream's session task, never here (A1). It returns nil
 // when closed, after this turn's dial failed, or when the session has no task
 // left (ErrTooManyTasks: reported like a failed dial, never returned, since a
-// ProcessFrame error would fail the whole call).
+// ProcessFrame error would fail the whole call; a failed live Send is the same).
 func (r *Runner) ensure(ctx context.Context) *stream {
 	r.mu.Lock()
 	if r.active != nil || r.closed || r.noDial || r.session == nil {
@@ -370,7 +373,12 @@ func (r *Runner) handleAudio(ctx context.Context, f *core.InputAudioFrame, e cor
 		r.release(st)
 		r.stop(st, errProviderFailure)
 		r.report(err)
-		return err
+		// Like a failed Recv: reported, not returned (a ProcessFrame error ends the
+		// call). The stream is released, so the next audio redials for this turn.
+		// Marked unavailable like a failed dial: a provider that accepts every dial
+		// but fails every write then ends the call through the server's two-strike
+		// stt_unavailable hang-up, while one blip with a working redial never does.
+		r.reportError(st, fmt.Errorf("%w: %w", core.ErrSTTUnavailable, err))
 	}
 	return e.Push(f)
 }

@@ -342,3 +342,60 @@ func TestNewProcessorRequiresAnExplicitAPIKey(t *testing.T) {
 		t.Fatalf("empty key: err = %v, want ErrMissingAPIKey", err)
 	}
 }
+
+func TestSamplingParametersReachTheRequestBody(t *testing.T) {
+	zero, topP := 0.0, 0.9
+	for _, tc := range []struct {
+		name, path, capKey, otherKey string
+	}{
+		{"responses", "/v1/responses", "max_output_tokens", "max_tokens"},
+		{"chat", "/v1/chat/completions", "max_tokens", "max_output_tokens"},
+	} {
+		for _, set := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/set=%v", tc.name, set), func(t *testing.T) {
+				var body map[string]any
+				var mu sync.Mutex
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					b, _ := io.ReadAll(r.Body)
+					mu.Lock()
+					_ = json.Unmarshal(b, &body)
+					mu.Unlock()
+					w.Header().Set("Content-Type", "text/event-stream")
+					_, _ = fmt.Fprint(w, "data: {\"choices\": [{\"delta\": {\"content\": \"ok\"}}]}\n\ndata: [DONE]\n\n")
+				}))
+				defer srv.Close()
+				cfg := Config{Endpoint: srv.URL + tc.path, Model: "m", APIKey: "xai-test-key-1234567890", HTTPClient: srv.Client(),
+					ContextProvider: func() []core.Message { return []core.Message{{Role: core.RoleUser, Content: "hi"}} }}
+				if set {
+					cfg.Temperature, cfg.TopP, cfg.MaxOutputTokens = &zero, &topP, 200
+				}
+				proc, err := NewProcessor(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				session := newMockSessionController(1, 1)
+				_ = proc.Attach(session, 0)
+				if err := proc.ProcessFrame(context.Background(), &core.UserMessageFrame{Turn: "t", Gen: 1, Content: "hi"}, core.Downstream, &mockEmitter{}); err != nil {
+					t.Fatal(err)
+				}
+				session.taskWg.Wait()
+				mu.Lock()
+				defer mu.Unlock()
+				if !set {
+					for _, k := range []string{"temperature", "top_p", "max_tokens", "max_output_tokens"} {
+						if _, ok := body[k]; ok {
+							t.Fatalf("%s sent while unset: %v", k, body)
+						}
+					}
+					return
+				}
+				if body["temperature"] != 0.0 || body["top_p"] != 0.9 || body[tc.capKey] != 200.0 {
+					t.Fatalf("body %v", body)
+				}
+				if _, ok := body[tc.otherKey]; ok {
+					t.Fatalf("%s must not be sent on %s: %v", tc.otherKey, tc.name, body)
+				}
+			})
+		}
+	}
+}

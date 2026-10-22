@@ -8,7 +8,7 @@ services:
     command: ["/opt/govoice/bin/server", "-config", "/etc/rehearsal/server.yaml"]
     env_file: .env
     environment:
-      GOVOICE_DATABASE_DSN: /tmp/govoice.db
+      GOVOICE_DATABASE_DSN: postgres://switchboard:rehearsal@postgres:5432/switchboard?sslmode=disable
       GOOGLE_APPLICATION_CREDENTIALS: /secrets/google.json
       DENTAL_MCP_URL: http://127.0.0.1:8081/mcp
       MCP_TOKEN_DENTAL: ${DENTAL_MCP_TOKEN}
@@ -19,6 +19,12 @@ services:
     tmpfs: [/tmp]
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    depends_on: {postgres: {condition: service_healthy}}
+  postgres:                              # stands in for Cloud SQL; the data is thrown away with the container
+    image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+    environment: {POSTGRES_USER: switchboard, POSTGRES_PASSWORD: rehearsal, POSTGRES_DB: switchboard}
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U switchboard"], interval: 2s, timeout: 3s, retries: 30}
   dental-mcp:
     build: {context: ../.., dockerfile: deploy/Dockerfile.dental-mcp}
     network_mode: "service:govoice"          # 127.0.0.1:8081 for the server, as the loopback MCP policy requires

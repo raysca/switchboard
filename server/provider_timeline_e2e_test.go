@@ -16,7 +16,7 @@ import (
 // flakyLLM is a model backend that is down: every request is a retryable 503.
 type flakyLLM struct{}
 
-func (flakyLLM) GenerateStream(context.Context, string, string, []core.Message) (<-chan google.LLMStreamChunk, <-chan error, error) {
+func (flakyLLM) GenerateStream(context.Context, string, string, []core.Message, google.Sampling) (<-chan google.LLMStreamChunk, <-chan error, error) {
 	return nil, nil, &google.ProviderError{Capability: "llm", BaseErr: google.ErrProviderUnavailable, SafeMessage: "injected outage", StatusCode: http.StatusServiceUnavailable, Retryable: true}
 }
 

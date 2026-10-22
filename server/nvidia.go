@@ -73,6 +73,13 @@ func nvidiaSTTCredential(secret []byte) (c struct {
 	return c, nil
 }
 
+func nvidiaLLMConfig(spec StageSpec, model, key string, br *resilience.Breaker) openai.Config {
+	c := openai.Config{Provider: "nvidia", Model: model, BaseURL: nvidiaNIMBaseURL, SystemPrompt: spec.SystemPrompt, APIKey: key, CircuitBreaker: br}
+	c.RetryPolicy.OnRetry = spec.OnRetry
+	c.Temperature, c.TopP, c.MaxOutputTokens = spec.sampling()
+	return c
+}
+
 // registerNvidia adds nvidia.llm (NIM chat completions through providers/openai)
 // nvidia.stt (Riva streaming ASR) and nvidia.tts (Riva streaming TTS), all on the hosted endpoints.
 func (r *Registry) registerNvidia() {
@@ -85,9 +92,7 @@ func (r *Registry) registerNvidia() {
 		if model == "" {
 			model = nvidiaNIMModel
 		}
-		oaCfg := openai.Config{Provider: "nvidia", Model: model, BaseURL: nvidiaNIMBaseURL, SystemPrompt: spec.SystemPrompt, APIKey: key,
-			CircuitBreaker: r.nvidiaBreaker("llm|" + nvidiaNIMBaseURL)}
-		oaCfg.RetryPolicy.OnRetry = spec.OnRetry
+		oaCfg := nvidiaLLMConfig(spec, model, key, r.nvidiaBreaker("llm|"+nvidiaNIMBaseURL))
 		if len(spec.Tools) > 0 {
 			loop, err := coretools.NewToolLoop(spec.Tools, spec.ToolExecutor, spec.History, spec.toolLoopConfig())
 			if err != nil {
