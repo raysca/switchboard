@@ -83,8 +83,8 @@ type LLMSampling struct {
 	MaxOutputTokens *int     `json:"max_output_tokens,omitempty"`
 }
 
-// MaxOutputTokensLimit is a ceiling under every catalog model's output limit.
-const MaxOutputTokensLimit = 8192
+// maxOutputTokensLimit is a ceiling under every catalog model's output limit.
+const maxOutputTokensLimit = 8192
 
 func (s LLMSampling) validate() error {
 	for _, f := range []struct {
@@ -96,8 +96,8 @@ func (s LLMSampling) validate() error {
 			return fmt.Errorf("%w: llm.%s must be between %g and %g", ErrInvalidConfig, f.name, f.lo, f.hi)
 		}
 	}
-	if m := s.MaxOutputTokens; m != nil && (*m < 1 || *m > MaxOutputTokensLimit) {
-		return fmt.Errorf("%w: llm.max_output_tokens must be between 1 and %d", ErrInvalidConfig, MaxOutputTokensLimit)
+	if m := s.MaxOutputTokens; m != nil && (*m < 1 || *m > maxOutputTokensLimit) {
+		return fmt.Errorf("%w: llm.max_output_tokens must be between 1 and %d", ErrInvalidConfig, maxOutputTokensLimit)
 	}
 	return nil
 }
