@@ -76,9 +76,9 @@ Compose publishes 8080 and 9092 on `127.0.0.1` only. It does **not** publish 909
 
 <!-- src: Makefile:19,26-45; former runbook -->
 
-- Release hardening: `make release-security` checks that every `FROM` line and every compose image is digest-pinned, runs `govulncheck` v1.8.0, writes a module SBOM to `deploy/sbom.json` (git-ignored), builds the image as `govoice:release-security` and checks that the binaries and model exist in it, then scans the image with Trivy (falling back to Grype, then to a Trivy container). The scan fails on any fixed HIGH or CRITICAL finding.
+- Release hardening: `make release-security` checks that every `FROM` line and every compose image is digest-pinned, runs `govulncheck` v1.8.0, writes a module SBOM to `deploy/sbom.json` (git-ignored), builds the image as `govoice:release-security` and checks that the binaries and model exist in it, then scans the image with Trivy (falling back to Grype, then to a Trivy container). The gate is zero critical and zero high findings (the scan fails on any fixed HIGH or CRITICAL one); medium and low findings are triaged per release.
 
-<!-- src: Makefile:104-130; .gitignore:75 -->
+<!-- src: Makefile:104-130; .gitignore:75; former security-scans guide §2 -->
 
 ## 4. Configuration files
 
@@ -165,7 +165,7 @@ Provider keys, the token secret, the management key and the database password co
 
 Migrations run forward-only at startup and a failed migration aborts the start. Back up before each upgrade, and restore into an isolated instance with the matching build. Details are in [storage.md](operations/storage.md). The Cloud Run demo keeps SQLite in `/tmp/govoice.db`, which is lost when the instance stops (the demo reinstalls itself on start). Retention settings (`retention.*`, shipped on in `production.yaml`) are described in [privacy.md](privacy.md#server-data-retention-and-privacy-controls).
 
-<!-- src: docs/storage.md (moved from docs/operations/storage.md:9,13,15); docs/operations/hardening.md:29-40; server/storage/backup_test.go:19; deploy/gcp/govoice.service.yaml:1-3,44; .github/workflows/deploy.yml:13; config/production.yaml:90-96 -->
+<!-- src: docs/storage.md (moved from docs/operations/storage.md:9,13,15); former hardening guide §2; server/storage/backup_test.go:19; deploy/gcp/govoice.service.yaml:1-3,44; .github/workflows/deploy.yml:13; config/production.yaml:90-96 -->
 
 ## 8. Path A: Docker Compose (reference production stack)
 
@@ -178,9 +178,9 @@ Migrations run forward-only at startup and a failed migration aborts the start. 
 
 <!-- src: deploy/nginx.conf:58,66,69-70,119-120; deploy/docker-compose.yaml:41-42,85-87; deploy/smoke-google.sh:18-23; former runbook; server/deploy_contract_test.go (TestNginxCertificatesAreMounted) -->
 
-Container hardening as shipped: user 10001, read-only root filesystem, `cap_drop: ALL`, `no-new-privileges`, a 256M `noexec` tmpfs on `/tmp`, a named volume for `/var/log/govoice`, a `/health` healthcheck, `stop_grace_period: 60s`, and the server waits for the Postgres healthcheck. `tini` is PID 1: it reaps the worker child processes and forwards SIGTERM to the server for the drain.
+Container hardening as shipped: user 10001, read-only root filesystem, `cap_drop: ALL`, `no-new-privileges`, and only two writable places, a 256M `noexec` tmpfs on `/tmp` and a named volume for `/var/log/govoice`; a `/health` healthcheck, `stop_grace_period: 60s`, and the server waits for the Postgres healthcheck. `tini` is PID 1: it reaps the worker child processes and forwards SIGTERM to the server for the drain.
 
-<!-- src: deploy/docker-compose.yaml:10-57; deploy/Dockerfile:113; docs/operations/hardening.md:59-65; deploy/security_scans.md:34-38 -->
+<!-- src: deploy/docker-compose.yaml:10-57; deploy/Dockerfile:113; former hardening guide §4; former security-scans guide §3 -->
 
 ## 9. Path B: systemd (reference unit)
 
@@ -211,7 +211,7 @@ sudo systemctl status govoice.service
 journalctl -u govoice.service -f
 ```
 
-Before starting, set `probe_listen_addr` in the copied `production.yaml` to `127.0.0.1:9092` (or the private interface Prometheus scrapes), or firewall port 9092: on a host, `0.0.0.0:9092` binds every interface. The unit sets `Restart=always`, `TimeoutStopSec=60s` (longer than `drain_timeout` plus the 5 s process margin), `LimitNOFILE`/`LimitNPROC`, and sandboxing (`ProtectSystem=strict`, `NoNewPrivileges`, `ReadWritePaths=/tmp /var/log/govoice`). Because of `ProtectSystem=strict`, a SQLite database must live under one of those writable paths.
+Before starting, set `probe_listen_addr` in the copied `production.yaml` to `127.0.0.1:9092` (or the private interface Prometheus scrapes), or firewall port 9092: on a host, `0.0.0.0:9092` binds every interface. The unit keeps only `CAP_NET_BIND_SERVICE` (needed only to bind ports below 1024 without a proxy), and sets `Restart=always`, `TimeoutStopSec=60s` (longer than `drain_timeout` plus the 5 s process margin), `LimitNOFILE`/`LimitNPROC`, and sandboxing (`ProtectSystem=strict`, `NoNewPrivileges`, `ReadWritePaths=/tmp /var/log/govoice`). Because of `ProtectSystem=strict`, a SQLite database must live under one of those writable paths.
 
 <!-- src: former runbook; deploy/govoice.service:17-45; config/production.yaml:12 -->
 
@@ -280,6 +280,7 @@ On SIGTERM the server marks itself unready (`/ready` returns 503, `voice_drainin
 <!-- src: server/server.go:1093-1175; cmd/server/main.go:129-133; config/production.yaml:55; docs/operations.md:19-32 -->
 
 - The grace period (`docker stop -t`, Compose `stop_grace_period`, systemd `TimeoutStopSec`, Kubernetes `terminationGracePeriodSeconds`) must be at least `drain_timeout` + `preStop` sleep + 5 s; the server budgets `drain_timeout + 5s`. Production: 45 + 5 + 5, so 60 s or more. Compose and the unit use 60 s; `docker stop` without `-t 60` defaults to 10 s and kills the process mid-drain.
+- `limits.immediate_cancel: true` skips the drain wait and cancels calls at once.
 - Add `preStop: sleep 5` so endpoint removal reaches the load balancer before the drain starts, enable load-balancer connection draining, and roll one instance at a time.
 - Voice tokens are bound to the process that issued them. With more than one replica, `POST /api/v1/voice-tokens` and the `/ws` upgrade for that token must reach the same replica (sticky routing, or issue the token through the replica you will connect to), otherwise most calls fail with `invalid token`. A client that gets the drain 503 requests a new token and reconnects.
 - Upgrade order for new providers: roll forward first, and create flows that use a new provider only after every replica runs the new build; to roll back, disable, archive or edit those flows first, because an old binary refuses to start when the flow store holds a flow it cannot run (the error names each `flow <id> <stage>=<provider>`).
@@ -287,7 +288,7 @@ On SIGTERM the server marks itself unready (`/ready` returns 503, `voice_drainin
 - After a crash, the next start ends the calls the old process left `active` in storage (see the operations runbook).
 - Cloud Run: the deploy workflow promotes a smoke-tested candidate as described in [section 10](#10-path-c-google-cloud-run-the-demo-deployment). After promotion the repository has no rollback script.
 
-<!-- src: server/lifecycle.go:5-11; deploy/docker-compose.yaml:49; deploy/govoice.service:25-27; server/lifecycle_budget_test.go; docs/operations.md:25,36-39,43-44,46-50; transport/token/token.go:27,173 -->
+<!-- src: server/server.go:1100-1106; server/lifecycle.go:5-11; deploy/docker-compose.yaml:49; deploy/govoice.service:25-27; server/lifecycle_budget_test.go; docs/operations.md:25,36-39,43-44,46-50; transport/token/token.go:27,173 -->
 
 ## 14. Scaling and limits
 
