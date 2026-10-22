@@ -596,7 +596,17 @@ func (r MCPRepository) AddDiscovery(ctx context.Context, serverID string, tools 
 		return out, err
 	}
 	out = MCPDiscovery{ID: NewID(), ServerID: serverID, DiscoveryHash: hash, Tools: sorted, CreatedAt: time.Now().UTC()}
+	var existing string
 	err = r.s.WithTx(ctx, func(tx *sql.Tx) error {
+		// An unchanged tool list is not a new discovery: reuse the latest one.
+		var latestID, latestHash string
+		switch err := tx.QueryRowContext(ctx, r.s.bind("SELECT d.id,d.discovery_hash FROM mcp_discoveries d JOIN mcp_servers s ON s.latest_discovery_id=d.id WHERE s.id=?"), serverID).Scan(&latestID, &latestHash); {
+		case err == nil && latestHash == hash:
+			existing = latestID
+			return nil
+		case err != nil && !errors.Is(err, sql.ErrNoRows):
+			return err
+		}
 		_, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO mcp_discoveries(id,server_id,discovery_hash,created_at) VALUES(?,?,?,?)"), out.ID, serverID, hash, utc(out.CreatedAt))
 		if err != nil {
 			return err
@@ -619,6 +629,9 @@ func (r MCPRepository) AddDiscovery(ctx context.Context, serverID string, tools 
 		}
 		return nil
 	})
+	if err == nil && existing != "" {
+		return r.Discovery(ctx, existing)
+	}
 	return out, err
 }
 func (r MCPRepository) Discovery(ctx context.Context, id string) (MCPDiscovery, error) {

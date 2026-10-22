@@ -406,8 +406,8 @@ type TraceEvent struct {
 	OccurredAt                                          time.Time
 }
 type ToolCallRecord struct {
-	ID, SessionID, TurnID, MCPServerID, RemoteName, SchemaHash, Status string
-	StartedAt, EndedAt                                                 time.Time
+	ID, SessionID, TurnID, MCPServerID, RemoteName, SchemaHash, Status, ErrorCategory string
+	StartedAt, EndedAt                                                                time.Time
 }
 type TraceRepository struct{ s *Store }
 
@@ -571,7 +571,7 @@ func (r TraceRepository) AddToolCall(ctx context.Context, v ToolCallRecord) erro
 	if v.SessionID == "" {
 		return errors.New("tool call session required")
 	}
-	_, err := r.s.db.ExecContext(ctx, r.s.bind("INSERT INTO tool_calls(id,session_id,turn_id,mcp_server_id,remote_name,schema_hash,started_at,ended_at,status,arguments_summary,result_summary) VALUES(?,?,?,?,?,?,?,?,?,'','')"), v.ID, v.SessionID, nullable(v.TurnID), nullable(v.MCPServerID), v.RemoteName, v.SchemaHash, utc(v.StartedAt), nullTime(v.EndedAt), v.Status)
+	_, err := r.s.db.ExecContext(ctx, r.s.bind("INSERT INTO tool_calls(id,session_id,turn_id,mcp_server_id,remote_name,schema_hash,started_at,ended_at,status,error_category,arguments_summary,result_summary) VALUES(?,?,?,?,?,?,?,?,?,?,'','')"), v.ID, v.SessionID, nullable(v.TurnID), nullable(v.MCPServerID), v.RemoteName, v.SchemaHash, utc(v.StartedAt), nullTime(v.EndedAt), v.Status, v.ErrorCategory)
 	return err
 }
 
@@ -581,7 +581,7 @@ func (r TraceRepository) ToolCalls(ctx context.Context, sessionID, turnID string
 			return nil, err
 		}
 	}
-	query := "SELECT id,session_id,turn_id,mcp_server_id,remote_name,schema_hash,started_at,ended_at,status FROM tool_calls"
+	query := "SELECT id,session_id,turn_id,mcp_server_id,remote_name,schema_hash,started_at,ended_at,status,error_category FROM tool_calls"
 	var clauses []string
 	var args []any
 	if sessionID != "" {
@@ -608,7 +608,7 @@ func (r TraceRepository) ToolCalls(ctx context.Context, sessionID, turnID string
 		var v ToolCallRecord
 		var turn, mcpServer, ended sql.NullString
 		var started string
-		if err := rows.Scan(&v.ID, &v.SessionID, &turn, &mcpServer, &v.RemoteName, &v.SchemaHash, &started, &ended, &v.Status); err != nil {
+		if err := rows.Scan(&v.ID, &v.SessionID, &turn, &mcpServer, &v.RemoteName, &v.SchemaHash, &started, &ended, &v.Status, &v.ErrorCategory); err != nil {
 			return nil, err
 		}
 		v.TurnID = turn.String

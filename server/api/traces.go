@@ -77,9 +77,10 @@ type TurnDTO struct {
 
 // TurnToolDTO is one tool call of a turn; never its arguments or result.
 type TurnToolDTO struct {
-	Name       string `json:"name"`
-	Status     string `json:"status"`
-	DurationMS int64  `json:"duration_ms"`
+	Name          string `json:"name"`
+	Status        string `json:"status"`
+	DurationMS    int64  `json:"duration_ms"`
+	ErrorCategory string `json:"error_category,omitempty"`
 }
 
 // SessionTracesDTO aggregates trace spans, events, and tool calls for timeline rendering.
@@ -115,15 +116,16 @@ type TraceEventDTO struct {
 
 // ToolCallDTO represents a recorded tool call.
 type ToolCallDTO struct {
-	ID          string     `json:"id"`
-	SessionID   string     `json:"session_id"`
-	TurnID      string     `json:"turn_id,omitempty"`
-	MCPServerID string     `json:"mcp_server_id,omitempty"`
-	RemoteName  string     `json:"remote_name"`
-	SchemaHash  string     `json:"schema_hash"`
-	StartedAt   time.Time  `json:"started_at"`
-	EndedAt     *time.Time `json:"ended_at,omitempty"`
-	Status      string     `json:"status"`
+	ID            string     `json:"id"`
+	SessionID     string     `json:"session_id"`
+	TurnID        string     `json:"turn_id,omitempty"`
+	MCPServerID   string     `json:"mcp_server_id,omitempty"`
+	RemoteName    string     `json:"remote_name"`
+	SchemaHash    string     `json:"schema_hash"`
+	StartedAt     time.Time  `json:"started_at"`
+	EndedAt       *time.Time `json:"ended_at,omitempty"`
+	Status        string     `json:"status"`
+	ErrorCategory string     `json:"error_category,omitempty"`
 }
 
 // NewTracesHandler constructs the HTTP handler for sessions and traces query endpoints.
@@ -275,7 +277,7 @@ func (h tracesHandler) turns(w http.ResponseWriter, r *http.Request, id, request
 		if !c.EndedAt.IsZero() {
 			ms = max(c.EndedAt.Sub(c.StartedAt).Milliseconds(), 0)
 		}
-		byTurn[c.TurnID] = append(byTurn[c.TurnID], TurnToolDTO{Name: c.RemoteName, Status: c.Status, DurationMS: ms})
+		byTurn[c.TurnID] = append(byTurn[c.TurnID], TurnToolDTO{Name: c.RemoteName, Status: c.Status, DurationMS: ms, ErrorCategory: c.ErrorCategory})
 	}
 	dtos := make([]TurnDTO, 0, len(turns))
 	for _, turn := range turns {
@@ -432,14 +434,15 @@ func toTraceEventDTO(r storage.TraceEvent) TraceEventDTO {
 
 func toToolCallDTO(r storage.ToolCallRecord) ToolCallDTO {
 	dto := ToolCallDTO{
-		ID:          r.ID,
-		SessionID:   r.SessionID,
-		TurnID:      r.TurnID,
-		MCPServerID: r.MCPServerID,
-		RemoteName:  r.RemoteName,
-		SchemaHash:  r.SchemaHash,
-		StartedAt:   r.StartedAt,
-		Status:      r.Status,
+		ID:            r.ID,
+		SessionID:     r.SessionID,
+		TurnID:        r.TurnID,
+		MCPServerID:   r.MCPServerID,
+		RemoteName:    r.RemoteName,
+		SchemaHash:    r.SchemaHash,
+		StartedAt:     r.StartedAt,
+		Status:        r.Status,
+		ErrorCategory: r.ErrorCategory,
 	}
 	if !r.EndedAt.IsZero() {
 		dto.EndedAt = &r.EndedAt
