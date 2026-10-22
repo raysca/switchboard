@@ -163,9 +163,9 @@ Provider keys, the token secret, the management key and the database password co
 | Rule | never two processes on one file; never a filesystem without reliable locks | migrations take an advisory lock, so replicas can start together |
 | Backup | online `VACUUM INTO`; verify with `PRAGMA quick_check` and `PRAGMA foreign_key_check` | `pg_dump` or physical backup with point-in-time recovery |
 
-Migrations run forward-only at startup and a failed migration aborts the start. Back up before each upgrade, and restore into an isolated instance with the matching build. Details are in [storage.md](operations/storage.md). The Cloud Run demo keeps SQLite in `/tmp/govoice.db`, which is lost when the instance stops (the demo reinstalls itself on start). Retention settings (`retention.*`, shipped on in `production.yaml`) are described in [privacy.md](privacy.md#server-data-retention-and-privacy-controls).
+Migrations run forward-only at startup and a failed migration aborts the start. Back up before each upgrade, and restore into an isolated instance with the matching build. Details are in [storage.md](storage.md). The Cloud Run demo keeps SQLite in `/tmp/govoice.db`, which is lost when the instance stops (the demo reinstalls itself on start). Retention settings (`retention.*`, shipped on in `production.yaml`) are described in [privacy.md](privacy.md#server-data-retention-and-privacy-controls).
 
-<!-- src: docs/storage.md (moved from docs/operations/storage.md:9,13,15); former hardening guide §2; server/storage/backup_test.go:19; deploy/gcp/govoice.service.yaml:1-3,44; .github/workflows/deploy.yml:13; config/production.yaml:90-96 -->
+<!-- src: docs/storage.md (moved up from the former operations directory); former hardening guide §2; server/storage/backup_test.go:19; deploy/gcp/govoice.service.yaml:1-3,44; .github/workflows/deploy.yml:13; config/production.yaml:90-96 -->
 
 ## 8. Path A: Docker Compose (reference production stack)
 
@@ -284,7 +284,7 @@ On SIGTERM the server marks itself unready (`/ready` returns 503, `voice_drainin
 - Add `preStop: sleep 5` so endpoint removal reaches the load balancer before the drain starts, enable load-balancer connection draining, and roll one instance at a time.
 - Voice tokens are bound to the process that issued them. With more than one replica, `POST /api/v1/voice-tokens` and the `/ws` upgrade for that token must reach the same replica (sticky routing, or issue the token through the replica you will connect to), otherwise most calls fail with `invalid token`. A client that gets the drain 503 requests a new token and reconnects.
 - Upgrade order for new providers: roll forward first, and create flows that use a new provider only after every replica runs the new build; to roll back, disable, archive or edit those flows first, because an old binary refuses to start when the flow store holds a flow it cannot run (the error names each `flow <id> <stage>=<provider>`).
-- Migrations are forward-only: back up first ([storage.md](operations/storage.md)). Before rolling back past migration 007, or past the additive per-flow fields `idle`, `audio` and `greeting`, read the cautions in the operations runbook.
+- Migrations are forward-only: back up first ([storage.md](storage.md)). Before rolling back past migration 007, or past the additive per-flow fields `idle`, `audio` and `greeting`, read the cautions in the operations runbook.
 - After a crash, the next start ends the calls the old process left `active` in storage (see the operations runbook).
 - Cloud Run: the deploy workflow promotes a smoke-tested candidate as described in [section 10](#10-path-c-google-cloud-run-the-demo-deployment). After promotion the repository has no rollback script.
 

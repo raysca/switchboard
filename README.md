@@ -130,7 +130,7 @@ To rotate a key, change the variable and restart.
 - [Deployment guide](docs/deployment.md): build, configuration, Compose, systemd, Cloud Run, TLS, monitoring, security checklist.
 - [Operations](docs/operations.md): graceful drain, rolling deploys, failure recovery, tuning notes.
 - [Observability](docs/observability.md): `/health` vs `/ready`, Prometheus metrics, timelines, alerts.
-- [Storage](docs/operations/storage.md) and [retention](docs/operations/retention.md).
+- [Storage](docs/storage.md), and data retention in the [privacy policy](docs/privacy.md).
 - [Performance gates and benchmarks](docs/benchmarks/README.md): the baselines CI compares against, and the measured capacity and latency reports.
 
 **Behaviour and compatibility**

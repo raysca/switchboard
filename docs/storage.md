@@ -1,6 +1,6 @@
 # Server storage operations
 
-Task 3 introduces Server-owned SQL storage. The Framework and provider modules have no persistence dependency. Configure `storage.Config{Dialect: storage.SQLite, DSN: path}` for one-node deployment or `storage.Postgres` with a pgx connection string for PostgreSQL. The opener pings the database and applies embedded, ordered Goose migrations before returning a store. Opening with an unsupported dialect or failed migration fails startup.
+The server owns its SQL storage; the core framework and the provider modules have no persistence dependency. Configure `storage.Config{Dialect: storage.SQLite, DSN: path}` for one-node deployment or `storage.Postgres` with a pgx connection string for PostgreSQL. The opener pings the database and applies embedded, ordered Goose migrations before returning a store. Opening with an unsupported dialect or failed migration fails startup.
 
 ## Dependencies and migration policy
 
@@ -10,7 +10,7 @@ Both dialects use migration 001 for tables and 002 for indexes. Goose records ap
 
 ## Backup and restore
 
-Back up before each upgrade. For SQLite, use SQLite's online backup API or `VACUUM INTO` while the app is running; do not copy only the main `.db` file during WAL activity. Verify a backup with `PRAGMA quick_check` and `PRAGMA foreign_key_check`. A stopped server may be backed up by copying the database and any WAL state together. Include encryption key identifiers and deployment-managed keys in an independent secure backup; ciphertext in the database cannot be recovered without those keys. For PostgreSQL, use the deployment's consistent `pg_dump`/physical backup and point-in-time recovery policy. Restore into an isolated instance, start with the matching Server build so migrations run, and verify `goose_db_version`, foreign-key integrity, flow versions, and session history before serving traffic.
+Back up before each upgrade. For SQLite, use SQLite's online backup API or `VACUUM INTO` while the app is running; do not copy only the main `.db` file during WAL activity. Verify a backup with `PRAGMA quick_check` and `PRAGMA foreign_key_check`. A stopped server may be backed up by copying the database and any WAL state together. For PostgreSQL, use the deployment's consistent `pg_dump`/physical backup and point-in-time recovery policy. Restore into an isolated instance, start with the matching Server build so migrations run, and verify `goose_db_version`, foreign-key integrity, flow versions, and session history before serving traffic.
 
 SQLite is intended for a single node on a local filesystem. Concurrent processes on the same host coordinate migration through the adjacent lock file; do not place it on a filesystem without reliable locks. The modernc driver DSN applies foreign keys, WAL, busy timeout, and immediate transactions on every connection, including replacements after cancellation. PostgreSQL supports multi-instance startup via the advisory migration lock. Keep write transactions short. Historical flow versions, MCP discovery/tools, sessions, turns, and traces have restricted foreign keys and no cascade deletion. A current flow's selected MCP server blocks normal deletion; after creating a detached current version, the live server may be removed while historical discovery, selected tool identity, and tool-call evidence remain.
 
@@ -20,6 +20,6 @@ Flow version publication accepts the normalized config and selected MCP tools to
 
 JSON values are canonicalized before writing. PostgreSQL stores the canonical bytes in `TEXT` columns so JSONB cannot rewrite exponent notation, escaped NUL, or large numeric values after their hashes are computed. Both dialects store UTC timestamps at fixed microsecond precision for consistent lexical ordering and PostgreSQL round trips. A later canonicalization change needs a new schema version and migration.
 
-No table holds provider secrets: they live in the server's environment. Repository methods do not decide what text may be retained. Callers must apply the Task 16 secret policy and Task 19 trace retention policy before writing. No raw audio column exists.
+No table holds provider secrets: they live in the server's environment. Repository methods do not decide what text may be retained. Callers must apply the secret rules ([security/credentials.md](security/credentials.md)) and the trace and retention rules ([privacy.md](privacy.md)) before writing. No raw audio column exists.
 
 PostgreSQL integration tests run when `TEST_POSTGRES_DSN` is set to an isolated test database. They are skipped in the default local suite when no DSN is available.

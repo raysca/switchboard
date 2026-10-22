@@ -48,33 +48,86 @@ terminal operation.
 
 ## Server data retention and privacy controls
 
-The server enforces configurable data retention and privacy controls that
-distinguish operational metadata from conversational content:
+The server enforces configurable data retention that distinguishes operational
+metadata from conversational content:
 
-- **Metadata retention (`MetadataRetentionDays` / `MetadataRetention`):**
-  Defines the lifetime of session, turn, span, event, and tool call records.
-  When expired, ended sessions and their associated trace trees are safely
-  pruned.
-- **Content retention (`ContentRetentionDays` / `ContentRetention`):**
-  Defines the lifetime of conversation content (STT transcripts, LLM assistant
-  responses). Tool argument and result content is never stored.
-  When content retention expires prior to metadata retention, the content purge
-  sets `transcript` and `assistant_text` to null while
-  preserving session, turn, span, event timestamps, latencies, and structural
-  metadata for operational debugging.
+- **Operational metadata:** session start and end times, turn order, latencies,
+  provider names, models, safe error categories, and the span trees used for
+  reliability monitoring and debugging.
+- **Conversational content:** STT transcripts and assistant reply text. Tool
+  arguments and results are never stored.
+
+The two lifetimes are independent, so content can be kept shorter than metadata.
+
+```yaml
+retention:
+  enabled: true                  # default false: automatic purging is an explicit opt-in
+  interval: 1h                   # default 1h
+  metadata_retention_days: 30    # default 30
+  content_retention_days: 7      # default 7
+  batch_size: 500                # default 500
+```
+
+`config/production.yaml` turns the job on with these values; `config/cloudrun.yaml`
+keeps content for 1 day and metadata for 7. OpenTelemetry export is configured
+separately: see [observability.md](observability.md#opentelemetry-export-optional).
+
 - **Who called:** a session stores `caller`, the label the integration chose
   (the `principal` of its voice token, at most 128 characters), and `end_reason`,
   a closed set of words (see `docs/api/v1.md`). Both are metadata and follow
   metadata retention. No IP address, user agent or other network detail is
   stored; the principal must not carry personal data (a phone number or
   e-mail), because it is shown in the console.
-- **Deletion invariants:**
-  Active and draining sessions (`status IN ('active', 'draining')`), current
-  and historical flow versions, and MCP discoveries are never deleted by
-  retention jobs.
-- **Batch bounded execution:**
-  Purges execute in bounded batches (e.g. 500 records) to avoid database
-  contention or long locks on both SQLite and PostgreSQL.
+
+### What each run does
+
+The job (`server/retention/job.go`) runs every `retention.interval` and makes two passes.
+
+1. **Content purge.** For ended sessions whose `ended_at` is older than
+   `content_retention_days`, `turns.transcript` and `turns.assistant_text` are
+   set to `NULL`. `tool_calls` rows hold no argument or result content, so there
+   is nothing to purge there. `trace_spans` and `trace_events` are not touched:
+   the trace adapter stores a fixed whitelist of metadata attributes and never
+   the content keys `transcript`, `prompt`, `text`, `tool.arguments` or
+   `tool.result` (a server test pins this). Sessions, turn rows, ordinals,
+   latencies, tool-call status, error categories and span trees are preserved.
+2. **Metadata purge.** For ended sessions older than `metadata_retention_days`
+   the job deletes, in this order, `trace_events`, `trace_spans` (after
+   unlinking `parent_id`), `tool_calls`, `turns`, `session_mcp_tools` and the
+   `sessions` row. Standalone trace spans and events older than the cutoff are
+   removed too.
+
+**Upgrade note.** A database written by a build between commits `5be193e` and
+`12a7884` (2026-10-05/06) with a trace content mode configured may hold content
+keys in stored traces. This build no longer sanitizes stored traces, so purge
+them by hand: stop the server, back up the database, then run on SQLite or
+Postgres (the column is `TEXT` in both; this resets only the matching rows to an
+empty attribute set):
+
+```sql
+UPDATE trace_spans SET attributes_json = '{}' WHERE attributes_json LIKE '%"transcript":%' OR attributes_json LIKE '%"prompt":%' OR attributes_json LIKE '%"text":%' OR attributes_json LIKE '%"tool.arguments":%' OR attributes_json LIKE '%"tool.result":%';
+UPDATE trace_events SET attributes_json = '{}' WHERE attributes_json LIKE '%"transcript":%' OR attributes_json LIKE '%"prompt":%' OR attributes_json LIKE '%"text":%' OR attributes_json LIKE '%"tool.arguments":%' OR attributes_json LIKE '%"tool.result":%';
+```
+
+Databases that never ran with a trace content mode need no action.
+
+### Invariants
+
+- Sessions with status `active` or `draining` are never deleted and their
+  content is never purged, whatever their age.
+- Flow versions (`flow_versions`) and MCP discoveries and tool schemas
+  (`mcp_discoveries`, `mcp_tools`, `flow_mcp_tools`) are immutable (database
+  triggers reject updates and deletes) and retention never touches them.
+- Deletes follow foreign-key order inside transactions, which satisfies the
+  `ON DELETE RESTRICT` constraints on SQLite and PostgreSQL.
+
+### Bounded execution
+
+Each query handles at most `batch_size` sessions. Inside a batch the metadata
+purge works in sub-batches of 25 sessions per transaction, committing between
+them so SQLite's write lock is released and concurrent trace inserts are not
+stalled. A large backlog drains over many short transactions rather than one
+large one.
 
 ## Call recording
 

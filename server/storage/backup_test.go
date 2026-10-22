@@ -177,7 +177,7 @@ func TestSQLite_MigrationLockRecovery(t *testing.T) {
 	}
 	s1.Close()
 
-	// Confirm the lock file remains on disk (per docs/operations/storage.md)
+	// Confirm the lock file remains on disk (per docs/storage.md)
 	if _, err := os.Stat(lockPath); err != nil {
 		t.Fatalf("expected lock file %s to exist: %v", lockPath, err)
 	}
