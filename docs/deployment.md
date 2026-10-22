@@ -38,7 +38,7 @@ Compose publishes 8080 and 9092 on `127.0.0.1` only. It does **not** publish 909
 
 ## 2. Prerequisites and sizing
 
-- Docker with a Compose version that accepts `env_file` entries with `path` and `required` (the compose file uses them). To build outside Docker: Go 1.27.1, Node 22 for the admin UI, and `make ort` once to fetch the ONNX Runtime. The image builds for `amd64` and `arm64` through `TARGETARCH`; any other value fails the build.
+- Docker with a Compose version that accepts `env_file` entries with `path` and `required` (the compose file uses them). To build outside Docker: Go 1.27.1, Node 22 for the admin UI, and `make ort` once to fetch the ONNX Runtime. The image builds for `amd64` and `arm64` through `TARGETARCH`; any other value fails the build. `TARGETARCH` is filled in by BuildKit (the default builder in current Docker); a legacy builder leaves it empty and the build stops at that check, so build with BuildKit (`docker buildx build`, or `DOCKER_BUILDKIT=1 docker build`).
 
 <!-- src: deploy/docker-compose.yaml:30-32; deploy/Dockerfile:5,12,58-69; Makefile:40-45; docs/quickstart.md:9 -->
 
@@ -188,7 +188,13 @@ Migrations run forward-only at startup and a failed migration aborts the start. 
 
 Container hardening as shipped: user 10001, read-only root filesystem, `cap_drop: ALL`, `no-new-privileges`, and only two writable places, a 256M `noexec` tmpfs on `/tmp` and a named volume for `/var/log/govoice`; a `/health` healthcheck, `stop_grace_period: 60s`, and the server waits for the Postgres healthcheck. `tini` is PID 1: it reaps the worker child processes and forwards SIGTERM to the server for the drain.
 
-<!-- src: deploy/docker-compose.yaml:10-57; deploy/Dockerfile:113; former hardening guide §4; former security-scans guide §3 -->
+<!-- src: deploy/docker-compose.yaml:10-57; deploy/Dockerfile:113; former hardening guide §4; former security-scans guide §3 ; deploy/docker-compose.yaml:7-9,15-19,82-97 (upgrade, volumes, proxy mounts); deploy/nginx.conf:20-21; server/config_validate.go:267-282; server/management.go:95-99; deploy/Dockerfile:58-60,100-102 (TARGETARCH and the writable directories) -->
+
+**Upgrading.** Back up the database first (migrations are forward-only, [section 13](#13-drain-rolling-upgrades-and-rollback)). Rebuild the image the file runs, then recreate the container with the same exported secrets: `docker build -t govoice:local -f deploy/Dockerfile .` and `docker compose -f deploy/docker-compose.yaml up -d` (the `govoice` service has both `build:` and `image: govoice:local`, so `up -d --build` also works). Compose recreates only the container whose image changed; the Postgres data stays in the named volume `govoice_db`. This is a single container: calls drain for up to `drain_timeout` (the 60 s `stop_grace_period` covers it) and new calls are refused while it restarts. Never add `-v` to `down` on this stack, because it deletes `govoice_db`.
+
+**Renewing TLS certificates.** `nginx.conf` reads the certificate files when it loads its configuration, so new files are not served until a reload. Replace the `.crt` and `.key` files in `certs` (the directory is mounted read-only into the proxy, so write them on the host), then `docker exec govoice-proxy nginx -t && docker exec govoice-proxy nginx -s reload`. A reload keeps established WebSockets on the old workers. On a host install, `sudo nginx -t && sudo systemctl reload nginx`. The repository does not automate renewal (no certbot or timer is provided).
+
+**Recordings.** If you enable `recording` ([privacy.md](privacy.md#call-recording)), `recording.dir` must be writable by uid 10001. In the shipped Compose file the root filesystem is read-only and only two places are writable: `/tmp`, a 256M `noexec` tmpfs that is emptied on every container restart, and `/var/log/govoice`, the named volume `govoice_logs`. A directory under `/var/log/govoice` therefore survives restarts and recreation; one under `/tmp` does not. For larger or separately managed storage, add your own volume to the `govoice` service in a compose override file and point `recording.dir` at its mount (the volume must be writable by uid 10001). Recordings are conversation content: keep `recording.retention_days` within `retention.content_retention_days`, which the server enforces at startup.
 
 ## 9. Path B: systemd (reference unit)
 
