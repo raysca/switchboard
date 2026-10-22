@@ -375,7 +375,10 @@ func (r *Runner) handleAudio(ctx context.Context, f *core.InputAudioFrame, e cor
 		r.report(err)
 		// Like a failed Recv: reported, not returned (a ProcessFrame error ends the
 		// call). The stream is released, so the next audio redials for this turn.
-		r.reportError(st, err)
+		// Marked unavailable like a failed dial: a provider that accepts every dial
+		// but fails every write then ends the call through the server's two-strike
+		// stt_unavailable hang-up, while one blip with a working redial never does.
+		r.reportError(st, fmt.Errorf("%w: %w", core.ErrSTTUnavailable, err))
 	}
 	return e.Push(f)
 }

@@ -639,7 +639,9 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 		// emitter push would bypass it). active is cleared, so the next audio
 		// opens a fresh stream.
 		if p.session != nil {
-			_ = p.session.Reenter(&core.ErrorFrame{Err: provErr, Turn: core.TurnID(turn), Gen: core.Generation(turnGen)}, core.Downstream, p.index+1, turnGen)
+			// Unavailable, like a failed open: a provider that accepts every open but fails
+			// every write ends the call through the server's two-strike stt_unavailable hang-up.
+			_ = p.session.Reenter(&core.ErrorFrame{Err: fmt.Errorf("%w: %w", core.ErrSTTUnavailable, provErr), Turn: core.TurnID(turn), Gen: core.Generation(turnGen)}, core.Downstream, p.index+1, turnGen)
 		}
 	}
 

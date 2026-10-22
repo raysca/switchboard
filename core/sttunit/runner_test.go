@@ -484,7 +484,8 @@ func TestRunner_SendFailureIsReportedNotFatal(t *testing.T) {
 	}
 	h.waitFor("error frame", func() bool { return len(h.errorFrames()) == 1 })
 	ef := h.errorFrames()[0]
-	if !errors.Is(ef.Err, broken) || errors.Is(ef.Err, core.ErrSTTUnavailable) || errors.Is(ef.Err, core.ErrTranscriptInvalidated) || ef.Turn != "turn-1-1" {
+	// ErrSTTUnavailable lets the server's two-strike stt_unavailable hang-up end a provider that fails every write.
+	if !errors.Is(ef.Err, broken) || !errors.Is(ef.Err, core.ErrSTTUnavailable) || errors.Is(ef.Err, core.ErrTranscriptInvalidated) || ef.Turn != "turn-1-1" {
 		t.Fatalf("error frame %+v", ef)
 	}
 	h.waitFor("released and closed", func() bool { return h.r.Streams() == 0 && conn1.isClosed() })

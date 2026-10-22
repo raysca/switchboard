@@ -169,6 +169,31 @@ func TestFlowE2E_STTSendFailureThenDeadProviderHangsUp(t *testing.T) {
 	}
 }
 
+// The provider accepts every dial but fails every live write. Each failure alone is non-fatal, but a
+// failed write counts as an unreachable STT: two of them a no-transcript window apart, with no transcript
+// between, end the call as stt_unavailable instead of redialing for ever.
+func TestFlowE2E_STTSendFailureAlwaysFailingEndsCall(t *testing.T) {
+	p := &flakySTT{failStreams: 1 << 30}
+	r := sttSendRig(t, map[string]*flakySTT{"s": p}, func(c *Config) { c.Turn.NoTranscriptTimeout = time.Second })
+	c := r.dial(sttSendFlow(t, r, `"model":"s"`))
+	go c.sendAudioLoose(callerSpeech(t))
+	armOnSpeech(t, r, p)
+	eventually(t, "the first failed write on the timeline", func() bool { return timelineErrors(r) >= 1 })
+	if c.ended() {
+		t.Fatal("the call ended after the first failed write")
+	}
+	time.Sleep(1200 * time.Millisecond) // the no-transcript window has passed
+	c.sendAudioLoose(callerSpeech(t))
+	eventually(t, "the call to end after every write failed", c.ended)
+	r.waitEnded(c.sessionID, storage.EndError)
+	if !r.has(EventDisconnect, "terminated: stt unavailable") {
+		t.Fatalf("timeline lacks the stt_unavailable hang-up: %+v", r.timeline())
+	}
+	if p.failed.Load() < 2 {
+		t.Fatalf("failed writes = %d, want at least the two that end the call", p.failed.Load())
+	}
+}
+
 // The failing stream is the LAST candidate of an STT failover chain: the primary's failed write moves the
 // utterance to the fallback, whose own failed write used to end the call because the chain had nowhere
 // left to go. Now it is a reported error and the next audio reopens the fallback.

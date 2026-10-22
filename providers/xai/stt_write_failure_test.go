@@ -159,7 +159,7 @@ func TestXAISTT_LiveSendFailureIsReportedNotFatal(t *testing.T) {
 					inv++
 				}
 			}
-			if bound && (inv != 1 || !errors.Is(ef.Err, core.ErrTranscriptInvalidated) || ef.Turn != "turn-1-1") {
+			if bound && (inv != 1 || !errors.Is(ef.Err, core.ErrTranscriptInvalidated) || !errors.Is(ef.Err, core.ErrSTTUnavailable) || ef.Turn != "turn-1-1") {
 				t.Fatalf("bound: invalidations %d, error %+v", inv, ef)
 			}
 			if !bound && (inv != 0 || errors.Is(ef.Err, core.ErrTranscriptInvalidated) || errors.Is(ef.Err, core.ErrSTTUnavailable)) {

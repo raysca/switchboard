@@ -771,7 +771,7 @@ func (p *STTProcessor) receive(ctx context.Context, st *activeSTTStream) {
 				if p.cfg.CircuitBreaker != nil {
 					p.cfg.CircuitBreaker.Report(sendErr, classify)
 				}
-				p.failBoundStream(st, providerErr, "xai buffered audio send failed")
+				p.failBoundStream(st, fmt.Errorf("%w: %w", core.ErrSTTUnavailable, providerErr), "xai buffered audio send failed")
 				return
 			}
 		case "transcript.partial":
@@ -939,12 +939,17 @@ func (p *STTProcessor) beginDrain(ctx context.Context, st *activeSTTStream) erro
 // read: the stream is stopped and released (the next audio opens a fresh one),
 // the failure is counted and reported to the breaker once, and the error is
 // published, never returned (a ProcessFrame error ends the whole call). A bound
-// turn is invalidated so an STT failover replays it.
+// turn is invalidated so an STT failover replays it. The st.ctx check is the only guard against a
+// double report (a failed buffered flush on the receive goroutine racing a live write): a narrow
+// window that costs one extra counted error, so no compare-and-swap.
 func (p *STTProcessor) streamWriteFailed(st *activeSTTStream, err error, what string) {
 	if st.ctx.Err() != nil { // torn down concurrently: not a provider failure
 		return
 	}
 	st.endTrace(errors.New("provider_failure"))
+	st.mu.Lock()
+	bound, gen := st.turnID != "", st.gen
+	st.mu.Unlock()
 	p.releaseStream(st)
 	p.stopStream(st)
 	p.ErrorsTotal.Add(1)
@@ -952,11 +957,10 @@ func (p *STTProcessor) streamWriteFailed(st *activeSTTStream, err error, what st
 		p.cfg.CircuitBreaker.Report(err, classify)
 	}
 	providerErr := MapError("stt", err)
-	st.mu.Lock()
-	bound, gen := st.turnID != "", st.gen
-	st.mu.Unlock()
 	if bound {
-		p.failBoundStream(st, providerErr, what)
+		// Unavailable, like a failed dial: a provider that accepts every dial but fails every
+		// write ends the call through the server's two-strike stt_unavailable hang-up.
+		p.failBoundStream(st, fmt.Errorf("%w: %w", core.ErrSTTUnavailable, providerErr), what)
 	} else if p.session != nil {
 		if gen == 0 {
 			gen = p.session.CurrentGeneration()

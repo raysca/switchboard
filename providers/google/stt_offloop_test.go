@@ -587,7 +587,7 @@ func TestGoogleSTTLiveSendFailureIsReportedNotFatal(t *testing.T) {
 		t.Fatalf("error frames pushed on the emitter = %d, want 0", len(out.errs))
 	}
 	gwait(t, "error frame at the sink", 2*time.Second, func() bool { return len(countFrames[*core.ErrorFrame](sink)) == 1 })
-	if ef := countFrames[*core.ErrorFrame](sink)[0]; ef.Turn != "turn-1-1" || ef.Gen != 1 || errors.Is(ef.Err, core.ErrTranscriptInvalidated) {
+	if ef := countFrames[*core.ErrorFrame](sink)[0]; ef.Turn != "turn-1-1" || ef.Gen != 1 || !errors.Is(ef.Err, core.ErrSTTUnavailable) || errors.Is(ef.Err, core.ErrTranscriptInvalidated) {
 		t.Fatalf("error frame %+v", ef)
 	}
 	if n := proc.Errors.Load(); n != 1 {
