@@ -456,7 +456,7 @@ func (wp *workerProcess) executeBatch(jobs []*Job) {
 	}
 
 	if err := WriteFrame(stdin, payload); err != nil {
-		wp.handleWorkerFailure(jobs, fmt.Errorf("%w: %v", ErrWorker, err), true) // died before reading them
+		wp.handleWorkerFailure(jobs, fmt.Errorf("%w: %w", ErrWorker, err), true) // died before reading them
 		return
 	}
 
@@ -474,13 +474,13 @@ func (wp *workerProcess) executeBatch(jobs []*Job) {
 		wp.backend.statCounters.batchedJobs.Add(int64(len(jobs)))
 
 		if res.err != nil {
-			wp.handleWorkerFailure(jobs, fmt.Errorf("%w: %v", ErrWorker, res.err), false)
+			wp.handleWorkerFailure(jobs, fmt.Errorf("%w: %w", ErrWorker, res.err), false)
 			return
 		}
 
 		respItems, err := DecodeInferResp(res.payload)
 		if err != nil {
-			wp.handleWorkerFailure(jobs, fmt.Errorf("%w: decode response: %v", ErrWorker, err), false)
+			wp.handleWorkerFailure(jobs, fmt.Errorf("%w: decode response: %w", ErrWorker, err), false)
 			return
 		}
 

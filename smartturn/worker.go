@@ -146,14 +146,14 @@ func (w *worker) start() error {
 	cmd.Stderr = &w.stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return err
+		return fmt.Errorf("turn worker stdin pipe: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return err
+		return fmt.Errorf("turn worker stdout pipe: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return err
+		return fmt.Errorf("start turn worker: %w", err)
 	}
 	w.mu.Lock()
 	w.cmd, w.stdin, w.stdout = cmd, stdin, stdout

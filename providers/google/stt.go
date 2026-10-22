@@ -1102,7 +1102,7 @@ func (p *STTProcessor) receive(ctx context.Context, st *activeStream) {
 				continue
 			}
 			_ = p.session.Reenter(&core.ErrorFrame{
-				Err:  fmt.Errorf("%w: google transcript assembly failed: %v", core.ErrTranscriptInvalidated, assemblyErr),
+				Err:  fmt.Errorf("%w: google transcript assembly failed: %w", core.ErrTranscriptInvalidated, assemblyErr),
 				Turn: core.TurnID(turn), Gen: core.Generation(turnGen),
 			}, core.Downstream, p.index+1, turnGen)
 			continue

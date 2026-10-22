@@ -3,6 +3,7 @@ package vad
 import (
 	"bytes"
 	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -543,8 +544,12 @@ func TestWorkerProcess_PoisonChunkKillsOneWorkerNotAll(t *testing.T) {
 	if err := run(st0, 1); err != nil {
 		t.Fatalf("warm-up: %v", err)
 	}
-	if err := run(st0, poisonSeq); !errors.Is(err, ErrWorker) {
+	err = run(st0, poisonSeq)
+	if !errors.Is(err, ErrWorker) {
 		t.Fatalf("the poison chunk finished with %v, want ErrWorker", err)
+	}
+	if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) { // the cause stays inspectable
+		t.Fatalf("the poison chunk error %v lost its cause", err)
 	}
 	for end := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
 		if a, _ := exec.Capacity(); a == 2 {

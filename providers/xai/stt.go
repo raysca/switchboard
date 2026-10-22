@@ -958,7 +958,7 @@ func (p *STTProcessor) failBoundStream(st *activeSTTStream, providerErr error, w
 		}
 	}
 	_ = p.session.Reenter(&core.ErrorFrame{
-		Err:  fmt.Errorf("%w: %s: %v", core.ErrTranscriptInvalidated, what, providerErr),
+		Err:  fmt.Errorf("%w: %s: %w", core.ErrTranscriptInvalidated, what, providerErr),
 		Turn: core.TurnID(turn), Gen: core.Generation(turnGen),
 	}, core.Downstream, p.index+1, turnGen)
 }
