@@ -52,13 +52,13 @@ groups:
         labels: {severity: warn}
         annotations:
           summary: "VAD workers on {{ $labels.instance }} keep restarting"
-          description: "Crash or CPU starvation (a worker silent for ~150 ms is killed). See runbook Incident 1."
+          description: "Crash or CPU starvation (a worker silent for ~150 ms is killed). See docs/operations.md, Incident 1: Native VAD Worker Crash."
       - alert: GovoiceLeakedWork
         expr: increase(voice_leaked_work_total[15m]) > 0
         labels: {severity: warn}
         annotations:
           summary: "go-voice {{ $labels.instance }} leaked tasks at session teardown"
-          description: "A provider client ignored cancellation. See runbook Incident 2."
+          description: "A provider client ignored cancellation. See docs/operations.md, Incident 2: Leaked Goroutines / Leaked Work."
       - alert: GovoiceGoroutineGrowth
         expr: voice_process_goroutines > 20000
         for: 15m
@@ -77,7 +77,7 @@ groups:
         labels: {severity: page}
         annotations:
           summary: "{{ $labels.provider }} circuit breaker is open on {{ $labels.instance }}"
-          description: "Flows using this provider fail or fail over. Nvidia series carry an `endpoint` label. See runbook Incident 3."
+          description: "Flows using this provider fail or fail over. Nvidia series carry an `endpoint` label. See docs/operations.md, Incident 3: Cloud Provider Circuit Breakers Tripped."
       - alert: GovoiceProviderErrors
         expr: sum by (provider, stage) (increase(voice_provider_errors_total[10m])) > 10
         labels: {severity: warn}
