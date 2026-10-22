@@ -154,6 +154,14 @@ func (c *RealGoogleLLMClient) generateStreamWithNativeHistory(ctx context.Contex
 	go func() {
 		defer close(chunkCh)
 		defer close(errCh)
+		defer func() { // two closed channels read as a finished reply: report the panic
+			if recover() != nil {
+				select {
+				case errCh <- errors.New("google llm: stream panicked"):
+				default:
+				}
+			}
+		}()
 
 		if c.pool == nil { // Vertex: genai's own HTTP client is not on a netpool Pool, so count here
 			netpool.CountRequest("google", "llm")

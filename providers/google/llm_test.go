@@ -258,3 +258,18 @@ func TestLLMForwardsUpstreamInterruption(t *testing.T) {
 		t.Fatalf("interruption direction = %v, want upstream", em.dir)
 	}
 }
+
+// A panic in the stream goroutine is reported as an error, never a crash or a
+// silent empty reply.
+func TestStreamPanicIsReportedAsError(t *testing.T) {
+	c := &RealGoogleLLMClient{} // no genai client: the goroutine dereferences nil
+	chunks, errs, err := c.GenerateStream(t.Context(), "m", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range chunks {
+	}
+	if e := <-errs; e == nil {
+		t.Fatal("want a stream error")
+	}
+}

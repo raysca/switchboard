@@ -399,3 +399,17 @@ func TestHoldToolsStopsWhenTheContextEndsEvenIfTheExecutorIgnoresIt(t *testing.T
 		t.Fatalf("events = %v", ev)
 	}
 }
+
+type panicPlayer struct{ fakePlayer }
+
+func (*panicPlayer) Start(ws.Underlay) { panic("player") }
+
+func TestCueTimerPanicIsRecordedNotFatal(t *testing.T) {
+	r := &cueRecorder{}
+	c := newCueController(&panicPlayer{}, func() ws.Underlay { return nil }, 20*time.Millisecond, r.record)
+	c.onRoute(prep())
+	waitCue(t, "panic recorded", func() bool { return len(r.events()) > 0 })
+	if ev := r.events(); ev[0] != "error:cue timer panicked" {
+		t.Fatalf("events = %v", ev)
+	}
+}

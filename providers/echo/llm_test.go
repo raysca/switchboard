@@ -442,3 +442,18 @@ func TestEchoLongestToolPhraseWins(t *testing.T) {
 		}
 	}
 }
+
+// A panic in the stream goroutine is reported as an error, never a crash or a
+// silent empty reply.
+func TestStreamPanicIsReportedAsError(t *testing.T) {
+	var c *LLMClient // a nil client panics inside the goroutine
+	chunks, errs, err := c.GenerateStream(t.Context(), "", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range chunks {
+	}
+	if e := <-errs; e == nil {
+		t.Fatal("want a stream error")
+	}
+}

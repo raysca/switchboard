@@ -489,7 +489,20 @@ func (s *Server) setupRoutes() {
 	})
 }
 
-func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
+// onSessionReady turns a panic in call setup (flow resolution, a provider
+// constructor) into a refused call: the connection closes with an error, the
+// process lives. The panic value is redacted before it is logged.
+func (s *Server) onSessionReady(conn *ws.Connection) (session *core.Session, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.Error("panic during call setup", "panic", s.redactor.Redact(fmt.Sprint(r)))
+			session, err = nil, errors.New("call setup panicked")
+		}
+	}()
+	return s.startCall(conn)
+}
+
+func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 	// Under s.mu so Shutdown either refuses this call or waits for it to
 	// register: a call still resolving its flow is not yet in activeCalls.
 	s.mu.Lock()
@@ -643,6 +656,11 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 			// observer, since Session.Close waits for it.
 			ending.set(storage.EndError)
 			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						s.logger.Error("panic during stt hang-up", slog.Uint64("session", sessionID), "panic", s.redactor.Redact(fmt.Sprint(r)))
+					}
+				}()
 				timeline.Record(TimelineEvent{Type: EventDisconnect, Details: "terminated: stt unavailable"})
 				conn.Hangup("stt_unavailable", 2*time.Second) // final RTVI error with the reason, 1000 close
 				conn.Close()

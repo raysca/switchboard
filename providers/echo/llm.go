@@ -3,6 +3,7 @@ package echo
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sort"
 	"strconv"
 	"strings"
@@ -58,6 +59,14 @@ func (c *LLMClient) stream(ctx context.Context, history []core.Message, hasTools
 	go func() {
 		defer close(chunks)
 		defer close(errs)
+		defer func() { // the processor reads two closed channels as a finished reply: report the panic
+			if recover() != nil {
+				select {
+				case errs <- errors.New("echo llm: stream panicked"):
+				default:
+				}
+			}
+		}()
 		send := func(ch google.LLMStreamChunk) bool {
 			select {
 			case chunks <- ch:

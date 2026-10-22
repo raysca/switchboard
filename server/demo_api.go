@@ -191,7 +191,7 @@ func (s *Server) autoInstallDemo() {
 		defer s.demoWG.Done()
 		defer func() {
 			if r := recover(); r != nil {
-				s.logger.Error("demo auto-install panicked", "panic", fmt.Sprint(r))
+				s.logger.Error("demo auto-install panicked", "panic", s.redactor.Redact(fmt.Sprint(r)))
 			}
 		}()
 		defer cancel()

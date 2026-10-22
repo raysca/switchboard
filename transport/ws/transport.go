@@ -121,6 +121,20 @@ func (c *Connection) traceEventAt(name string, at time.Time, attrs map[string]an
 		span.AddEvent(core.NewTraceEvent(name, at, session, "", 0, policy, attrs))
 	}
 }
+
+// recoverPanic ends the call when a connection goroutine panics (a client
+// anomaly or server code run from the read loop): the panic value is never
+// logged here, it can carry client or provider data.
+func (c *Connection) recoverPanic() {
+	if recover() == nil {
+		return
+	}
+	c.setCloseCause("panic")
+	c.traceError("panic")
+	c.closeBounded(websocket.StatusInternalError, "internal error", 500*time.Millisecond)
+	c.cancel()
+}
+
 func (c *Connection) traceError(category string) {
 	c.traceEvent("transport.error", map[string]any{"error.category": category})
 }
@@ -535,6 +549,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// RTVI Ready watchdog: if client does not send valid client-ready within timeout,
 	// terminate connection before heavy session allocation.
 	go func() {
+		defer conn.recoverPanic()
 		select {
 		case <-conn.readyCh:
 			// Handshake completed successfully
@@ -555,6 +570,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer conn.recoverPanic()
 			conn.pingLoop()
 		}()
 	}
@@ -562,6 +578,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Writer task
 	go func() {
 		defer wg.Done()
+		defer conn.recoverPanic()
 		if err := pacer.Run(conn.ctx); err != nil && !errors.Is(err, context.Canceled) {
 			conn.traceError("transport_failure")
 			if errors.Is(err, ErrSlowClient) {
@@ -574,6 +591,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Reader task
 	go func() {
 		defer wg.Done()
+		defer conn.recoverPanic()
 		conn.readLoop()
 		conn.cancel()
 	}()
