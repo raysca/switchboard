@@ -98,6 +98,20 @@ func TestSyncTwoStrikes(t *testing.T) {
 	if got := r.state(t).ValidationState; got != StateConnectionFailed {
 		t.Fatalf("two failures in a row: state %q, want connection_failed", got)
 	}
+	// A manual Sync heals it; the next background failure is a fresh first strike.
+	r.down.Store(false)
+	if _, err := r.svc.Refresh(ctx, r.id); err != nil {
+		t.Fatal(err)
+	}
+	r.down.Store(true)
+	y.round(ctx)
+	if got := r.state(t).ValidationState; got != StateHealthy {
+		t.Fatalf("first background failure after a manual heal: state %q, want healthy", got)
+	}
+	y.round(ctx)
+	if got := r.state(t).ValidationState; got != StateConnectionFailed {
+		t.Fatalf("second failure after a manual heal: state %q, want connection_failed", got)
+	}
 	r.down.Store(false)
 	y.round(ctx)
 	if got := r.state(t).ValidationState; got != StateHealthy {

@@ -93,7 +93,9 @@ func (y *Syncer) round(ctx context.Context) {
 		if y.onResult != nil {
 			y.onResult(ok)
 		}
-		if !ok && m.ValidationState == StateHealthy && y.strikes[m.ID] == 0 {
+		// Stored healthy with a count of 2 means something else (a manual Sync)
+		// healed it since: that is a fresh first strike too.
+		if !ok && m.ValidationState == StateHealthy && y.strikes[m.ID] != 1 {
 			y.strikes[m.ID] = 1
 			continue
 		}

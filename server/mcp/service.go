@@ -533,9 +533,12 @@ func (s *Service) Refresh(ctx context.Context, id string) (storage.MCPDiscovery,
 }
 
 func (s *Service) writeResult(ctx context.Context, id string, r syncResult) {
-	if r.State != "" {
-		_ = s.store.MCP().SetValidation(context.WithoutCancel(ctx), id, r.State, r.Connected, r.Discovered)
+	if r.State == "" {
+		return
 	}
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.timeout) // a store write cannot hang shutdown
+	defer cancel()
+	_ = s.store.MCP().SetValidation(wctx, id, r.State, r.Connected, r.Discovered)
 }
 
 // syncServer connects to m and stores its tool list as a discovery (unchanged
