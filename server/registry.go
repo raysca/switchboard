@@ -40,7 +40,9 @@ type StageSpec struct {
 	// VoiceSettings (ElevenLabs TTS only; nil = provider defaults).
 	VoiceSettings *flow.ElevenLabsVoiceSettings
 	SystemPrompt  string
-	Secret        []byte
+	// Sampling (LLM only; zero = provider defaults). Copied to LLM fallbacks.
+	Sampling flow.LLMSampling
+	Secret   []byte
 
 	// LLM stage only: the flow's captured MCP tools and the call history
 	// the tool loop records into.

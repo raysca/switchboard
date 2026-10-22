@@ -719,3 +719,66 @@ func TestStoredFlow_VoiceSettingsReachStageSpec(t *testing.T) {
 	}
 	check("step TTS", st.TTS.VoiceSettings)
 }
+
+// llm sampling saved on a flow reaches the started call's LLM StageSpec (single
+// step, routed step) and is copied to LLM fallbacks; an unset step carries none.
+func TestStoredFlow_SamplingReachesStageSpec(t *testing.T) {
+	s := apiTestServer(t)
+	vars := testProviderVars(t)
+	vars["XAI_API_KEY"] = "test-xai-key"
+	s.env = mapEnv(vars)
+	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
+	enableTestManagement(t, s)
+
+	samp := `"temperature":0.3,"top_p":0.9,"max_output_tokens":200`
+	check := func(name string, got flow.LLMSampling) {
+		t.Helper()
+		if got.Temperature == nil || *got.Temperature != 0.3 || got.TopP == nil || *got.TopP != 0.9 || got.MaxOutputTokens == nil || *got.MaxOutputTokens != 200 {
+			t.Fatalf("%s: sampling = %+v", name, got)
+		}
+	}
+	single := `{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m",` + samp + `,"fallbacks":[{"provider":"xai","model":"grok"}]},"tts":{"provider":"google"}}`
+	created, err := s.flows.Create(t.Context(), flow.CreateRequest{Name: "Samp", Config: json.RawMessage(single)})
+	if err != nil || created.Readiness.State != flow.ReadinessReady {
+		t.Fatalf("create: %v %+v", err, created.Readiness)
+	}
+	spec, release, err := s.resolveCall(t.Context(), created.ID, "samp-1", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	check("call LLM", spec.LLM.Sampling)
+	if len(spec.LLMFallbacks) != 1 {
+		t.Fatalf("fallbacks = %+v", spec.LLMFallbacks)
+	}
+	check("call LLM fallback", spec.LLMFallbacks[0].Sampling)
+
+	// A later publish with a different temperature does not change the pinned call.
+	v2 := strings.Replace(single, `"temperature":0.3`, `"temperature":1.5`, 1)
+	if _, err := s.flows.Update(t.Context(), created.ID, flow.UpdateRequest{Config: json.RawMessage(v2)}); err != nil {
+		t.Fatal(err)
+	}
+	check("pinned call after republish", spec.LLM.Sampling)
+
+	flat := `{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}}`
+	step := `{"llm":{"provider":"google","model":"m",` + samp + `,"fallbacks":[{"provider":"xai","model":"grok"}]},"tts":{"provider":"google"}}`
+	rs := &runtime.Session{Snapshot: flow.Snapshot{Version: flow.Version{Config: json.RawMessage(`{"start":"front","steps":[` +
+		`{"id":"front","name":"Front","config":` + flat + `},{"id":"sales","name":"Sales","config":` + step + `}],` +
+		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"buy"}]}`)}}}
+	call, err := s.callSpec(t.Context(), rs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if call.LLM.Sampling != (flow.LLMSampling{}) {
+		t.Fatalf("start step has no sampling: %+v", call.LLM.Sampling)
+	}
+	st, err := call.Flow.Resolve(t.Context(), "sales")
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("step LLM", st.LLM.Sampling)
+	if len(st.LLMFallbacks) != 1 {
+		t.Fatalf("step fallbacks = %+v", st.LLMFallbacks)
+	}
+	check("step LLM fallback", st.LLMFallbacks[0].Sampling)
+}
