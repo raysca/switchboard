@@ -225,6 +225,7 @@ type ServerView struct {
 	Enabled           bool       `json:"enabled"`
 	PendingDeletion   bool       `json:"pending_deletion"`
 	LastConnectedAt   *time.Time `json:"last_connected_at,omitempty"`
+	LastCheckedAt     *time.Time `json:"last_checked_at,omitempty"`
 	LastDiscoveredAt  *time.Time `json:"last_discovered_at,omitempty"`
 }
 type DetachResult struct {
@@ -262,7 +263,11 @@ func view(m storage.MCPServer, tokens TokenSource) ServerView {
 	if m.AuthEnv != "" && tokens != nil {
 		_, authSet = tokens.Token(m.AuthEnv)
 	}
-	var connected, discovered *time.Time
+	var connected, discovered, checked *time.Time
+	if !m.LastCheckedAt.IsZero() {
+		t := m.LastCheckedAt
+		checked = &t
+	}
 	if !m.LastConnectedAt.IsZero() {
 		t := m.LastConnectedAt
 		connected = &t
@@ -271,7 +276,7 @@ func view(m storage.MCPServer, tokens TokenSource) ServerView {
 		t := m.LastDiscoveredAt
 		discovered = &t
 	}
-	return ServerView{ID: m.ID, Name: m.Name, Description: m.Description, Endpoint: safeEndpoint(m.Endpoint), Transport: m.Transport, AuthEnv: m.AuthEnv, AuthEnvSet: authSet, ValidationState: m.ValidationState, LatestDiscoveryID: m.LatestDiscoveryID, Enabled: m.Enabled, PendingDeletion: m.PendingDelete, LastConnectedAt: connected, LastDiscoveredAt: discovered}
+	return ServerView{ID: m.ID, Name: m.Name, Description: m.Description, Endpoint: safeEndpoint(m.Endpoint), Transport: m.Transport, AuthEnv: m.AuthEnv, AuthEnvSet: authSet, ValidationState: m.ValidationState, LatestDiscoveryID: m.LatestDiscoveryID, Enabled: m.Enabled, PendingDeletion: m.PendingDelete, LastConnectedAt: connected, LastCheckedAt: checked, LastDiscoveredAt: discovered}
 }
 func safeEndpoint(raw string) string {
 	u, err := url.Parse(raw)

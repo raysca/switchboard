@@ -36,7 +36,7 @@ func TestMigrationEmptyAndIdempotentReopen(t *testing.T) {
 			t.Fatal(err)
 		}
 		var n int
-		if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 8 {
+		if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 9 {
 			t.Fatalf("version=%d err=%v", n, err)
 		}
 		s.Close()
@@ -573,7 +573,7 @@ func TestMigrationUpgradeAndRollback(t *testing.T) {
 	}
 	defer s.Close()
 	var n int
-	if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 8 {
+	if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 9 {
 		t.Fatalf("upgrade version=%d err=%v", n, err)
 	}
 	// Goose runs each migration transactionally: failed DDL must not survive.
@@ -585,7 +585,7 @@ func TestMigrationUpgradeAndRollback(t *testing.T) {
 		}
 		files[name] = &fstest.MapFile{Data: body}
 	}
-	files["009_bad.sql"] = &fstest.MapFile{Data: []byte("-- +goose Up\nCREATE TABLE rollback_probe (id INTEGER);\nINSERT INTO absent_table VALUES (1);\n")}
+	files["010_bad.sql"] = &fstest.MapFile{Data: []byte("-- +goose Up\nCREATE TABLE rollback_probe (id INTEGER);\nINSERT INTO absent_table VALUES (1);\n")}
 	bad, err := goose.NewProvider(goose.DialectSQLite3, s.DB(), files)
 	if err != nil {
 		t.Fatal(err)
@@ -670,7 +670,7 @@ func TestMigrationPostgresUpgradeRollback(t *testing.T) {
 	}
 	defer s.Close()
 	var version int
-	if err := s.DB().QueryRowContext(ctx, "SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&version); err != nil || version != 8 {
+	if err := s.DB().QueryRowContext(ctx, "SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&version); err != nil || version != 9 {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	files := fstest.MapFS{}
@@ -681,7 +681,7 @@ func TestMigrationPostgresUpgradeRollback(t *testing.T) {
 		}
 		files[name] = &fstest.MapFile{Data: body}
 	}
-	files["009_bad.sql"] = &fstest.MapFile{Data: []byte("-- +goose Up\nCREATE TABLE rollback_probe (id INTEGER);\nINSERT INTO absent_table VALUES (1);\n")}
+	files["010_bad.sql"] = &fstest.MapFile{Data: []byte("-- +goose Up\nCREATE TABLE rollback_probe (id INTEGER);\nINSERT INTO absent_table VALUES (1);\n")}
 	bad, err := goose.NewProvider(goose.DialectPostgres, s.DB(), files)
 	if err != nil {
 		t.Fatal(err)
@@ -1140,4 +1140,30 @@ func TestOpenRefusesPreEnvironmentCredentialsDatabase(t *testing.T) {
 func publishTestVersion(ctx context.Context, s *Store, flowID string, config []byte, tools []SelectedTool) (FlowVersion, error) {
 	v, _, err := s.Flows().MutateAndPublish(ctx, flowID, FlowMutation{Tools: &tools}, config)
 	return v, err
+}
+
+func TestMCPFailedCheckAdvancesLastCheckedButNotLastConnected(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	m := MCPServer{ID: NewID(), Name: "flaky", Endpoint: "https://mcp.example/rpc", Transport: "streamable-http", Enabled: true}
+	if err := s.MCP().CreateServer(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	ok := time.Now().Add(-time.Hour)
+	if err := s.MCP().SetValidation(ctx, m.ID, "healthy", ok, ok); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MCP().SetValidation(ctx, m.ID, "connection_failed", time.Time{}, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.MCP().Server(ctx, m.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(got.LastCheckedAt) > time.Minute || got.LastCheckedAt.IsZero() {
+		t.Fatalf("last_checked_at = %v, want about now", got.LastCheckedAt)
+	}
+	if d := got.LastConnectedAt.Sub(ok); d > time.Second || d < -time.Second {
+		t.Fatalf("last_connected_at moved to %v, want %v", got.LastConnectedAt, ok)
+	}
 }

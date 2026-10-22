@@ -19,6 +19,7 @@ const server = (over: Partial<MCPServerDTO> = {}): MCPServerDTO => ({
   enabled: true,
   last_connected_at: "2026-10-12T14:56:00Z",
   last_discovered_at: "2026-10-12T14:56:00Z",
+  last_checked_at: "2026-10-12T14:56:00Z",
   ...over,
 });
 const tool = (name: string, hash: string, description = `${name} description`) => ({ remote_name: name, description, input_schema: { type: "object", properties: { id: { type: "string" } } }, schema_hash: hash });
@@ -150,7 +151,7 @@ describe("MCPView", () => {
   it("shows when the server was last checked and how often it checks by itself", async () => {
     const cfg = (s: number) => ({ getServerConfig: vi.fn().mockResolvedValue({ profile: "production", mcp_sync_interval_seconds: s }) });
     const old = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-12T15:00:00Z"));
-    setup(cfg(300));
+    setup({ ...cfg(300), getMCPServer: vi.fn().mockResolvedValue(detail({ validation_state: "connection_failed", last_connected_at: "2026-10-09T14:56:00Z" })) });
     expect(await screen.findByText("Last checked 4 min ago")).toBeVisible();
     expect(await screen.findByText("Checked automatically every 5 minutes")).toBeVisible();
     old.mockRestore();

@@ -200,7 +200,7 @@ type MCPServer struct {
 	ID, Name, Endpoint, Transport, AuthEnv, ValidationState, LatestDiscoveryID string
 	Description                                                                string
 	Enabled, PendingDelete                                                     bool
-	LastConnectedAt, LastDiscoveredAt, CreatedAt, UpdatedAt                    time.Time
+	LastConnectedAt, LastDiscoveredAt, LastCheckedAt, CreatedAt, UpdatedAt     time.Time
 }
 type MCPTool struct {
 	RemoteName  string
@@ -228,10 +228,10 @@ func (r MCPRepository) CreateServer(ctx context.Context, m MCPServer) error {
 func (r MCPRepository) Server(ctx context.Context, id string) (MCPServer, error) {
 	var m MCPServer
 	var auth string
-	var latest, connected, discovered sql.NullString
+	var latest, connected, discovered, checked sql.NullString
 	var enabled bool
 	var created, updated string
-	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,name,description,endpoint,transport,auth_env,enabled,validation_state,latest_discovery_id,last_connected_at,last_discovered_at,created_at,updated_at,pending_delete FROM mcp_servers WHERE id=?"), id).Scan(&m.ID, &m.Name, &m.Description, &m.Endpoint, &m.Transport, &auth, &enabled, &m.ValidationState, &latest, &connected, &discovered, &created, &updated, &m.PendingDelete)
+	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,name,description,endpoint,transport,auth_env,enabled,validation_state,latest_discovery_id,last_connected_at,last_discovered_at,last_checked_at,created_at,updated_at,pending_delete FROM mcp_servers WHERE id=?"), id).Scan(&m.ID, &m.Name, &m.Description, &m.Endpoint, &m.Transport, &auth, &enabled, &m.ValidationState, &latest, &connected, &discovered, &checked, &created, &updated, &m.PendingDelete)
 	if err != nil {
 		return m, err
 	}
@@ -252,11 +252,16 @@ func (r MCPRepository) Server(ctx context.Context, id string) (MCPServer, error)
 			return m, err
 		}
 	}
+	if checked.Valid {
+		if m.LastCheckedAt, err = parseTime(checked.String); err != nil {
+			return m, err
+		}
+	}
 	return m, nil
 }
 
 func (r MCPRepository) ListServers(ctx context.Context) ([]MCPServer, error) {
-	rows, err := r.s.db.QueryContext(ctx, "SELECT id,name,description,endpoint,transport,auth_env,enabled,validation_state,latest_discovery_id,last_connected_at,last_discovered_at,created_at,updated_at,pending_delete FROM mcp_servers ORDER BY name,id")
+	rows, err := r.s.db.QueryContext(ctx, "SELECT id,name,description,endpoint,transport,auth_env,enabled,validation_state,latest_discovery_id,last_connected_at,last_discovered_at,last_checked_at,created_at,updated_at,pending_delete FROM mcp_servers ORDER BY name,id")
 	if err != nil {
 		return nil, err
 	}
@@ -265,10 +270,10 @@ func (r MCPRepository) ListServers(ctx context.Context) ([]MCPServer, error) {
 	for rows.Next() {
 		var m MCPServer
 		var auth string
-		var latest, connected, discovered sql.NullString
+		var latest, connected, discovered, checked sql.NullString
 		var enabled bool
 		var created, updated string
-		if err := rows.Scan(&m.ID, &m.Name, &m.Description, &m.Endpoint, &m.Transport, &auth, &enabled, &m.ValidationState, &latest, &connected, &discovered, &created, &updated, &m.PendingDelete); err != nil {
+		if err := rows.Scan(&m.ID, &m.Name, &m.Description, &m.Endpoint, &m.Transport, &auth, &enabled, &m.ValidationState, &latest, &connected, &discovered, &checked, &created, &updated, &m.PendingDelete); err != nil {
 			return nil, err
 		}
 		m.AuthEnv, m.LatestDiscoveryID, m.Enabled = auth, latest.String, enabled
@@ -285,6 +290,11 @@ func (r MCPRepository) ListServers(ctx context.Context) ([]MCPServer, error) {
 		}
 		if discovered.Valid {
 			if m.LastDiscoveredAt, err = parseTime(discovered.String); err != nil {
+				return nil, err
+			}
+		}
+		if checked.Valid {
+			if m.LastCheckedAt, err = parseTime(checked.String); err != nil {
 				return nil, err
 			}
 		}
@@ -306,7 +316,7 @@ func (r MCPRepository) LatestDiscovery(ctx context.Context, serverID string) (MC
 }
 
 func (r MCPRepository) SetValidation(ctx context.Context, id, state string, connected, discovered time.Time) error {
-	result, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE mcp_servers SET validation_state=?,last_connected_at=COALESCE(?,last_connected_at),last_discovered_at=COALESCE(?,last_discovered_at),updated_at=? WHERE id=?"), state, nullTime(connected), nullTime(discovered), utc(time.Now()), id)
+	result, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE mcp_servers SET validation_state=?,last_connected_at=COALESCE(?,last_connected_at),last_discovered_at=COALESCE(?,last_discovered_at),last_checked_at=?,updated_at=? WHERE id=?"), state, nullTime(connected), nullTime(discovered), utc(time.Now()), utc(time.Now()), id)
 	if err != nil {
 		return err
 	}

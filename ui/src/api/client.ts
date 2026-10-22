@@ -234,6 +234,7 @@ export const mcpServerSchema = z.object({
   pending_deletion: z.boolean().optional(),
   last_connected_at: z.string().nullish(),
   last_discovered_at: z.string().nullish(),
+  last_checked_at: z.string().nullish(),
 });
 export type MCPServerDTO = z.infer<typeof mcpServerSchema>;
 

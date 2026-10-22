@@ -94,10 +94,10 @@ export function referencedFlows(details: unknown): { id: string; name: string }[
 
 // One sentence per refusal reason (create and edit) and per tool-test failure category.
 const REASONS: Record<string, string> = {
-  invalid_endpoint: "That endpoint is not a valid URL: use an https:// address.",
+  invalid_endpoint: "Enter a full server address, such as https://mcp.example.com/mcp.",
   destination_denied: "That address is not allowed: MCP servers must be public HTTPS addresses.",
   invalid_auth_env: "The token variable must be named MCP_TOKEN_ followed by A-Z, 0-9 or _ (max 48).",
-  invalid_metadata: "The name or description is not valid: use plain text of a reasonable length.",
+  invalid_metadata: "The name is required (up to 128 characters) and the description can be up to 1024 characters.",
   transport_unsupported: "Only streamable HTTP servers are supported.",
 };
 const CATEGORIES: Record<string, string> = {

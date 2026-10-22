@@ -101,7 +101,7 @@ export function ServerDetail({ client, server, flows, flowsFailed, flowsCapped, 
   const missing = drift.filter((d) => d.kind === "missing");
   const tools = server.discovery?.tools ?? [];
   const synced = ago(server.last_discovered_at, now);
-  const checked = ago(server.last_connected_at, now);
+  const checked = ago(server.last_checked_at, now);
   const every = config?.mcp_sync_interval_seconds ?? 0;
   const unit = every % 60 === 0 ? [every / 60, "minute"] : [every, "second"];
 
