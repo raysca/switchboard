@@ -722,3 +722,16 @@ func TestXAISamplingReachesTheSecondToolRoundRequest(t *testing.T) {
 		}
 	}
 }
+
+// The tool round appends its calls and outputs to the Responses-style Input, so tools must never be
+// accepted on a chat/completions endpoint (which sends Messages): the guard keeps that path unreachable.
+func TestNewProcessorRejectsToolsOnChatCompletions(t *testing.T) {
+	definitions := []core.ToolDefinition{{Name: "weather", InputSchema: json.RawMessage(`{"type":"object"}`)}}
+	loop, err := coretools.NewToolLoop(definitions, core.ToolExecutorFunc(func(context.Context, core.ToolCall) (core.ToolResult, error) { return core.ToolResult{}, nil }), core.NewConversationContext(core.ContextConfig{}), coretools.DefaultToolLoopConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewProcessor(Config{APIKey: "xai-test-key", Endpoint: "https://api.x.ai/v1/chat/completions", ToolDefinitions: definitions, ToolLoop: loop}); err == nil {
+		t.Fatal("tool definitions accepted on a chat/completions endpoint")
+	}
+}
