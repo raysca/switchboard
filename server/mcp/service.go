@@ -84,14 +84,11 @@ func ErrorCategory(err error) (category, message string) {
 }
 
 // cleanToolMessage makes a tool's message safe to hand to the model: newlines and tabs become
-// spaces, other control characters go, the credential is redacted, and it is cut to maxToolMessage
-// bytes on a rune boundary.
+// spaces, other control characters go, then the credential is redacted (after stripping, so control
+// characters cannot hide it), then it is cut to maxToolMessage bytes on a rune boundary (last).
 func cleanToolMessage(message, token string) string {
-	if token != "" {
-		message = strings.ReplaceAll(message, token, "[redacted]")
-	}
 	var b strings.Builder
-	b.Grow(min(len(message), maxToolMessage))
+	b.Grow(len(message))
 	for _, r := range message {
 		switch {
 		case r == '\n' || r == '\t':
@@ -99,12 +96,20 @@ func cleanToolMessage(message, token string) string {
 		case unicode.IsControl(r):
 			continue
 		}
-		if b.Len()+utf8.RuneLen(r) > maxToolMessage {
-			break
-		}
 		b.WriteRune(r)
 	}
-	return b.String()
+	out := b.String()
+	if token != "" {
+		out = strings.ReplaceAll(out, token, "[redacted]")
+	}
+	if len(out) <= maxToolMessage {
+		return out
+	}
+	cut := maxToolMessage
+	for cut > 0 && !utf8.RuneStart(out[cut]) {
+		cut--
+	}
+	return out[:cut]
 }
 
 type RemoteTool struct {

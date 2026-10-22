@@ -49,7 +49,7 @@ func TestTurnRecorderStoresToolCallsWithTheirTurn(t *testing.T) {
 		result("c1", "t1", core.ToolSucceeded),
 		call("c2", "transfer_to_sales", "t1"),
 		&core.AssistantMessageFrame{Turn: "t1", Content: "Shipped.", Timestamp: at.Add(time.Second)},
-		&core.ToolResultFrame{Turn: "t1", Gen: 1, Result: core.ToolResult{CallID: "c2", Status: core.ToolCancelled, ErrorCategory: "tool_error", StartedAt: at, EndedAt: at}}, // settled after its turn's row (barge-in, an async tool)
+		&core.ToolResultFrame{Turn: "t1", Gen: 1, Result: core.ToolResult{CallID: "c2", Status: core.ToolFailed, ErrorCategory: "tool_error", StartedAt: at, EndedAt: at}}, // settled after its turn's row (barge-in, an async tool)
 		result("c3", "t1", core.ToolFailed), // never announced: its generation was stale
 		call("c4", "mcp__lookup", "t2"),     // still running when the call ends
 		&core.LLMTextFrame{Text: "marker", Turn: "t9", Gen: 1},
@@ -83,7 +83,7 @@ func TestTurnRecorderStoresToolCallsWithTheirTurn(t *testing.T) {
 		c1.Status != "succeeded" || c1.EndedAt.Sub(c1.StartedAt) != 120*time.Millisecond {
 		t.Fatalf("c1 %+v", c1)
 	}
-	if c2.TurnID != row || c2.RemoteName != "transfer_to_sales" || c2.MCPServerID != "" || c2.Status != "cancelled" || c2.ErrorCategory != "tool_error" {
+	if c2.TurnID != row || c2.RemoteName != "transfer_to_sales" || c2.MCPServerID != "" || c2.Status != "failed" || c2.ErrorCategory != "tool_error" {
 		t.Fatalf("c2 %+v", c2)
 	}
 	if c4.TurnID != "" || c4.RemoteName != "lookup_order" || c4.Status != "cancelled" || !c4.EndedAt.IsZero() {

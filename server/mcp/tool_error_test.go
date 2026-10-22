@@ -46,13 +46,18 @@ func TestCleanToolMessage(t *testing.T) {
 	if got := cleanToolMessage(strings.Repeat("x", 10<<10), ""); len(got) != 512 {
 		t.Errorf("cap: %d", len(got))
 	}
-	got := cleanToolMessage(strings.Repeat("é", 400), "") // 2 bytes each: 511 is a rune boundary
+	got := cleanToolMessage(strings.Repeat("é", 400), "") // 2 bytes each: 512 is a rune boundary
 	if len(got) > 512 || !utf8.ValidString(got) || len(got) != 512 {
 		t.Errorf("multibyte cap: %d valid=%v", len(got), utf8.ValidString(got))
 	}
 	got = cleanToolMessage("a"+strings.Repeat("é", 400), "") // cut would land mid-rune
-	if len(got) > 512 || !utf8.ValidString(got) {
+	if len(got) != 511 || !utf8.ValidString(got) {           // 1 + 255*2: the 256th rune would end at 513
 		t.Errorf("mid-rune cut: %d valid=%v", len(got), utf8.ValidString(got))
+	}
+	for _, sep := range []string{"\x00", "\x1b", "\u0085"} { // control characters inside the token must not hide it
+		if got := cleanToolMessage("key tok"+sep+"-123 end", "tok-123"); strings.Contains(got, "tok-123") || got != "key [redacted] end" {
+			t.Errorf("token split by %q: %q", sep, got)
+		}
 	}
 }
 
