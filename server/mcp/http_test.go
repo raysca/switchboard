@@ -254,3 +254,39 @@ func TestMCPEnablePendingDeletionIsConflict(t *testing.T) {
 		t.Fatalf("enable pending deletion: %d %s, want 409", w.Code, w.Body.String())
 	}
 }
+
+func TestToolTestEndpointFailureCarriesCategoryAndToolMessage(t *testing.T) {
+	remote := &testRemote{tools: []RemoteTool{{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`)}}}
+	svc, _ := newTestService(t, remote, testTokens{})
+	id := mustCreateMCP(t, svc)
+	if _, err := svc.Refresh(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	call := func(args string) (int, map[string]any) {
+		r := httptest.NewRequest("POST", "/api/v1/mcp-servers/"+id+"/tools/lookup/test", strings.NewReader(`{"arguments":`+args+`}`))
+		r.Header.Set("Authorization", "Bearer management-test-secret-which-is-long-enough")
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		Handler(svc).ServeHTTP(w, r)
+		var body struct {
+			Error struct{ Details map[string]any }
+		}
+		_ = json.Unmarshal(w.Body.Bytes(), &body)
+		return w.Code, body.Error.Details
+	}
+	remote.call = func(context.Context, string, json.RawMessage) (RemoteResult, error) {
+		return RemoteResult{}, &ToolError{Message: "order system unavailable"}
+	}
+	if code, d := call(`{}`); code != 502 || d["category"] != "tool_error" || d["message"] != "order system unavailable" {
+		t.Errorf("tool error: %d %v", code, d)
+	}
+	remote.call = func(context.Context, string, json.RawMessage) (RemoteResult, error) {
+		return RemoteResult{}, context.DeadlineExceeded
+	}
+	if code, d := call(`{}`); code != 502 || d["category"] != "timeout" || d["message"] != nil {
+		t.Errorf("timeout: %d %v", code, d)
+	}
+	if code, d := call(`"x"`); code != 400 || d["category"] != "invalid_arguments" {
+		t.Errorf("invalid arguments: %d %v", code, d)
+	}
+}

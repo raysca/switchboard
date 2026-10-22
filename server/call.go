@@ -279,7 +279,7 @@ func (r *turnRecorder) settleLocked(res core.ToolResult) {
 		return
 	}
 	delete(r.calls, res.CallID)
-	p.rec.Status, p.rec.EndedAt = string(res.Status), res.EndedAt
+	p.rec.Status, p.rec.EndedAt, p.rec.ErrorCategory = string(res.Status), res.EndedAt, res.ErrorCategory
 	if c := res.ErrorCategory; (c == "unknown_tool" || c == "invalid_tool_name") && p.rec.RemoteName == "unknown_tool" && p.rec.MCPServerID == "" {
 		// The loop announces a name it has no definition for as "unknown_tool" (the model wrote it and it can
 		// hold the caller's words; remote_name is never purged). A defined tool whose executor itself returns

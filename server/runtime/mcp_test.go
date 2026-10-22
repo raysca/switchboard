@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/url"
 	"sync"
 	"testing"
@@ -20,6 +21,7 @@ type runtimeRemote struct {
 	schema  json.RawMessage
 	calls   int
 	block   bool
+	fail    error
 	entered chan struct{}
 	release chan struct{}
 }
@@ -37,6 +39,9 @@ func (r *runtimeRemote) CallTool(_ context.Context, _ string, _ string, name str
 	if block {
 		close(entered)
 		<-release
+	}
+	if r.fail != nil {
+		return mcp.RemoteResult{}, r.fail
 	}
 	if name != "lookup" {
 		return mcp.RemoteResult{}, mcp.ErrNotFound
@@ -269,3 +274,57 @@ func TestToolLoopPreservesMCPCallIdentityAndAsyncTraceParent(t *testing.T) {
 type allAvailable struct{}
 
 func (allAvailable) Check(string, string) flow.Unavailable { return flow.Unavailable{} }
+
+func TestExecutorReportsTheFailureCategoryAndTheToolsMessage(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.Open(ctx, storage.Config{Dialect: storage.SQLite, DSN: t.TempDir() + "/fail.db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	remote := &runtimeRemote{schema: json.RawMessage(`{"type":"object"}`)}
+	mcpSvc, err := mcp.NewService(mcp.ServiceConfig{Store: store, Remote: remote, Destinations: allowAllDestinations{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := mcpSvc.Create(ctx, mcp.ServerConfig{Name: "orders", Endpoint: "https://mcp.example/rpc", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	discovery, err := mcpSvc.Refresh(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flows := flow.NewService(store, allAvailable{})
+	created, err := flows.Create(ctx, flow.CreateRequest{Name: "support", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flows.SetMCPTools(ctx, created.ID, []flow.ToolSelection{{ServerID: server.ID, RemoteName: "lookup", SchemaHash: discovery.Tools[0].SchemaHash, Required: true}}); err != nil {
+		t.Fatal(err)
+	}
+	session, err := StartSession(ctx, flows, mcpSvc, created.ID, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(ctx)
+	call := core.ToolCall{ID: "c1", Name: session.Definitions[0].Name, SessionID: core.SessionID(session.Pin.ID), TurnID: "t1", Generation: 1, Arguments: json.RawMessage(`{}`)}
+	for _, tc := range []struct {
+		fail           error
+		status         core.ToolStatus
+		category, body string
+	}{
+		{&mcp.ToolError{Message: "order system unavailable"}, core.ToolFailed, "tool_error", `{"error":"tool_error","message":"order system unavailable"}`},
+		{context.DeadlineExceeded, core.ToolFailed, "timeout", `{"error":"timeout"}`},
+		{context.Canceled, core.ToolCancelled, "cancelled", `{"error":"cancelled"}`},
+		{errors.New("boom"), core.ToolFailed, "unavailable", `{"error":"unavailable"}`},
+	} {
+		remote.mu.Lock()
+		remote.fail = tc.fail
+		remote.mu.Unlock()
+		res, err := session.Executor.Execute(ctx, call)
+		if err != nil || res.Status != tc.status || res.ErrorCategory != tc.category || string(res.Result) != tc.body {
+			t.Errorf("%v: %+v err=%v", tc.fail, res, err)
+		}
+	}
+}

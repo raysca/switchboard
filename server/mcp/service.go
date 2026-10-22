@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"govoice/core"
@@ -52,6 +54,58 @@ var (
 	ErrConnectionFailed     = errors.New("MCP connection failed")
 	ErrExecutionFailed      = errors.New("MCP remote execution failed")
 )
+
+// ToolError is a tool's own failure (an isError result). Message may hold caller data, so Error()
+// never includes it: logs and spans carry the category only.
+type ToolError struct{ Message string }
+
+func (*ToolError) Error() string { return "MCP tool returned an error" }
+
+// maxToolMessage caps the tool message the model sees.
+const maxToolMessage = 512
+
+// ErrorCategory names a tool failure for the model, the stored call and the test endpoint; the
+// message is the tool's own cleaned text, set only for tool_error.
+func ErrorCategory(err error) (category, message string) {
+	var te *ToolError
+	switch {
+	case errors.As(err, &te):
+		return "tool_error", te.Message
+	case errors.Is(err, ErrInvalidArguments):
+		return "invalid_arguments", ""
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout", ""
+	case errors.Is(err, context.Canceled):
+		return "cancelled", ""
+	case errors.Is(err, ErrResultTooLarge):
+		return "result_too_large", ""
+	}
+	return "unavailable", ""
+}
+
+// cleanToolMessage makes a tool's message safe to hand to the model: newlines and tabs become
+// spaces, other control characters go, the credential is redacted, and it is cut to maxToolMessage
+// bytes on a rune boundary.
+func cleanToolMessage(message, token string) string {
+	if token != "" {
+		message = strings.ReplaceAll(message, token, "[redacted]")
+	}
+	var b strings.Builder
+	b.Grow(min(len(message), maxToolMessage))
+	for _, r := range message {
+		switch {
+		case r == '\n' || r == '\t':
+			r = ' '
+		case unicode.IsControl(r):
+			continue
+		}
+		if b.Len()+utf8.RuneLen(r) > maxToolMessage {
+			break
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
 
 type RemoteTool struct {
 	Name, Description string
@@ -627,6 +681,16 @@ func (s *Service) executeCaptured(ctx context.Context, captured *CapturedTool, a
 	result, err := s.remote.CallTool(ctx, captured.endpoint, captured.token, captured.name, args)
 	if err != nil {
 		end(safeCategory(err))
+		var te *ToolError
+		switch {
+		case errors.As(err, &te):
+			// The cleaned message is the only thing of the remote's text that leaves this package.
+			return ToolResult{}, &ToolError{Message: cleanToolMessage(te.Message, captured.token)}
+		case errors.Is(err, context.DeadlineExceeded):
+			return ToolResult{}, fmt.Errorf("%w: %w", ErrRemoteFailure, context.DeadlineExceeded)
+		case errors.Is(err, context.Canceled):
+			return ToolResult{}, fmt.Errorf("%w: %w", ErrRemoteFailure, context.Canceled)
+		}
 		return ToolResult{}, ErrRemoteFailure
 	}
 	if len(result.JSON) > s.maxResult {

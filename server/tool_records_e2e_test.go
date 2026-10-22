@@ -104,6 +104,27 @@ func TestMCPCallToolCallsAreRecorded(t *testing.T) {
 	}
 }
 
+// A tool's own failure reaches the model with its category and message; the stored row keeps the category only.
+func TestMCPCallToolErrorReachesTheModelAndIsCategorised(t *testing.T) {
+	r := newMCPCallRig(t)
+	id, hashes := r.server("fail", r.ts.URL+"/fail/tools", "")
+	c := r.dial(r.flowWith(id, hashes, false, nil, "tool_error").ID)
+	c.say("call tool tool_error")
+	c.waitReplies("order system unavailable", 1)
+	r.waitTurns(c.sessionID, 1)
+	c.barrier(t)
+	c.hangUp()
+	r.waitEnded(c.sessionID, storage.EndCallerHungUp)
+	calls := r.sessionTraces(c.sessionID).ToolCalls
+	if len(calls) != 1 || calls[0].Status != "failed" || calls[0].ErrorCategory != "tool_error" {
+		t.Fatalf("tool calls %+v", calls)
+	}
+	r.assertNoToolContentStored()
+	if attrs := r.spanAttributes(c.sessionID, "mcp.tool.execute"); strings.Contains(attrs, "order system unavailable") {
+		t.Fatalf("the span carries the tool's message: %s", attrs)
+	}
+}
+
 // TestStoredTraceAttributesNeverCarryContent pins the PRODUCERS: after a real call, no stored trace row
 // carries a content key, at any depth. It cannot catch a regression of the adapter's key whitelist (no real
 // producer emits a content key); TestAdapterFilterAttributesPrivacyPolicy in server/trace pins the adapter.

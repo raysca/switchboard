@@ -168,13 +168,21 @@ func Handler(service *Service) http.Handler {
 		}
 		result, err := service.Execute(r.Context(), r.PathValue("id"), r.PathValue("tool"), input.Arguments)
 		if err != nil {
+			category, message := ErrorCategory(err)
+			details := map[string]string{"category": category}
+			if message != "" {
+				details["message"] = message
+			}
+			fail := func(status int) {
+				api.WriteJSON(w, status, api.ErrorResponse{Error: api.Error{Code: "mcp_tool_failed", Message: err.Error(), Details: details, RequestID: id}})
+			}
 			switch {
 			case errors.Is(err, ErrNotFound):
 				api.WriteError(w, 404, "mcp_tool_failed", err.Error(), id)
-			case errors.Is(err, ErrUnavailable) || errors.Is(err, ErrRemoteFailure):
-				api.WriteError(w, 502, "mcp_tool_failed", err.Error(), id)
+			case category == "tool_error" || errors.Is(err, ErrUnavailable) || errors.Is(err, ErrRemoteFailure):
+				fail(502)
 			case isMCPSentinel(err):
-				api.WriteError(w, 400, "mcp_tool_failed", err.Error(), id)
+				fail(400)
 			default: // a store failure or other internal error: no internal text
 				writeLookupError(w, err, id)
 			}

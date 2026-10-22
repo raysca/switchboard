@@ -83,7 +83,16 @@ func (e *sessionExecutor) Execute(ctx context.Context, call core.ToolCall) (core
 	result, err := handler.ExecuteCall(ctx, call.Arguments, call.ID, e.sessionID, string(call.TurnID), uint64(call.Generation))
 	ended := time.Now()
 	if err != nil {
-		return core.ToolResult{CallID: call.ID, Status: core.ToolFailed, ErrorCategory: "mcp_tool_failed", Result: json.RawMessage(`{"error":"mcp_tool_failed"}`), StartedAt: started, EndedAt: ended}, nil
+		category, message := mcp.ErrorCategory(err)
+		status := core.ToolFailed
+		if category == "cancelled" {
+			status = core.ToolCancelled
+		}
+		body, _ := json.Marshal(struct {
+			Error   string `json:"error"`
+			Message string `json:"message,omitempty"`
+		}{category, message})
+		return core.ToolResult{CallID: call.ID, Status: status, ErrorCategory: category, Result: body, StartedAt: started, EndedAt: ended}, nil
 	}
 	return core.ToolResult{CallID: call.ID, Status: core.ToolSucceeded, Result: append(json.RawMessage(nil), result.JSON...), StartedAt: started, EndedAt: ended}, nil
 }

@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -262,7 +263,13 @@ func (c *SDKClient) CallTool(ctx context.Context, endpoint, token, name string, 
 		return RemoteResult{}, errors.New("MCP returned an empty result")
 	}
 	if result.IsError {
-		return RemoteResult{}, errors.New("MCP tool returned an error")
+		var texts []string
+		for _, c := range result.Content {
+			if t, ok := c.(*mcp.TextContent); ok {
+				texts = append(texts, t.Text)
+			}
+		}
+		return RemoteResult{}, &ToolError{Message: strings.Join(texts, "\n")}
 	}
 	if result.StructuredContent != nil {
 		raw, err := json.Marshal(result.StructuredContent)

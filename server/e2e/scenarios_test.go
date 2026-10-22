@@ -1106,8 +1106,8 @@ func TestScenario7_FaultIsolation(t *testing.T) {
 		if result.Status != core.ToolFailed {
 			t.Fatalf("expected ToolFailed status, got %s", result.Status)
 		}
-		if result.ErrorCategory != "mcp_tool_failed" {
-			t.Fatalf("expected safe error category mcp_tool_failed, got %s", result.ErrorCategory)
+		if result.ErrorCategory != "unavailable" {
+			t.Fatalf("expected safe error category unavailable, got %s", result.ErrorCategory)
 		}
 
 		// Subsequent operations on the active session continue to work

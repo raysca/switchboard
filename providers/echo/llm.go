@@ -164,6 +164,9 @@ func (c *LLMClient) toolAnswer(m core.Message) string {
 		if why == "" {
 			why = string(m.ToolStatus)
 		}
+		if m.Content != "" { // the payload carries a tool_error's own message
+			why += " " + m.Content
+		}
 		return "Tool " + spoken + " failed: " + why
 	}
 	return "Tool " + spoken + " returned " + m.Content
