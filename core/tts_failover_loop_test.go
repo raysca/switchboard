@@ -286,3 +286,45 @@ func TestTTSNextUnitAfterAGenerationBumpAbandonsAFencedWedgedUnit(t *testing.T) 
 		}
 	}
 }
+
+// abandonedTTS swallows its unit, then speaks one audio frame for it when the failover cancels it.
+type abandonedTTS struct {
+	session core.SessionController
+	index   int
+	su      atomic.Pointer[core.SynthesisUnitFrame]
+}
+
+func (p *abandonedTTS) Attach(s core.SessionController, index int) error {
+	p.session, p.index = s, index
+	return nil
+}
+
+func (p *abandonedTTS) ProcessFrame(_ context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
+	switch fr := f.(type) {
+	case *core.SynthesisUnitFrame:
+		p.su.Store(fr)
+		return nil
+	case *core.InterruptionFrame:
+		if su := p.su.Load(); su != nil {
+			_ = p.session.Reenter(&core.OutputAudioFrame{Samples: make([]byte, 960), Encoding: core.EncodingPCM16LE, SampleRate: 24000,
+				Channels: 1, Duration: 20 * time.Millisecond, Turn: su.Turn, Gen: su.Gen, UnitID: su.UnitID, Seq: 1}, core.Downstream, p.index+1, su.Gen)
+		}
+		return nil
+	}
+	return e.PushDirection(f, dir)
+}
+
+// A candidate abandoned by the watchdog may still re-enter a frame for the unit while it is cancelled:
+// that frame is dropped, so the unit is heard once (from the fallback), not twice.
+func TestTTSWatchdogRetryRejectsTheAbandonedCandidatesFrames(t *testing.T) {
+	a := &abandonedTTS{}
+	b := coretest.NewTTSProcessor(coretest.TTSConfig{FramesPerUnit: 1})
+	r := newTTSRig(t, core.TTSFailoverConfig{UnitTimeout: 20 * time.Millisecond,
+		Candidates: []core.TTSCandidate{{Provider: "a", Proc: a}, {Provider: "b", Proc: b}}})
+	r.unit(t, "t1", 1, true)
+	r.waitFor(t, func() bool { ids, _, _ := r.audio(); return len(ids) >= 1 })
+	time.Sleep(100 * time.Millisecond) // a bounded wait for a late duplicate
+	if ids, _, _ := r.audio(); len(ids) != 1 {
+		t.Fatalf("unit heard %d times (abandoned candidate's frame accepted): %v", len(ids), ids)
+	}
+}
