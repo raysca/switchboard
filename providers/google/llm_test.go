@@ -2,6 +2,7 @@ package google
 
 import (
 	"context"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -263,7 +264,7 @@ func TestLLMForwardsUpstreamInterruption(t *testing.T) {
 // silent empty reply.
 func TestStreamPanicIsReportedAsError(t *testing.T) {
 	c := &RealGoogleLLMClient{} // no genai client: the goroutine dereferences nil
-	chunks, errs, err := c.GenerateStream(t.Context(), "m", "", nil)
+	chunks, errs, err := c.GenerateStream(t.Context(), "m", "", nil, Sampling{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,5 +272,59 @@ func TestStreamPanicIsReportedAsError(t *testing.T) {
 	}
 	if e := <-errs; e == nil {
 		t.Fatal("want a stream error")
+	}
+}
+
+// The plain (no tools) path hands the configured sampling to the client.
+func TestLLM_SamplingReachesTheClient(t *testing.T) {
+	mock := &mockLLMClient{}
+	cfg := DefaultLLMConfig()
+	cfg.Client = mock
+	topP := 0.9
+	cfg.Sampling = Sampling{TopP: &topP, MaxOutputTokens: 200}
+	proc, err := NewLLMProcessor(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pipe, _ := core.NewPipeline(proc)
+	session, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
+	_ = proc.Attach(session, 0)
+	done := make(chan struct{})
+	session.OnOutput = func(f core.Frame) {
+		if _, ok := f.(*core.LLMTextFrame); ok {
+			close(done)
+		}
+	}
+	_ = session.Start()
+	defer session.Close()
+	_ = session.Post(&core.UserMessageFrame{Turn: "t", Gen: 1, Content: "hi"})
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("no reply")
+	}
+	mock.mu.Lock()
+	defer mock.mu.Unlock()
+	if len(mock.samplings) != 1 || !reflect.DeepEqual(mock.samplings[0], cfg.Sampling) {
+		t.Fatalf("samplings = %+v, want %+v", mock.samplings, cfg.Sampling)
+	}
+}
+
+// The request config carries sampling next to the system prompt and tools; an
+// explicit temperature 0 is sent, not mistaken for unset.
+func TestGenerateContentConfigCarriesSampling(t *testing.T) {
+	if c, err := generateContentConfig("", nil, Sampling{}); err != nil || c != nil {
+		t.Fatalf("nothing set must send no config: %+v %v", c, err)
+	}
+	zero, topP := 0.0, 0.9
+	c, err := generateContentConfig("sys", nil, Sampling{Temperature: &zero, TopP: &topP, MaxOutputTokens: 200})
+	if err != nil || c == nil {
+		t.Fatalf("%v %v", c, err)
+	}
+	if c.Temperature == nil || *c.Temperature != 0 || c.TopP == nil || *c.TopP != float32(0.9) || c.MaxOutputTokens != 200 || c.SystemInstruction == nil {
+		t.Fatalf("config = %+v", c)
+	}
+	if c, _ := generateContentConfig("", nil, Sampling{MaxOutputTokens: 5}); c == nil || c.Temperature != nil || c.TopP != nil || c.MaxOutputTokens != 5 {
+		t.Fatalf("unset temperature/top_p must stay nil: %+v", c)
 	}
 }

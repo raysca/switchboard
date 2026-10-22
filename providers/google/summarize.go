@@ -27,7 +27,7 @@ func (p *LLMProcessor) SummarizeText(ctx context.Context, system, user string) (
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel() // also stops the client's stream goroutine
-	chunks, errs, err := p.cfg.Client.GenerateStream(ctx, p.cfg.Model, system, []core.Message{{Role: core.RoleUser, Content: user}})
+	chunks, errs, err := p.cfg.Client.GenerateStream(ctx, p.cfg.Model, system, []core.Message{{Role: core.RoleUser, Content: user}}, Sampling{})
 	if err != nil {
 		return "", MapError("llm", err)
 	}

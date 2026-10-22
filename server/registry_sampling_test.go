@@ -36,4 +36,13 @@ func TestLLMBuildersMapSampling(t *testing.T) {
 			t.Fatalf("%+v", c)
 		}
 	})
+	t.Run("google and echo", func(t *testing.T) { // echo.llm builds through googleLLMConfig too
+		c := googleLLMConfig(spec, nil)
+		if c.Sampling.Temperature == nil || *c.Sampling.Temperature != 0 || c.Sampling.TopP == nil || *c.Sampling.TopP != 0.9 || c.Sampling.MaxOutputTokens != 200 {
+			t.Fatalf("%+v", c.Sampling)
+		}
+		if u := googleLLMConfig(StageSpec{}, nil); u.Sampling.Temperature != nil || u.Sampling.TopP != nil || u.Sampling.MaxOutputTokens != 0 {
+			t.Fatalf("unset: %+v", u.Sampling)
+		}
+	})
 }

@@ -231,6 +231,7 @@ func googleSTTConfig(cfg *Config, spec StageSpec, breaker *resilience.Breaker) g
 func googleLLMConfig(spec StageSpec, breaker *resilience.Breaker) google.LLMConfig {
 	c := google.DefaultLLMConfig()
 	c.Model, c.SystemPrompt = spec.Model, spec.SystemPrompt
+	c.Sampling.Temperature, c.Sampling.TopP, c.Sampling.MaxOutputTokens = spec.sampling()
 	if len(spec.Tools) > 0 {
 		c.ToolDefinitions, c.ToolExecutor, c.ToolHistory = spec.Tools, spec.ToolExecutor, spec.History
 		c.ToolLoopConfig = spec.toolLoopConfig()

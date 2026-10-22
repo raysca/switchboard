@@ -131,14 +131,16 @@ type googleToolClient struct {
 	native        [][]GoogleNativeExchange
 	responses     [][]LLMStreamChunk
 	requestErrors []error
+	samplings     []Sampling
 }
 
-func (c *googleToolClient) GenerateStream(ctx context.Context, model, prompt string, history []core.Message) (<-chan LLMStreamChunk, <-chan error, error) {
-	return c.GenerateStreamWithNativeTools(ctx, model, prompt, history, nil, nil, core.ToolCall{})
+func (c *googleToolClient) GenerateStream(ctx context.Context, model, prompt string, history []core.Message, _ Sampling) (<-chan LLMStreamChunk, <-chan error, error) {
+	return c.GenerateStreamWithNativeTools(ctx, model, prompt, history, nil, nil, core.ToolCall{}, Sampling{})
 }
 
-func (c *googleToolClient) GenerateStreamWithNativeTools(_ context.Context, _, _ string, history []core.Message, native []GoogleNativeExchange, _ []core.ToolDefinition, _ core.ToolCall) (<-chan LLMStreamChunk, <-chan error, error) {
+func (c *googleToolClient) GenerateStreamWithNativeTools(_ context.Context, _, _ string, history []core.Message, native []GoogleNativeExchange, _ []core.ToolDefinition, _ core.ToolCall, sampling Sampling) (<-chan LLMStreamChunk, <-chan error, error) {
 	c.mu.Lock()
+	c.samplings = append(c.samplings, sampling)
 	i := len(c.requests)
 	c.requests = append(c.requests, append([]core.Message(nil), history...))
 	c.native = append(c.native, append([]GoogleNativeExchange(nil), native...))
@@ -173,8 +175,11 @@ func TestGoogleLLMToolLoopClaimsOnceAndContinuesWithFunctionHistory(t *testing.T
 		{{Text: "done"}},
 	}, requestErrors: []error{nil, &ProviderError{Capability: "llm", BaseErr: ErrProviderUnavailable, StatusCode: 503, Retryable: true}}}
 	var executed []string
+	temp := 0.0
+	wantSampling := Sampling{Temperature: &temp, MaxOutputTokens: 77}
 	proc, err := NewLLMProcessor(LLMConfig{
 		Client:          client,
+		Sampling:        wantSampling,
 		RetryPolicy:     resilience.Policy{InitialBackoff: time.Millisecond, MaxAttempts: 2},
 		ToolDefinitions: []core.ToolDefinition{{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object","properties":{"key":{"type":"string"}}}`)}},
 		ToolExecutor: core.ToolExecutorFunc(func(_ context.Context, call core.ToolCall) (core.ToolResult, error) {
@@ -256,6 +261,11 @@ func TestGoogleLLMToolLoopClaimsOnceAndContinuesWithFunctionHistory(t *testing.T
 	}
 	if len(contents) != 3 || len(contents[1].Parts) != 2 || len(contents[2].Parts) != 2 {
 		t.Fatalf("parallel calls/results were not kept in ordered Google content groups: %#v", contents)
+	}
+	for i, got := range client.samplings { // the native-tools path carries the sampling on every round and retry
+		if !reflect.DeepEqual(got, wantSampling) {
+			t.Fatalf("request %d sampling = %+v, want %+v", i, got, wantSampling)
+		}
 	}
 }
 
@@ -414,10 +424,10 @@ func (task12Emitter) PushDirection(core.Frame, core.Direction) error { return ni
 
 type failedStreamClient struct{ requests atomic.Int32 }
 
-func (c *failedStreamClient) GenerateStream(ctx context.Context, model, prompt string, history []core.Message) (<-chan LLMStreamChunk, <-chan error, error) {
-	return c.GenerateStreamWithNativeTools(ctx, model, prompt, history, nil, nil, core.ToolCall{})
+func (c *failedStreamClient) GenerateStream(ctx context.Context, model, prompt string, history []core.Message, _ Sampling) (<-chan LLMStreamChunk, <-chan error, error) {
+	return c.GenerateStreamWithNativeTools(ctx, model, prompt, history, nil, nil, core.ToolCall{}, Sampling{})
 }
-func (c *failedStreamClient) GenerateStreamWithNativeTools(context.Context, string, string, []core.Message, []GoogleNativeExchange, []core.ToolDefinition, core.ToolCall) (<-chan LLMStreamChunk, <-chan error, error) {
+func (c *failedStreamClient) GenerateStreamWithNativeTools(context.Context, string, string, []core.Message, []GoogleNativeExchange, []core.ToolDefinition, core.ToolCall, Sampling) (<-chan LLMStreamChunk, <-chan error, error) {
 	c.requests.Add(1)
 	chunks := make(chan LLMStreamChunk, 1)
 	errs := make(chan error, 1)

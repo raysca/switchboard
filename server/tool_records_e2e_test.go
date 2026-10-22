@@ -301,7 +301,7 @@ type inventingLLM struct {
 
 var inventedNames = []string{"my_card_is_4111111111111111", "my card is 4111 1111 1111 1111", "ça_carte_是_4111", "my_card_" + strings.Repeat("x", 200)}
 
-func (c *inventingLLM) GenerateStreamWithNativeTools(ctx context.Context, m, sp string, h []core.Message, n []google.GoogleNativeExchange, d []core.ToolDefinition, id core.ToolCall) (<-chan google.LLMStreamChunk, <-chan error, error) {
+func (c *inventingLLM) GenerateStreamWithNativeTools(ctx context.Context, m, sp string, h []core.Message, n []google.GoogleNativeExchange, d []core.ToolDefinition, id core.ToolCall, sm google.Sampling) (<-chan google.LLMStreamChunk, <-chan error, error) {
 	if last := h[len(h)-1]; last.Role == core.RoleUser && strings.Contains(last.Content, "invent") && c.done.CompareAndSwap(false, true) {
 		calls := make([]core.ToolCall, 0, len(inventedNames))
 		for i, name := range inventedNames {
@@ -313,7 +313,7 @@ func (c *inventingLLM) GenerateStreamWithNativeTools(ctx context.Context, m, sp 
 		close(errs)
 		return ch, errs, nil
 	}
-	return c.LLMClient.GenerateStreamWithNativeTools(ctx, m, sp, h, n, d, id)
+	return c.LLMClient.GenerateStreamWithNativeTools(ctx, m, sp, h, n, d, id, sm)
 }
 
 // The real google processor and tool loop against a model that invents tool names: the name never reaches the

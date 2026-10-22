@@ -92,10 +92,12 @@ type mockLLMClient struct {
 	mu         sync.Mutex
 	generateFn func(ctx context.Context, model string, systemPrompt string, history []core.Message) (<-chan LLMStreamChunk, <-chan error, error)
 	calls      []string
+	samplings  []Sampling
 }
 
-func (m *mockLLMClient) GenerateStream(ctx context.Context, model string, systemPrompt string, history []core.Message) (<-chan LLMStreamChunk, <-chan error, error) {
+func (m *mockLLMClient) GenerateStream(ctx context.Context, model string, systemPrompt string, history []core.Message, sampling Sampling) (<-chan LLMStreamChunk, <-chan error, error) {
 	m.mu.Lock()
+	m.samplings = append(m.samplings, sampling)
 	if len(history) > 0 {
 		m.calls = append(m.calls, history[len(history)-1].Content)
 	}
