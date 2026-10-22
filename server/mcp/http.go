@@ -39,7 +39,7 @@ func Handler(service *Service) http.Handler {
 			}
 			m, err := service.Create(r.Context(), input)
 			if err != nil {
-				api.WriteError(w, 400, "invalid_mcp_server", "MCP server configuration is invalid", id)
+				writeInvalidServer(w, err, id)
 				return
 			}
 			api.WriteJSON(w, http.StatusCreated, api.SuccessResponse[ServerView]{Data: view(m, service.tokens)})
@@ -63,8 +63,27 @@ func Handler(service *Service) http.Handler {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		if r.Method == http.MethodPatch {
+			var input ServerUpdate
+			if err := api.DecodeJSON(r, &input); err != nil {
+				api.WriteError(w, 400, "invalid_request", err.Error(), id)
+				return
+			}
+			m, err := service.Update(r.Context(), r.PathValue("id"), input)
+			switch {
+			case errors.Is(err, ErrPendingDeletion):
+				api.WriteError(w, 409, "mcp_server_unavailable", "MCP server cannot be edited while deletion is pending", id)
+			case ReasonCode(err) != "":
+				writeInvalidServer(w, err, id)
+			case err != nil:
+				writeLookupError(w, err, id)
+			default:
+				api.WriteJSON(w, 200, api.SuccessResponse[ServerView]{Data: view(m, service.tokens)})
+			}
+			return
+		}
 		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", "GET, DELETE")
+			w.Header().Set("Allow", "GET, PATCH, DELETE")
 			api.WriteError(w, 405, "method_not_allowed", "method is not supported", id)
 			return
 		}
@@ -265,6 +284,11 @@ func safeEndpoint(raw string) string {
 	}
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+// writeInvalidServer answers a refused create or edit with its reason code.
+func writeInvalidServer(w http.ResponseWriter, err error, requestID string) {
+	api.WriteJSON(w, 400, api.ErrorResponse{Error: api.Error{Code: "invalid_mcp_server", Message: "MCP server configuration is invalid", RequestID: requestID, Details: map[string]string{"reason": ReasonCode(err)}}})
 }
 
 // writeLookupError maps a missing server to 404 and anything else (a broken

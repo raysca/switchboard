@@ -37,3 +37,12 @@ func TestMCPHandlerUsesAuthenticatedManagementBoundaryAndTrustedRequestID(t *tes
 		t.Fatalf("MCP trusted request ID mismatch: header=%q body=%s", response.Header().Get("X-Request-ID"), response.Body.String())
 	}
 }
+
+func TestMCPPatchRequiresManagementKey(t *testing.T) {
+	s := apiTestServer(t)
+	var called bool
+	s.setMCPManagementAPI(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true }))
+	if resp := apiRequest(s, http.MethodPatch, "/api/v1/mcp-servers/x", "", `{"name":"y"}`); resp.Code != http.StatusUnauthorized || called {
+		t.Fatalf("unauthenticated PATCH: status=%d called=%v", resp.Code, called)
+	}
+}

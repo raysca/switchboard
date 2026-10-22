@@ -53,7 +53,32 @@ var (
 	ErrDiscoveryFailed      = errors.New("MCP discovery failed")
 	ErrConnectionFailed     = errors.New("MCP connection failed")
 	ErrExecutionFailed      = errors.New("MCP remote execution failed")
+	ErrPendingDeletion      = errors.New("MCP server deletion is pending")
+
+	// Why a create or edit was refused; ReasonCode maps each to its API string.
+	ErrInvalidEndpoint      = errors.New("invalid MCP endpoint")
+	ErrDestinationDenied    = errors.New("MCP destination denied")
+	ErrInvalidAuthEnv       = errors.New("invalid MCP auth_env")
+	ErrInvalidMetadata      = errors.New("invalid MCP server metadata")
+	ErrTransportUnsupported = errors.New("unsupported MCP transport")
 )
+
+// ReasonCode is the API reason for a refused create or edit ("" for any other error).
+func ReasonCode(err error) string {
+	switch {
+	case errors.Is(err, ErrInvalidEndpoint):
+		return "invalid_endpoint"
+	case errors.Is(err, ErrDestinationDenied):
+		return "destination_denied"
+	case errors.Is(err, ErrInvalidAuthEnv):
+		return "invalid_auth_env"
+	case errors.Is(err, ErrInvalidMetadata):
+		return "invalid_metadata"
+	case errors.Is(err, ErrTransportUnsupported), errors.Is(err, ErrLocalDisabled):
+		return "transport_unsupported"
+	}
+	return ""
+}
 
 // ToolError is a tool's own failure (an isError result). Message may hold caller data, so Error()
 // never includes it: logs and spans carry the category only.
@@ -407,31 +432,41 @@ func isLoopbackIP(raw net.IP) bool {
 	return addr.IsLoopback()
 }
 
+// validateServerConfig applies the rules shared by Create and Update and returns the
+// normalized endpoint. The destination error never says what an address resolved to.
+func (s *Service) validateServerConfig(ctx context.Context, cfg ServerConfig) (*url.URL, error) {
+	if cfg.Transport == TransportLocalProcess {
+		return nil, ErrLocalDisabled
+	}
+	if cfg.Transport != TransportStreamableHTTP {
+		return nil, ErrTransportUnsupported
+	}
+	u, err := url.ParseRequestURI(cfg.Endpoint)
+	if err != nil {
+		return nil, ErrInvalidEndpoint
+	}
+	if u.RawQuery != "" {
+		return nil, fmt.Errorf("%w: query parameters are not accepted; use auth_env", ErrInvalidEndpoint)
+	}
+	if err = s.destinations.Validate(ctx, u); err != nil {
+		return nil, ErrDestinationDenied
+	}
+	if strings.TrimSpace(cfg.Name) == "" || len(cfg.Name) > 128 || len(cfg.Description) > 1024 {
+		return nil, ErrInvalidMetadata
+	}
+	if cfg.AuthEnv != "" && !ValidAuthEnv(cfg.AuthEnv) {
+		return nil, ErrInvalidAuthEnv
+	}
+	return u, nil
+}
+
 func (s *Service) Create(ctx context.Context, cfg ServerConfig) (storage.MCPServer, error) {
 	if cfg.Transport == "" {
 		cfg.Transport = TransportStreamableHTTP
 	}
-	if cfg.Transport == TransportLocalProcess {
-		return storage.MCPServer{}, ErrLocalDisabled
-	}
-	if cfg.Transport != TransportStreamableHTTP {
-		return storage.MCPServer{}, errors.New("unsupported MCP transport")
-	}
-	u, err := url.ParseRequestURI(cfg.Endpoint)
+	u, err := s.validateServerConfig(ctx, cfg)
 	if err != nil {
-		return storage.MCPServer{}, errors.New("invalid MCP endpoint")
-	}
-	if u.RawQuery != "" {
-		return storage.MCPServer{}, errors.New("MCP endpoint query parameters are not accepted; use auth_env")
-	}
-	if err = s.destinations.Validate(ctx, u); err != nil {
-		return storage.MCPServer{}, errors.New("MCP destination denied")
-	}
-	if strings.TrimSpace(cfg.Name) == "" || len(cfg.Name) > 128 || len(cfg.Description) > 1024 {
-		return storage.MCPServer{}, errors.New("invalid MCP server metadata")
-	}
-	if cfg.AuthEnv != "" && !ValidAuthEnv(cfg.AuthEnv) {
-		return storage.MCPServer{}, errors.New("invalid MCP auth_env")
+		return storage.MCPServer{}, err
 	}
 	m := storage.MCPServer{ID: storage.NewID(), Name: strings.TrimSpace(cfg.Name), Description: cfg.Description, Endpoint: u.String(), Transport: cfg.Transport, AuthEnv: cfg.AuthEnv, Enabled: cfg.Enabled, ValidationState: StateNotValidated}
 	if !m.Enabled {
@@ -441,6 +476,59 @@ func (s *Service) Create(ctx context.Context, cfg ServerConfig) (storage.MCPServ
 		return storage.MCPServer{}, errors.New("MCP server could not be saved")
 	}
 	return m, nil
+}
+
+// ServerUpdate is an edit: a nil field is left unchanged, auth_env "" clears it.
+type ServerUpdate struct {
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+	Endpoint    *string `json:"endpoint"`
+	AuthEnv     *string `json:"auth_env"`
+}
+
+// Update edits a server in place. A changed endpoint or auth_env resets it to
+// not_validated and syncs it now; how that sync went shows in the returned server's state.
+// Sessions that already captured a tool keep calling the endpoint they captured.
+func (s *Service) Update(ctx context.Context, id string, u ServerUpdate) (storage.MCPServer, error) {
+	m, err := s.Get(ctx, id)
+	if err != nil {
+		return m, err
+	}
+	if m.PendingDelete {
+		return m, ErrPendingDeletion
+	}
+	cfg := ServerConfig{Name: m.Name, Description: m.Description, Endpoint: m.Endpoint, Transport: m.Transport, AuthEnv: m.AuthEnv}
+	if u.Name != nil {
+		cfg.Name = *u.Name
+	}
+	if u.Description != nil {
+		cfg.Description = *u.Description
+	}
+	if u.Endpoint != nil {
+		cfg.Endpoint = *u.Endpoint
+	}
+	if u.AuthEnv != nil {
+		cfg.AuthEnv = *u.AuthEnv
+	}
+	parsed, err := s.validateServerConfig(ctx, cfg)
+	if err != nil {
+		return m, err
+	}
+	changed := parsed.String() != m.Endpoint || cfg.AuthEnv != m.AuthEnv
+	m.Name, m.Description, m.Endpoint, m.AuthEnv = strings.TrimSpace(cfg.Name), cfg.Description, parsed.String(), cfg.AuthEnv
+	if changed && m.Enabled {
+		m.ValidationState = StateNotValidated
+	}
+	if err = s.store.MCP().UpdateServer(ctx, m); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return m, ErrPendingDeletion // it was deleted or marked between the read and the write
+		}
+		return m, fmt.Errorf("update MCP server: %w", err)
+	}
+	if changed && m.Enabled {
+		_, _ = s.Refresh(ctx, id) // the outcome is the server's state
+	}
+	return s.Get(ctx, id)
 }
 
 func (s *Service) Get(ctx context.Context, id string) (storage.MCPServer, error) {

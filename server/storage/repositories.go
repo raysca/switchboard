@@ -344,6 +344,23 @@ func (r MCPRepository) CurrentReferences(ctx context.Context, id string) ([]MCPF
 	return out, rows.Err()
 }
 
+// UpdateServer stores an edit's name, description, endpoint, auth_env and validation state.
+// sql.ErrNoRows: the server is missing or its deletion is pending.
+func (r MCPRepository) UpdateServer(ctx context.Context, m MCPServer) error {
+	result, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE mcp_servers SET name=?,description=?,endpoint=?,auth_env=?,validation_state=?,updated_at=? WHERE id=? AND pending_delete=?"), m.Name, m.Description, m.Endpoint, m.AuthEnv, m.ValidationState, utc(time.Now()), m.ID, boolValue(r.s.dialect, false))
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (r MCPRepository) DisableServer(ctx context.Context, id string) error {
 	result, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE mcp_servers SET enabled=?,validation_state=?,updated_at=? WHERE id=?"), boolValue(r.s.dialect, false), "disabled", utc(time.Now()), id)
 	if err != nil {
