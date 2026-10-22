@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"govoice/server/agent"
 	"govoice/server/demo"
-	"govoice/server/flow"
 	"govoice/server/mcp"
 	"govoice/server/mcp/dentalmcp"
 	"govoice/server/storage"
@@ -69,21 +69,21 @@ func TestDemoAPIReportsAvailabilityAndInstalls(t *testing.T) {
 
 func TestDemoAPIInstallsTheDentalDemoOnce(t *testing.T) {
 	s := dentalRig(t)
-	install := func() (created bool, flowID string) {
+	install := func() (created bool, agentID string) {
 		w := apiRequest(s, http.MethodPost, "/api/v1/demo/dental", testMgmtKey, "")
 		if w.Code != 200 {
 			t.Fatalf("install: %d %s", w.Code, w.Body.String())
 		}
 		var out struct {
 			Data struct {
-				FlowCreated bool   `json:"flow_created"`
-				FlowID      string `json:"flow_id"`
+				AgentCreated bool   `json:"flow_created"`
+				AgentID      string `json:"flow_id"`
 			} `json:"data"`
 		}
 		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
 			t.Fatal(err)
 		}
-		return out.Data.FlowCreated, out.Data.FlowID
+		return out.Data.AgentCreated, out.Data.AgentID
 	}
 	created, id := install()
 	if !created || id == "" {
@@ -147,7 +147,7 @@ func TestAutoInstallDemoSkipsOnceShuttingDown(t *testing.T) {
 	if s.stopDemo != nil || !s.waitDemo(context.Background()) {
 		t.Fatal("an install was started while shutting down")
 	}
-	if f, err := demo.FindFlow(context.Background(), s.flows); err != nil || f.ID != "" {
+	if f, err := demo.FindAgent(context.Background(), s.agents); err != nil || f.ID != "" {
 		t.Fatalf("flow installed during shutdown: %+v %v", f, err)
 	}
 }
@@ -194,26 +194,26 @@ func (f *racyServers) Refresh(context.Context, string) (storage.MCPDiscovery, er
 	return d, nil
 }
 
-type racyFlows struct {
-	list    []flow.Flow
+type racyAgents struct {
+	list    []agent.Agent
 	creates int
 	err     error
 }
 
-func (f *racyFlows) List(context.Context, int, int) ([]flow.Flow, error) {
+func (f *racyAgents) List(context.Context, int, int) ([]agent.Agent, error) {
 	time.Sleep(20 * time.Millisecond)
-	return append([]flow.Flow(nil), f.list...), f.err
+	return append([]agent.Agent(nil), f.list...), f.err
 }
-func (f *racyFlows) Create(_ context.Context, r flow.CreateRequest) (flow.Flow, error) {
+func (f *racyAgents) Create(_ context.Context, r agent.CreateRequest) (agent.Agent, error) {
 	f.creates++
-	fl := flow.Flow{ID: "flow1", Name: r.Name}
+	fl := agent.Agent{ID: "flow1", Name: r.Name}
 	f.list = append(f.list, fl)
 	return fl, nil
 }
 
 // The startup auto-install and a "Load demo" click must not both create the demo.
 func TestInstallDentalIsSerialised(t *testing.T) {
-	s, srv, fl := &Server{}, &racyServers{}, &racyFlows{}
+	s, srv, fl := &Server{}, &racyServers{}, &racyAgents{}
 	var wg sync.WaitGroup
 	for range 2 {
 		wg.Add(1)
@@ -231,17 +231,17 @@ func TestInstallDentalIsSerialised(t *testing.T) {
 }
 
 // A failed flow lookup is an error, never "not installed" (which would offer a duplicate).
-func TestDemoStatusFlowLookupError(t *testing.T) {
-	if _, err := demoStatus(context.Background(), &racyFlows{err: errors.New("db down")}, "https://d/mcp"); err == nil {
+func TestDemoStatusAgentLookupError(t *testing.T) {
+	if _, err := demoStatus(context.Background(), &racyAgents{err: errors.New("db down")}, "https://d/mcp"); err == nil {
 		t.Fatal("lookup error must surface")
 	}
-	st, err := demoStatus(context.Background(), &racyFlows{list: []flow.Flow{{ID: "f1", Name: demo.FlowName}}}, "https://d/mcp")
-	if err != nil || !st.Dental.Installed || st.Dental.FlowID != "f1" || !st.Dental.Available {
+	st, err := demoStatus(context.Background(), &racyAgents{list: []agent.Agent{{ID: "f1", Name: demo.AgentName}}}, "https://d/mcp")
+	if err != nil || !st.Dental.Installed || st.Dental.AgentID != "f1" || !st.Dental.Available {
 		t.Fatalf("%+v %v", st, err)
 	}
 }
 
-func (f *racyFlows) Archive(context.Context, string) error { return nil }
+func (f *racyAgents) Archive(context.Context, string) error { return nil }
 
 // gatedServers hands the context an install runs on to the test, then waits for release. With
 // ignoreCancel it keeps waiting after that context is cancelled (an install that has not reached a
@@ -277,7 +277,7 @@ func (g *gatedServers) List(ctx context.Context) ([]storage.MCPServer, error) {
 // The install is shared by every caller (singleflight): the caller that started it hanging up must not
 // cancel it, or every joiner fails with context.Canceled too.
 func TestDentalInstallOutlivesTheCallerThatStartedIt(t *testing.T) {
-	s, fl, srv := &Server{}, &racyFlows{}, newGatedServers(false)
+	s, fl, srv := &Server{}, &racyAgents{}, newGatedServers(false)
 	caller, hangUp := context.WithCancel(context.Background())
 	first := make(chan error, 1)
 	go func() { _, err := s.installDental(caller, srv, fl, "https://d/mcp"); first <- err }()
@@ -301,7 +301,7 @@ func TestDentalInstallOutlivesTheCallerThatStartedIt(t *testing.T) {
 // Shutdown cancels a running install and waits for it (waitDemo) before it closes the store; once shutting
 // down, no install starts.
 func TestShutdownCancelsTheDemoInstallAndWaitsForIt(t *testing.T) {
-	s, fl, srv := &Server{}, &racyFlows{}, newGatedServers(true)
+	s, fl, srv := &Server{}, &racyAgents{}, newGatedServers(true)
 	done := make(chan error, 1)
 	go func() { _, err := s.installDental(context.Background(), srv, fl, "https://d/mcp"); done <- err }()
 	flight := <-srv.got
@@ -383,7 +383,7 @@ func (panicServers) List(context.Context) ([]storage.MCPServer, error) { panic("
 
 func TestDentalInstallPanicIsAnErrorNotACrash(t *testing.T) {
 	s := &Server{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	_, err := s.installDental(context.Background(), panicServers{&racyServers{}}, &racyFlows{}, "https://d/mcp")
+	_, err := s.installDental(context.Background(), panicServers{&racyServers{}}, &racyAgents{}, "https://d/mcp")
 	if err == nil || !strings.Contains(err.Error(), "panicked") {
 		t.Fatalf("a panicking install returned %v, want a 'panicked' error", err)
 	}

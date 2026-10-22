@@ -7,14 +7,14 @@ import (
 	"strings"
 	"testing"
 
+	"govoice/server/agent"
 	"govoice/server/api"
-	"govoice/server/flow"
 	"govoice/server/storage"
 )
 
-const flowMgmtKey = "management-test-key-32-bytes-long-and-separate"
+const agentMgmtKey = "management-test-key-32-bytes-long-and-separate"
 
-func flowAPIServer(t *testing.T) *Server {
+func agentAPIServer(t *testing.T) *Server {
 	t.Helper()
 	s := apiTestServer(t)
 	store, err := storage.Open(t.Context(), storage.Config{Dialect: storage.SQLite, DSN: filepath.Join(t.TempDir(), "agents.db")})
@@ -22,11 +22,11 @@ func flowAPIServer(t *testing.T) *Server {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	s.setFlowManagementAPI(api.NewFlowsHandler(flow.NewService(store, s.availability)))
+	s.setAgentManagementAPI(api.NewAgentsHandler(agent.NewService(store, s.availability)))
 	return s
 }
 
-func flowStages(stt bool) string {
+func agentStages(stt bool) string {
 	stages := `"llm":{"provider":"google","model":"m"},"tts":{"provider":"google","voice":"v"}`
 	if stt {
 		stages = `"stt":{"provider":"google","model":"s"},` + stages
@@ -34,14 +34,14 @@ func flowStages(stt bool) string {
 	return stages
 }
 
-func flowBody(name, routeTo string) string {
+func agentBody(name, routeTo string) string {
 	return `{"name":"` + name + `","config":{"start":"front","steps":[` +
-		`{"id":"front","name":"Front desk","config":{` + flowStages(true) + `}},` +
-		`{"id":"sales","name":"Sales","config":{` + flowStages(false) + `}}],` +
+		`{"id":"front","name":"Front desk","config":{` + agentStages(true) + `}},` +
+		`{"id":"sales","name":"Sales","config":{` + agentStages(false) + `}}],` +
 		`"routes":[{"id":"e1","from":"front","to":"` + routeTo + `","condition":"wants to buy"}]}}`
 }
 
-type flowResp struct {
+type agentResp struct {
 	Data struct {
 		ID      string `json:"id"`
 		Version struct {
@@ -54,50 +54,50 @@ type flowResp struct {
 	} `json:"data"`
 }
 
-func TestFlowsAPIAcceptsFlowAndStillAcceptsFlat(t *testing.T) {
-	s := flowAPIServer(t)
+func TestAgentsAPIAcceptsAgentAndStillAcceptsFlat(t *testing.T) {
+	s := agentAPIServer(t)
 
-	w := apiRequest(s, http.MethodPost, "/api/v1/flows", flowMgmtKey, flowBody("two step", "sales"))
+	w := apiRequest(s, http.MethodPost, "/api/v1/flows", agentMgmtKey, agentBody("two step", "sales"))
 	if w.Code != http.StatusCreated {
 		t.Fatalf("graph create: %d %s", w.Code, w.Body)
 	}
-	var graph flowResp
+	var graph agentResp
 	_ = json.Unmarshal(w.Body.Bytes(), &graph)
-	if graph.Data.Readiness.State != flow.ReadinessReady || !strings.Contains(string(graph.Data.Version.Config), `"steps"`) {
+	if graph.Data.Readiness.State != agent.ReadinessReady || !strings.Contains(string(graph.Data.Version.Config), `"steps"`) {
 		t.Fatalf("graph flow = %+v", graph.Data)
 	}
 
-	flat := `{"name":"flat","config":{` + flowStages(true) + `}}`
-	w = apiRequest(s, http.MethodPost, "/api/v1/flows", flowMgmtKey, flat)
+	flat := `{"name":"flat","config":{` + agentStages(true) + `}}`
+	w = apiRequest(s, http.MethodPost, "/api/v1/flows", agentMgmtKey, flat)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("flat create: %d %s", w.Code, w.Body)
 	}
-	var f flowResp
+	var f agentResp
 	_ = json.Unmarshal(w.Body.Bytes(), &f)
 	if strings.Contains(string(f.Data.Version.Config), `"steps"`) {
 		t.Fatalf("a flat config must be stored as sent: %s", f.Data.Version.Config)
 	}
 }
 
-func TestFlowsAPIRejectsInvalidFlow(t *testing.T) {
-	s := flowAPIServer(t)
-	w := apiRequest(s, http.MethodPost, "/api/v1/flows", flowMgmtKey, flowBody("bad", "nowhere"))
+func TestAgentsAPIRejectsInvalidAgent(t *testing.T) {
+	s := agentAPIServer(t)
+	w := apiRequest(s, http.MethodPost, "/api/v1/flows", agentMgmtKey, agentBody("bad", "nowhere"))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("route to a missing step: %d %s", w.Code, w.Body)
 	}
 }
 
-func TestFlowsAPIFlowUpdatePublishesNewVersion(t *testing.T) {
-	s := flowAPIServer(t)
-	w := apiRequest(s, http.MethodPost, "/api/v1/flows", flowMgmtKey, `{"name":"a","config":{`+flowStages(true)+`}}`)
-	var created flowResp
+func TestAgentsAPIAgentUpdatePublishesNewVersion(t *testing.T) {
+	s := agentAPIServer(t)
+	w := apiRequest(s, http.MethodPost, "/api/v1/flows", agentMgmtKey, `{"name":"a","config":{`+agentStages(true)+`}}`)
+	var created agentResp
 	_ = json.Unmarshal(w.Body.Bytes(), &created)
-	body := strings.TrimSuffix(strings.TrimPrefix(flowBody("a", "sales"), `{"name":"a",`), `}`)
-	w = apiRequest(s, http.MethodPatch, "/api/v1/flows/"+created.Data.ID, flowMgmtKey, "{"+body+"}")
+	body := strings.TrimSuffix(strings.TrimPrefix(agentBody("a", "sales"), `{"name":"a",`), `}`)
+	w = apiRequest(s, http.MethodPatch, "/api/v1/flows/"+created.Data.ID, agentMgmtKey, "{"+body+"}")
 	if w.Code != http.StatusOK {
 		t.Fatalf("graph update: %d %s", w.Code, w.Body)
 	}
-	var updated flowResp
+	var updated agentResp
 	_ = json.Unmarshal(w.Body.Bytes(), &updated)
 	if updated.Data.Version.Number != 2 || !strings.Contains(string(updated.Data.Version.Config), `"steps"`) {
 		t.Fatalf("updated = %+v", updated.Data)

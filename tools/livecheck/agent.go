@@ -20,7 +20,7 @@ const toolName = "get_time"
 
 // flowConfig is the stored flow config for a resolved profile. Stage structure is the only
 // thing that differs between profiles; the server reads every secret from its environment.
-func flowConfig(p Profile) map[string]any {
+func agentConfig(p Profile) map[string]any {
 	stage := func(s Stage, extra map[string]any) map[string]any {
 		m := map[string]any{"provider": s.Provider}
 		for k, v := range extra {
@@ -40,7 +40,7 @@ func flowConfig(p Profile) map[string]any {
 // provision creates the standard flow and, with mcpURL set, attaches the get_time tool.
 // It returns the flow id.
 func (s *server) provision(p Profile, mcpURL string) (string, error) {
-	fl, err := s.id("flows", map[string]any{"name": "Live Check", "description": "livecheck " + p.Name, "config": flowConfig(p)})
+	fl, err := s.id("flows", map[string]any{"name": "Live Check", "description": "livecheck " + p.Name, "config": agentConfig(p)})
 	if err != nil {
 		return "", err
 	}
@@ -76,7 +76,7 @@ func failoverPeer(p Profile) (provider, model, na string) {
 // key is broken in the server's environment (see brokenEnv). Every failure class may fail over,
 // client_error included (a rejected key), so a call must be answered by the fallback.
 func failoverConfig(p Profile, fbProvider, fbModel string) map[string]any {
-	cfg := flowConfig(p)
+	cfg := agentConfig(p)
 	cfg["llm"].(map[string]any)["fallbacks"] = []map[string]any{{"provider": fbProvider, "model": fbModel}}
 	cfg["failover"] = map[string]any{"on": []string{"client_error", "server_error", "timeout", "circuit_open"}}
 	return cfg
@@ -99,17 +99,17 @@ func brokenEnv(p Profile, env []string) []string {
 
 // flowMarker is the word the Sales step must say in every reply, so S14 can tell which flow
 // answered without trusting the model to announce itself.
-const flowMarker = "catalogue"
+const agentMarker = "catalogue"
 
 // flowConfig is the two-step flow for S14: Front hands buyers to Sales. Both steps use the
 // profile's providers; only Front (the entry) has STT, as the server requires.
-func routedFlowConfig(p Profile) map[string]any {
-	front := flowConfig(p)
+func routedAgentConfig(p Profile) map[string]any {
+	front := agentConfig(p)
 	front["llm"].(map[string]any)["system_prompt"] = "You are the front desk of a car dealership. Answer in one short sentence. " +
 		"If the caller wants to buy a car or asks about prices, call the transfer_to_sales tool, then say one short sentence that you are connecting them."
-	sales := flowConfig(p)
+	sales := agentConfig(p)
 	delete(sales, "stt")
-	sales["llm"].(map[string]any)["system_prompt"] = "You are the sales agent of a car dealership. Answer in one short sentence and always use the word '" + flowMarker + "'."
+	sales["llm"].(map[string]any)["system_prompt"] = "You are the sales agent of a car dealership. Answer in one short sentence and always use the word '" + agentMarker + "'."
 	return map[string]any{
 		"start": "front",
 		"steps": []map[string]any{
@@ -121,8 +121,8 @@ func routedFlowConfig(p Profile) map[string]any {
 }
 
 // provisionFlow creates the two-step flow for S14 and returns its id.
-func (s *server) provisionFlow(p Profile) (string, error) {
-	return s.id("flows", map[string]any{"name": "Live Check Graph", "description": "livecheck graph " + p.Name, "config": routedFlowConfig(p)})
+func (s *server) provisionAgent(p Profile) (string, error) {
+	return s.id("flows", map[string]any{"name": "Live Check Graph", "description": "livecheck graph " + p.Name, "config": routedAgentConfig(p)})
 }
 
 // brokenSecret keeps a key's length and prefix but changes its last characters, so the provider
@@ -173,13 +173,13 @@ func (s *server) attachTool(fl, url string) error {
 			if err != nil {
 				return err
 			}
-			var flow struct {
+			var agent struct {
 				CurrentVersion struct{ Config json.RawMessage } `json:"current_version"`
 			}
-			if err := json.Unmarshal(cur, &flow); err != nil {
+			if err := json.Unmarshal(cur, &agent); err != nil {
 				return err
 			}
-			_, err = s.st.Call("PUT", "flows/"+fl, map[string]any{"config": flow.CurrentVersion.Config, "mcp_tools": []map[string]any{
+			_, err = s.st.Call("PUT", "flows/"+fl, map[string]any{"config": agent.CurrentVersion.Config, "mcp_tools": []map[string]any{
 				{"mcp_server_id": srv, "remote_name": toolName, "schema_hash": t.SchemaHash, "required": true}}})
 			return err
 		}

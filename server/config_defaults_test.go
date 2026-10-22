@@ -48,7 +48,7 @@ func TestLoadConfig_DocumentedDefaults(t *testing.T) {
 		"idle 15s":              c.Idle.UserTimeout == 15*time.Second,
 		"idle prompt":           c.Idle.Prompt == "Are you still there?",
 		"idle goodbye":          c.Idle.Goodbye == "I'll end the call now. Goodbye.",
-		"flow backgrounds dev":  c.Audio.AllowFlowBackground == (c.Profile == ProfileDevelopment),
+		"flow backgrounds dev":  c.Audio.AllowAgentBackground == (c.Profile == ProfileDevelopment),
 		"analyzer defaults":     c.Turn.Analyzer.Workers == 1 && c.Turn.Analyzer.Hold == 3*time.Second && c.Turn.Analyzer.Budget == 150*time.Millisecond,
 		"analyzer mode derived": c.TurnAnalyzerMode() == "inprocess",
 		"recording 7d/1h/256M":  c.Recording.RetentionDays == 7 && c.Recording.MaxDuration == time.Hour && c.Recording.MaxBytes == 256<<20,

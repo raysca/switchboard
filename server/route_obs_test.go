@@ -44,8 +44,8 @@ func TestRouteMetricsCountAndTime(t *testing.T) {
 func TestOnRouteRecordsTimelineAndTraceSpans(t *testing.T) {
 	s := apiTestServer(t)
 	enableTestManagement(t, s)
-	flowID := readyTestFlow(t, s)
-	pin, err := s.flows.StartSession(t.Context(), flowID, "")
+	agentID := readyTestAgent(t, s)
+	pin, err := s.agents.StartSession(t.Context(), agentID, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -14,7 +14,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/server/mcp/mcptest"
 )
 
@@ -65,16 +65,16 @@ func TestNoSecretLeavesTheServer(t *testing.T) {
 	s.env = mapEnv(env)
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
 	enableTestManagement(t, s)
-	r := &flowRigE2E{t: t, s: s, probe: newProbe()}
+	r := &agentRigE2E{t: t, s: s, probe: newProbe()}
 	r.ts = httptest.NewServer(s.wsServer)
 	t.Cleanup(r.ts.Close)
 
-	plain, err := s.flows.Create(t.Context(), flow.CreateRequest{Name: "Plain", Config: json.RawMessage(
+	plain, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "Plain", Config: json.RawMessage(
 		`{"stt":{"provider":"echo","model":"chirp_2"},"llm":{"provider":"xai","model":"grok-4.20-0309-non-reasoning"},"tts":{"provider":"echo","voice":"en-US-Chirp3-HD-Aoede"}}`)})
-	if err != nil || plain.Readiness.State != flow.ReadinessReady {
+	if err != nil || plain.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("plain flow: %+v err=%v", plain.Readiness, err)
 	}
-	routedID := r.createRoutedFlow("salesvoice")
+	routedID := r.createRoutedAgent("salesvoice")
 	w := apiRequest(s, http.MethodPost, "/api/v1/mcp-servers", e2eMgmtKey, `{"name":"crm","endpoint":"https://1.1.1.1/rpc","transport":"streamable-http","auth_env":"MCP_TOKEN_CRM","enabled":true}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("mcp create: %d %s", w.Code, w.Body)
@@ -100,9 +100,9 @@ func TestNoSecretLeavesTheServer(t *testing.T) {
 	var created struct{ Data struct{ ID string } }
 	_ = json.Unmarshal(w.Body.Bytes(), &created)
 	apiRequest(s, http.MethodPost, "/api/v1/mcp-servers/"+created.Data.ID+"/validate", e2eMgmtKey, "")
-	mr := &mcpCallRig{flowRigE2E: r}
+	mr := &mcpCallRig{agentRigE2E: r}
 	_, hashes := mr.discovered(created.Data.ID)
-	toolAgent := mr.flowWith(created.Data.ID, hashes, true, nil, "lookup_order")
+	toolAgent := mr.agentWith(created.Data.ID, hashes, true, nil, "lookup_order")
 	mc := r.dial(toolAgent.ID)
 	mc.say(`call tool lookup_order {"order_id":"7"}`)
 	mc.waitReplies("shipped", 1)

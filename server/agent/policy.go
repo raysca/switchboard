@@ -1,4 +1,4 @@
-package flow
+package agent
 
 import (
 	"fmt"
@@ -14,7 +14,7 @@ import (
 type Policy interface {
 	Backgrounds() []string // sorted names of audio.backgrounds
 	Cues() []string        // sorted names of audio.cues (route sounds)
-	AllowFlowBackground() bool
+	AllowAgentBackground() bool
 	MinUserTimeout() time.Duration  // 0: no floor
 	TurnManager() bool              // flows' turn settings need the turn manager
 	MaxMute() time.Duration         // the server's effective turn.max_mute: a flow can only shorten it
@@ -96,7 +96,7 @@ func backgroundProblem(b *BackgroundSettings, p Policy) string {
 	if b == nil || b.Name == "" {
 		return ""
 	}
-	if !p.AllowFlowBackground() {
+	if !p.AllowAgentBackground() {
 		return "audio.background: this server does not let flows choose a background sound (audio.allow_flow_background)"
 	}
 	if names := p.Backgrounds(); !slices.Contains(names, b.Name) {

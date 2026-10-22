@@ -29,7 +29,7 @@ const (
 	EndCallerHungUp   = "caller_hung_up"
 	EndSilentCaller   = "silent_caller"
 	EndAgentStuck     = "agent_stuck"
-	EndedByFlow       = "ended_by_flow"
+	EndedByAgent      = "ended_by_flow"
 	EndTimeLimit      = "time_limit"
 	EndConnectionLost = "connection_lost"
 	EndServerShutdown = "server_shutdown"
@@ -40,7 +40,7 @@ const (
 )
 
 // EndReasons lists every valid end reason.
-var EndReasons = []string{EndCallerHungUp, EndSilentCaller, EndAgentStuck, EndedByFlow, EndTimeLimit, EndConnectionLost, EndServerShutdown, EndError, EndSetupFailed, EndServerRestart}
+var EndReasons = []string{EndCallerHungUp, EndSilentCaller, EndAgentStuck, EndedByAgent, EndTimeLimit, EndConnectionLost, EndServerShutdown, EndError, EndSetupFailed, EndServerRestart}
 
 // ErrInvalidEndReason is returned for a reason outside EndReasons.
 var ErrInvalidEndReason = errors.New("invalid session end reason")

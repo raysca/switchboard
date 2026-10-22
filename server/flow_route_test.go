@@ -77,7 +77,7 @@ func (c countedStage) Close() error {
 	return nil
 }
 
-type flowRig struct {
+type agentRig struct {
 	sess                *core.Session
 	spoken              func() string
 	llmBuilt, ttsBuilt  atomic.Int32
@@ -87,9 +87,9 @@ type flowRig struct {
 	events              []core.RouteEvent
 }
 
-func (r *flowRig) closedLLM(prompt string) int32 { return r.llmClosed[prompt].Load() }
+func (r *agentRig) closedLLM(prompt string) int32 { return r.llmClosed[prompt].Load() }
 
-func (r *flowRig) say(t *testing.T, turn, text string) {
+func (r *agentRig) say(t *testing.T, turn, text string) {
 	t.Helper()
 	gen := r.sess.CurrentGeneration()
 	idx := CallUserContextIndex
@@ -103,7 +103,7 @@ func (r *flowRig) say(t *testing.T, turn, text string) {
 	}
 }
 
-func (r *flowRig) waitSpoken(t *testing.T, want string, n int) {
+func (r *agentRig) waitSpoken(t *testing.T, want string, n int) {
 	t.Helper()
 	for end := time.Now().Add(5 * time.Second); strings.Count(r.spoken(), want) < n; time.Sleep(5 * time.Millisecond) {
 		if time.Now().After(end) {
@@ -112,14 +112,14 @@ func (r *flowRig) waitSpoken(t *testing.T, want string, n int) {
 	}
 }
 
-func newFlowRig(t *testing.T) *flowRig {
+func newAgentRig(t *testing.T) *agentRig {
 	t.Helper()
-	r := &flowRig{
+	r := &agentRig{
 		llmClosed: map[string]*atomic.Int32{"FRONT": {}, "SALES": {}},
 		ttsClose:  map[string]*atomic.Int32{"front-voice": {}, "sales-voice": {}},
 	}
-	g := twoStepFlow(t)
-	graph := &CallFlow{Start: "front"}
+	g := twoStepAgent(t)
+	graph := &CallAgent{Start: "front"}
 	graph.Resolve = func(_ context.Context, id string) (StepSpec, error) {
 		return StepSpec{Name: "Sales",
 			LLM: StageSpec{Provider: "google", SystemPrompt: "SALES"},
@@ -143,7 +143,7 @@ func newFlowRig(t *testing.T) *flowRig {
 	call := CallSpec{
 		STT: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google", Voice: "front-voice"},
 		LLM:         StageSpec{Provider: "google", SystemPrompt: "FRONT", Tools: transferTools(g, "front"), ToolExecutor: exec},
-		MaxMessages: 20, MaxTokens: 4000, Flow: graph,
+		MaxMessages: 20, MaxTokens: 4000, Agent: graph,
 		OnRoute: func(e core.RouteEvent) { r.mu.Lock(); r.events = append(r.events, e); r.mu.Unlock() },
 	}
 	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
@@ -177,8 +177,8 @@ func newFlowRig(t *testing.T) *flowRig {
 	return r
 }
 
-func TestFlowRouteMovesTheCallToTheSalesStep(t *testing.T) {
-	r := newFlowRig(t)
+func TestAgentRouteMovesTheCallToTheSalesStep(t *testing.T) {
+	r := newAgentRig(t)
 	if r.llmBuilt.Load() != 1 || r.ttsBuilt.Load() != 1 {
 		t.Fatalf("only the entry step may be built at start: llm=%d tts=%d", r.llmBuilt.Load(), r.ttsBuilt.Load())
 	}

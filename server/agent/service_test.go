@@ -1,4 +1,4 @@
-package flow
+package agent
 
 import (
 	"context"
@@ -94,7 +94,7 @@ func TestDuplicateArchiveAndVersionScopedSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	pinned, err := svc.ResolveSession(ctx, session.ID)
-	if err != nil || pinned.Version.ID != session.FlowVersionID || pinned.Version.ConfigHash != session.ConfigHash || string(pinned.Version.Config) != string(a.Version.Config) {
+	if err != nil || pinned.Version.ID != session.AgentVersionID || pinned.Version.ConfigHash != session.ConfigHash || string(pinned.Version.Config) != string(a.Version.Config) {
 		t.Fatalf("pinned snapshot=%+v session=%+v err=%v", pinned, session, err)
 	}
 	copy, err := svc.Duplicate(ctx, a.ID, "Copy")
@@ -113,7 +113,7 @@ func TestDuplicateArchiveAndVersionScopedSnapshots(t *testing.T) {
 	}
 }
 
-func TestInvalidUpdateDoesNotChangeMutableFlowFields(t *testing.T) {
+func TestInvalidUpdateDoesNotChangeMutableAgentFields(t *testing.T) {
 	svc := testService(t)
 	ctx := context.Background()
 	created, err := svc.Create(ctx, CreateRequest{Name: "Before", Config: validConfig()})

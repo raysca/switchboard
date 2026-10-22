@@ -12,7 +12,7 @@ import (
 func TestADraftCallCanUseAToolThatIsNotPublished(t *testing.T) {
 	r := newMCPCallRig(t)
 	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
-	a := r.flowWith(id, hashes, false, nil) // no tools attached
+	a := r.agentWith(id, hashes, false, nil) // no tools attached
 	cfg := `{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"P"},"tts":{"provider":"echo","voice":"v"}}`
 	payload, _ := json.Marshal(map[string]any{"principal": "alice", "flow_id": a.ID, "draft": map[string]any{
 		"config":    json.RawMessage(cfg),
@@ -35,7 +35,7 @@ func TestADraftCallCanUseAToolThatIsNotPublished(t *testing.T) {
 		rec, err := r.s.store.Sessions().Get(t.Context(), c.sessionID)
 		return err == nil && rec.Draft && len(rec.RuntimeTools) == 1 && rec.RuntimeTools[0].RemoteName == "lookup_order"
 	})
-	published, err := r.s.flows.Get(t.Context(), a.ID)
+	published, err := r.s.agents.Get(t.Context(), a.ID)
 	if err != nil || len(published.Version.MCPTools) != 0 {
 		t.Fatalf("the published flow gained tools: %+v err %v", published.Version.MCPTools, err)
 	}

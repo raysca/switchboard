@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"govoice/server/agent"
 	"govoice/server/catalog"
-	"govoice/server/flow"
 )
 
 func envOf(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
@@ -152,10 +152,10 @@ func TestSelectProfiles(t *testing.T) {
 	}
 }
 
-func TestStandardFlowIsIdenticalAcrossProfiles(t *testing.T) {
+func TestStandardAgentIsIdenticalAcrossProfiles(t *testing.T) {
 	ps, _ := loadProfiles("")
 	for _, p := range ps {
-		if flowConfig(p)["llm"].(map[string]any)["system_prompt"] != systemPrompt {
+		if agentConfig(p)["llm"].(map[string]any)["system_prompt"] != systemPrompt {
 			t.Errorf("%s differs", p.Name)
 		}
 	}
@@ -164,14 +164,14 @@ func TestStandardFlowIsIdenticalAcrossProfiles(t *testing.T) {
 // catalogAvailability answers like the server's own check, minus the build's adapter support.
 type catalogAvailability struct{ res *catalog.Resolver }
 
-func (a catalogAvailability) Check(prov, svc string) flow.Unavailable {
+func (a catalogAvailability) Check(prov, svc string) agent.Unavailable {
 	if !serves(prov, svc) {
-		return flow.Unavailable{Reason: "unsupported_provider"}
+		return agent.Unavailable{Reason: "unsupported_provider"}
 	}
 	if st := a.res.Status(prov, svc); !st.Detected {
-		return flow.Unavailable{Reason: "missing_credential", MissingEnv: st.MissingEnv}
+		return agent.Unavailable{Reason: "missing_credential", MissingEnv: st.MissingEnv}
 	}
-	return flow.Unavailable{}
+	return agent.Unavailable{}
 }
 
 // Every profile's management payload passes the REAL server validation offline (strict decode,
@@ -199,13 +199,13 @@ func TestProfilesPassServerValidation(t *testing.T) {
 		if _, leaked := child["PROVIDER_NOISE_API_KEY"]; leaked {
 			t.Fatalf("%s: providerEnv passed a variable the profile does not name", p.Name)
 		}
-		raw, _ := json.Marshal(flowConfig(p.resolve(envOf(env))))
-		c, err := flow.DecodeConfig(raw)
+		raw, _ := json.Marshal(agentConfig(p.resolve(envOf(env))))
+		c, err := agent.DecodeConfig(raw)
 		if err != nil {
 			t.Errorf("%s: %v", p.Name, err)
 			continue
 		}
-		if probs, missing := flow.AttachmentProblems(c, catalogAvailability{catalog.NewResolver(providers, envOf(child))}); len(probs) > 0 {
+		if probs, missing := agent.AttachmentProblems(c, catalogAvailability{catalog.NewResolver(providers, envOf(child))}); len(probs) > 0 {
 			t.Errorf("%s: %v (missing %v)", p.Name, probs, missing)
 		}
 	}

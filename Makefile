@@ -60,7 +60,7 @@ test: build ## build|Vet (with and without xaispeech) + race-test every module w
 # (routes, failed step build, caller speaking mid-route, hang-up mid-route, republish, MCP tool calls,
 # no secret leaving the server). `make test` runs it; `make e2e-echo` runs it with the browser suite.
 test-e2e-go: ## free|Go end-to-end tests (real server + WebSocket) against the echo provider (about 45 s)
-	cd server && go test -race -count=1 -tags "$(GOTAGS)" -run 'FlowE2E|NoSecretLeavesTheServer|MCPCall|ContextInjection|CallBehavior|CallRecords|TheOrphanSweep|ATypedTurnLeaves' .
+	cd server && go test -race -count=1 -tags "$(GOTAGS)" -run 'AgentE2E|NoSecretLeavesTheServer|MCPCall|ContextInjection|CallBehavior|CallRecords|TheOrphanSweep|ATypedTurnLeaves' .
 
 # Black-box pipecat.evals run against the Go server on the echo provider (docs/decisions/pipecat-evals.md).
 eval-pipecat: ## free|pipecat.evals black-box run against the server (echo provider)

@@ -21,12 +21,12 @@ func TestMCPCallPipecatClientSeesFunctionCallEvents(t *testing.T) {
 	}
 	r := newMCPCallRig(t)
 	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
-	a := r.flowWith(id, hashes, true, nil, "lookup_order")
+	a := r.agentWith(id, hashes, true, nil, "lookup_order")
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "node", filepath.Join(compat, "test_rtvi_function_calls.js"),
 		// r.ts is the mcptest server (mcpCallRig shadows the embedded flowRigE2E.ts): dial the voice server.
-		"--url", "ws"+strings.TrimPrefix(r.flowRigE2E.ts.URL, "http"), "--token", r.voiceToken(a.ID),
+		"--url", "ws"+strings.TrimPrefix(r.agentRigE2E.ts.URL, "http"), "--token", r.voiceToken(a.ID),
 		"--text", `call tool lookup_order {"order_id":"42"}`).CombinedOutput()
 	if err != nil {
 		t.Fatalf("client-js run failed: %v\n%s", err, out)

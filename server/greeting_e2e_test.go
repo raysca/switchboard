@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"govoice/server/flow"
+	"govoice/server/agent"
 )
 
 const greetingText = "Welcome to Smile Dental, how can I help?"
@@ -17,13 +17,13 @@ func greetingConfig(prompt, greeting string) string {
 	return `{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"` + prompt + `"},"tts":{"provider":"echo","voice":"v"},"greeting":` + string(g) + `}`
 }
 
-func greetingFlow(t *testing.T, r *flowRigE2E, prompt, greeting string) string {
+func greetingAgent(t *testing.T, r *agentRigE2E, prompt, greeting string) string {
 	t.Helper()
-	f, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "Greeter " + prompt, Config: json.RawMessage(greetingConfig(prompt, greeting))})
-	if err != nil || f.Readiness.State != flow.ReadinessReady {
+	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Greeter " + prompt, Config: json.RawMessage(greetingConfig(prompt, greeting))})
+	if err != nil || f.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("flow: %+v err %v", f.Readiness, err)
 	}
-	r.flowID = f.ID
+	r.agentID = f.ID
 	return f.ID
 }
 
@@ -35,8 +35,8 @@ func (c *e2eCall) spoken() int {
 }
 
 func TestTheStartStepsGreetingIsSpokenFirstAndRecordedAsTurnOne(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe())
-	c := r.dial(greetingFlow(t, r, "GREET", greetingText))
+	r := newAgentRigE2E(t, newProbe())
+	c := r.dial(greetingAgent(t, r, "GREET", greetingText))
 	c.waitReplies(greetingText, 1) // nothing was typed: the agent spoke first
 	eventually(t, "the greeting's turn row", func() bool {
 		turns, err := r.s.store.Sessions().Turns(t.Context(), c.sessionID)
@@ -61,9 +61,9 @@ func TestTheStartStepsGreetingIsSpokenFirstAndRecordedAsTurnOne(t *testing.T) {
 	}
 }
 
-func TestAFlowWithoutAGreetingStaysSilentUntilTheCallerSpeaks(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe())
-	f, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "Quiet", Config: json.RawMessage(echoFlowConfig("QUIET"))})
+func TestAnAgentWithoutAGreetingStaysSilentUntilTheCallerSpeaks(t *testing.T) {
+	r := newAgentRigE2E(t, newProbe())
+	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Quiet", Config: json.RawMessage(echoAgentConfig("QUIET"))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,13 +78,13 @@ func TestAFlowWithoutAGreetingStaysSilentUntilTheCallerSpeaks(t *testing.T) {
 	}
 }
 
-func TestADraftCallPlaysTheDraftsGreetingAndThePublishedFlowStaysSilent(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe())
-	f, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "Draft greeting", Config: json.RawMessage(echoFlowConfig("P"))})
+func TestADraftCallPlaysTheDraftsGreetingAndThePublishedAgentStaysSilent(t *testing.T) {
+	r := newAgentRigE2E(t, newProbe())
+	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Draft greeting", Config: json.RawMessage(echoAgentConfig("P"))})
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.flowID = f.ID
+	r.agentID = f.ID
 	code, token, body := issueDraftToken(r, f.ID, greetingConfig("P", greetingText))
 	if code != http.StatusCreated {
 		t.Fatalf("%d %s", code, body)
@@ -99,8 +99,8 @@ func TestADraftCallPlaysTheDraftsGreetingAndThePublishedFlowStaysSilent(t *testi
 }
 
 func TestTheGreetingReleasesTheUntilFirstBotCompleteMute(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe(), func(c *Config) { c.Turn.Mute = []string{"until_first_bot_complete"} })
-	c := r.dial(greetingFlow(t, r, "MUTE", greetingText))
+	r := newAgentRigE2E(t, newProbe(), func(c *Config) { c.Turn.Mute = []string{"until_first_bot_complete"} })
+	c := r.dial(greetingAgent(t, r, "MUTE", greetingText))
 	c.waitReplies(greetingText, 1)
 	time.Sleep(500 * time.Millisecond)
 	c.say("hello")

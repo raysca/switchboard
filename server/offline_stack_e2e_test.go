@@ -30,7 +30,7 @@ func TestOfflineStackCall(t *testing.T) {
 			netpool.Get(o).Close()
 		}
 	})
-	rig := newFlowRigE2E(t, newProbe(), func(c *Config) {
+	rig := newAgentRigE2E(t, newProbe(), func(c *Config) {
 		c.Providers.Offline.STTEndpoint = "ws" + strings.TrimPrefix(base, "http") + "/v1/stt"
 		c.Providers.Offline.TTSEndpoint = base + "/v1/tts"
 		if u := os.Getenv("OFFLINE_LLM_URL"); u != "" {
@@ -38,7 +38,7 @@ func TestOfflineStackCall(t *testing.T) {
 		}
 	})
 	realVAD(t, rig.s)
-	call := rig.dial(offlineFlow(t, rig, offlineFlowConfig))
+	call := rig.dial(offlineAgent(t, rig, offlineAgentConfig))
 	call.sendAudio(callerSpeech(t))
 
 	// Real models are slow on CPU: wait far longer than the hermetic tests do.

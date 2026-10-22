@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"govoice/core"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/transport/ws"
 )
 
@@ -147,25 +147,25 @@ func TestNilCueControllerIsInert(t *testing.T) {
 	c.onRoute(prep())
 }
 
-func TestNewCallCueNeedsFlowCueSoundAndOutput(t *testing.T) {
+func TestNewCallCueNeedsAgentCueSoundAndOutput(t *testing.T) {
 	s := apiTestServer(t)
 	tl := NewSessionTimeline(1, 10, time.Minute)
 	out := ws.NewCueUnderlay()
 	sound := func() ws.Underlay { return nil }
 	s.cues = map[string]func() ws.Underlay{"chime": sound}
-	cue := &flow.RouteCue{Name: "chime"}
+	cue := &agent.RouteCue{Name: "chime"}
 	for name, got := range map[string]*cueController{
 		"no graph":         s.newCallCue(nil, out, tl),
-		"no cue":           s.newCallCue(&CallFlow{}, out, tl),
-		"unknown sound":    s.newCallCue(&CallFlow{Cue: &flow.RouteCue{Name: "nope"}}, out, tl),
-		"no cue output":    s.newCallCue(&CallFlow{Cue: cue}, (*ws.CueUnderlay)(nil), tl),
-		"no player at all": s.newCallCue(&CallFlow{Cue: cue}, nil, tl),
+		"no cue":           s.newCallCue(&CallAgent{}, out, tl),
+		"unknown sound":    s.newCallCue(&CallAgent{Cue: &agent.RouteCue{Name: "nope"}}, out, tl),
+		"no cue output":    s.newCallCue(&CallAgent{Cue: cue}, (*ws.CueUnderlay)(nil), tl),
+		"no player at all": s.newCallCue(&CallAgent{Cue: cue}, nil, tl),
 	} {
 		if got != nil {
 			t.Errorf("%s: want no controller", name)
 		}
 	}
-	if s.newCallCue(&CallFlow{Cue: cue}, out, tl) == nil {
+	if s.newCallCue(&CallAgent{Cue: cue}, out, tl) == nil {
 		t.Fatal("a configured cue with an output must yield a controller")
 	}
 }

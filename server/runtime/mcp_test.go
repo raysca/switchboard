@@ -11,7 +11,7 @@ import (
 
 	"govoice/core"
 	coretools "govoice/core/tools"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/server/mcp"
 	"govoice/server/storage"
 )
@@ -95,15 +95,15 @@ func TestSessionUsesCapturedMCPWrapperAfterDisableAndRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	flows := flow.NewService(store, allAvailable{})
-	created, err := flows.Create(ctx, flow.CreateRequest{Name: "support", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`)})
+	agents := agent.NewService(store, allAvailable{})
+	created, err := agents.Create(ctx, agent.CreateRequest{Name: "support", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := flows.SetMCPTools(ctx, created.ID, []flow.ToolSelection{{ServerID: server.ID, RemoteName: "lookup", SchemaHash: discovery.Tools[0].SchemaHash, Required: true}}); err != nil {
+	if _, err := agents.SetMCPTools(ctx, created.ID, []agent.ToolSelection{{ServerID: server.ID, RemoteName: "lookup", SchemaHash: discovery.Tools[0].SchemaHash, Required: true}}); err != nil {
 		t.Fatal(err)
 	}
-	session, err := StartSession(ctx, flows, mcpSvc, created.ID, "", "")
+	session, err := StartSession(ctx, agents, mcpSvc, created.ID, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestSessionUsesCapturedMCPWrapperAfterDisableAndRefresh(t *testing.T) {
 	if _, err := store.MCP().Server(ctx, server.ID); err == nil {
 		t.Fatal("pending delete did not complete at session close")
 	}
-	pinned, err := flows.ResolveSession(ctx, session.Pin.ID)
+	pinned, err := agents.ResolveSession(ctx, session.Pin.ID)
 	if err != nil || len(pinned.MCPTools) != 1 || pinned.MCPTools[0].SchemaHash != discovery.Tools[0].SchemaHash || string(pinned.MCPTools[0].SchemaJSON) != string(definition.InputSchema) {
 		t.Fatalf("historical snapshot=%+v err=%v", pinned, err)
 	}
@@ -205,12 +205,12 @@ func TestToolLoopPreservesMCPCallIdentityAndAsyncTraceParent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	flows := flow.NewService(store, allAvailable{})
-	created, err := flows.Create(ctx, flow.CreateRequest{Name: "trace", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`)})
+	agents := agent.NewService(store, allAvailable{})
+	created, err := agents.Create(ctx, agent.CreateRequest{Name: "trace", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := flows.SetMCPTools(ctx, created.ID, []flow.ToolSelection{{ServerID: server.ID, RemoteName: "lookup", SchemaHash: discovery.Tools[0].SchemaHash, Required: true}}); err != nil {
+	if _, err := agents.SetMCPTools(ctx, created.ID, []agent.ToolSelection{{ServerID: server.ID, RemoteName: "lookup", SchemaHash: discovery.Tools[0].SchemaHash, Required: true}}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -219,7 +219,7 @@ func TestToolLoopPreservesMCPCallIdentityAndAsyncTraceParent(t *testing.T) {
 		t.Fatal("discovery span was not recorded")
 	}
 	<-trace.parents
-	session, err := StartSession(ctx, flows, mcpSvc, created.ID, "", "")
+	session, err := StartSession(ctx, agents, mcpSvc, created.ID, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +273,7 @@ func TestToolLoopPreservesMCPCallIdentityAndAsyncTraceParent(t *testing.T) {
 // allAvailable is an environment where every provider service can run.
 type allAvailable struct{}
 
-func (allAvailable) Check(string, string) flow.Unavailable { return flow.Unavailable{} }
+func (allAvailable) Check(string, string) agent.Unavailable { return agent.Unavailable{} }
 
 func TestExecutorReportsTheFailureCategoryAndTheToolsMessage(t *testing.T) {
 	ctx := context.Background()
@@ -295,15 +295,15 @@ func TestExecutorReportsTheFailureCategoryAndTheToolsMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	flows := flow.NewService(store, allAvailable{})
-	created, err := flows.Create(ctx, flow.CreateRequest{Name: "support", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`)})
+	agents := agent.NewService(store, allAvailable{})
+	created, err := agents.Create(ctx, agent.CreateRequest{Name: "support", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := flows.SetMCPTools(ctx, created.ID, []flow.ToolSelection{{ServerID: server.ID, RemoteName: "lookup", SchemaHash: discovery.Tools[0].SchemaHash, Required: true}}); err != nil {
+	if _, err := agents.SetMCPTools(ctx, created.ID, []agent.ToolSelection{{ServerID: server.ID, RemoteName: "lookup", SchemaHash: discovery.Tools[0].SchemaHash, Required: true}}); err != nil {
 		t.Fatal(err)
 	}
-	session, err := StartSession(ctx, flows, mcpSvc, created.ID, "", "")
+	session, err := StartSession(ctx, agents, mcpSvc, created.ID, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

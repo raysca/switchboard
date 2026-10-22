@@ -200,13 +200,13 @@ func TestSendDTMFToolOnEveryStep(t *testing.T) {
 		mu.Unlock()
 		return &coretest.PassthroughProcessor{}, nil
 	})
-	graph := &CallFlow{Start: "front"}
+	graph := &CallAgent{Start: "front"}
 	graph.Resolve = func(context.Context, string) (StepSpec, error) {
 		return StepSpec{Name: "Sales", LLM: StageSpec{Provider: "google", SystemPrompt: "SALES", Tools: []core.ToolDefinition{{Name: "lookup"}}},
 			LLMFallbacks: []StageSpec{{Provider: "google", SystemPrompt: "SALES"}},
 			TTS:          StageSpec{Provider: "google"}}, nil
 	}
-	call := CallSpec{STT: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"}, Flow: graph,
+	call := CallSpec{STT: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"}, Agent: graph,
 		LLM:          StageSpec{Provider: "google", SystemPrompt: "FRONT"},
 		LLMFallbacks: []StageSpec{{Provider: "google", SystemPrompt: "FRONT"}}}
 	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())

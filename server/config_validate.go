@@ -139,7 +139,7 @@ func validateLimits(cfg *Config) error {
 	if cfg.Limits.MaxSessionsPerPrincipal <= 0 {
 		return errors.New("max_sessions_per_principal must be > 0")
 	}
-	if cfg.Limits.MaxSessionsPerFlow < 0 || cfg.Limits.StartRatePerPrincipal < 0 {
+	if cfg.Limits.MaxSessionsPerAgent < 0 || cfg.Limits.StartRatePerPrincipal < 0 {
 		return errors.New("max_sessions_per_flow and start_rate_per_principal must be >= 0")
 	}
 	if cfg.Limits.StartRatePerPrincipal > 0 && cfg.Limits.StartBurstPerPrincipal < 1 {
@@ -206,7 +206,7 @@ func validateTurn(cfg *Config) error {
 	if cfg.Turn.MaxMute < 0 {
 		return errors.New("turn.max_mute must be >= 0")
 	}
-	if !cfg.Turn.Manager && cfg.Turn.Analyzer.ForFlows {
+	if !cfg.Turn.Manager && cfg.Turn.Analyzer.ForAgents {
 		return errors.New("turn.analyzer.for_flows needs turn.manager: true")
 	}
 	if !cfg.Turn.Manager && (len(cfg.Turn.Mute) > 0 || cfg.Turn.MaxMute > 0) {

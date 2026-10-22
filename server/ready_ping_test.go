@@ -10,7 +10,7 @@ import (
 
 // Concurrent /ready probes share one in-flight store ping.
 func TestStoreHealthySharesOnePing(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe())
+	r := newAgentRigE2E(t, newProbe())
 	var pings atomic.Int32
 	r.s.pingDB = func(context.Context) error {
 		pings.Add(1)
@@ -35,7 +35,7 @@ func TestStoreHealthySharesOnePing(t *testing.T) {
 
 // No lock is held while the ping is in flight.
 func TestStoreHealthyHoldsNoLockDuringPing(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe())
+	r := newAgentRigE2E(t, newProbe())
 	in, release := make(chan struct{}), make(chan struct{})
 	r.s.pingDB = func(context.Context) error { close(in); <-release; return nil }
 	done := make(chan bool)

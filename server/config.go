@@ -97,7 +97,7 @@ type Config struct {
 		MaxSessions             int           `yaml:"max_sessions"`
 		MaxSessionsPerPrincipal int           `yaml:"max_sessions_per_principal"`
 		MaxSessionsPerIP        int           `yaml:"max_sessions_per_ip"`
-		MaxSessionsPerFlow      int           `yaml:"max_sessions_per_flow"`     // 0 = unlimited
+		MaxSessionsPerAgent     int           `yaml:"max_sessions_per_flow"`     // 0 = unlimited
 		StartRatePerPrincipal   float64       `yaml:"start_rate_per_principal"`  // session starts/sec per principal; 0 = unlimited
 		StartBurstPerPrincipal  int           `yaml:"start_burst_per_principal"` // bucket size; required >= 1 when rate > 0
 		HandshakeRatePerIP      float64       `yaml:"handshake_rate_per_ip"`     // WebSocket upgrades/sec per source IP (burst = max(5, 2x)); default 20
@@ -186,9 +186,9 @@ type Config struct {
 		// gets unless its flow picks another or none; empty (default) means none. A flow can only pick
 		// a name from this map, and only while AllowFlowBackground is true (default false; true in
 		// the development profile). See docs/audio-filters.md.
-		Backgrounds         map[string]CueConfig `yaml:"backgrounds"`
-		BackgroundDefault   string               `yaml:"background_default"`
-		AllowFlowBackground bool                 `yaml:"allow_flow_background"`
+		Backgrounds          map[string]CueConfig `yaml:"backgrounds"`
+		BackgroundDefault    string               `yaml:"background_default"`
+		AllowAgentBackground bool                 `yaml:"allow_flow_background"`
 		// Cues are named sounds a routed flow plays while the call is between
 		// steps (route_cue). See docs/audio-filters.md.
 		Cues map[string]CueConfig `yaml:"cues"`
@@ -333,8 +333,8 @@ func (c *Config) TurnAnalyzerMode() string {
 
 // vadStop is the call's VAD stop: the flow override (ms > 0), else vad.stop_ms, rounded up to
 // whole 32 ms chunks like the VAD processor.
-func (c *Config) vadStop(flowMS int) time.Duration {
-	pc := c.VADProcessorConfigForStopMS(flowMS)
+func (c *Config) vadStop(agentMS int) time.Duration {
+	pc := c.VADProcessorConfigForStopMS(agentMS)
 	return time.Duration(pc.StopChunks*vad.ChunkSamples*1000/vad.SampleRate) * time.Millisecond
 }
 
@@ -395,20 +395,20 @@ type TurnConfig struct {
 		Budget    time.Duration `yaml:"budget"`    // per-verdict latency budget, default 150ms
 		// ForFlows loads the model although turn.stop does not list turn-analyzer, so a flow can choose
 		// end_of_turn "smart" without making every call smart. Off by default: no worker, no model memory.
-		ForFlows bool `yaml:"for_flows"`
+		ForAgents bool `yaml:"for_flows"`
 	} `yaml:"analyzer"`
 }
 
 // LoadsSmartTurn reports whether the server loads the Smart Turn model at start-up: its own default
 // chain uses it, or flows may choose it (turn.analyzer.for_flows).
 func (c *Config) LoadsSmartTurn() bool {
-	return slices.Contains(c.Turn.Stop, "turn-analyzer") || c.Turn.Analyzer.ForFlows
+	return slices.Contains(c.Turn.Stop, "turn-analyzer") || c.Turn.Analyzer.ForAgents
 }
 
 // sttP99 resolves the primary STT provider's p99: flow override, server map, built-in table.
-func (c *Config) sttP99(provider string, flowMS int) time.Duration {
-	if flowMS > 0 {
-		return time.Duration(flowMS) * time.Millisecond
+func (c *Config) sttP99(provider string, agentMS int) time.Duration {
+	if agentMS > 0 {
+		return time.Duration(agentMS) * time.Millisecond
 	}
 	if d, ok := c.Turn.STTP99[provider]; ok && d > 0 {
 		return d

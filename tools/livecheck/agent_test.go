@@ -67,12 +67,12 @@ func TestBuildPlanCoversEveryScenario(t *testing.T) {
 	}
 }
 
-func TestFlowConfigHasEntryWithSTTAndASalesStepWithout(t *testing.T) {
+func TestAgentConfigHasEntryWithSTTAndASalesStepWithout(t *testing.T) {
 	p := Profile{Name: "x"}
 	p.Stages.STT = Stage{Provider: "xai"}
 	p.Stages.LLM = Stage{Provider: "xai", Model: "grok-3-mini"}
 	p.Stages.TTS = Stage{Provider: "xai", Voice: "eve"}
-	cfg := routedFlowConfig(p)
+	cfg := routedAgentConfig(p)
 	steps := cfg["steps"].([]map[string]any)
 	if cfg["start"] != "front" || len(steps) != 2 {
 		t.Fatalf("start=%v steps=%d", cfg["start"], len(steps))
@@ -85,7 +85,7 @@ func TestFlowConfigHasEntryWithSTTAndASalesStepWithout(t *testing.T) {
 	if _, ok := sales["stt"]; ok {
 		t.Fatal("only the entry node may set STT")
 	}
-	if !strings.Contains(sales["llm"].(map[string]any)["system_prompt"].(string), flowMarker) {
+	if !strings.Contains(sales["llm"].(map[string]any)["system_prompt"].(string), agentMarker) {
 		t.Fatal("the sales prompt must carry the marker word S14 looks for")
 	}
 	if front["llm"].(map[string]any)["system_prompt"] == sales["llm"].(map[string]any)["system_prompt"] {

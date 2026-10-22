@@ -1,4 +1,4 @@
-package flow
+package agent
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 // toolsRig is a published flow plus an MCP server offering "echo" and "lookup".
 type toolsRig struct {
 	svc    *Service
-	flow   Flow
+	agent  Agent
 	server string
 	hashes map[string]string
 }
@@ -37,7 +37,7 @@ func newToolsRig(t *testing.T) *toolsRig {
 	for _, tl := range d.Tools {
 		hashes[tl.RemoteName] = tl.SchemaHash
 	}
-	return &toolsRig{svc: svc, flow: publishedFlow(t, svc, "P"), server: m.ID, hashes: hashes}
+	return &toolsRig{svc: svc, agent: publishedAgent(t, svc, "P"), server: m.ID, hashes: hashes}
 }
 
 func (r *toolsRig) sel(name string) ToolSelection {
@@ -57,7 +57,7 @@ func TestUpdateCarriesTheToolSelectionAndPublishesOneVersion(t *testing.T) {
 	r := newToolsRig(t)
 	ctx := context.Background()
 	tools := []ToolSelection{r.sel("echo")}
-	got, err := r.svc.Update(ctx, r.flow.ID, UpdateRequest{Config: stepsConfig(r.server + "/echo"), MCPTools: &tools})
+	got, err := r.svc.Update(ctx, r.agent.ID, UpdateRequest{Config: stepsConfig(r.server + "/echo"), MCPTools: &tools})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,15 +69,15 @@ func TestUpdateCarriesTheToolSelectionAndPublishesOneVersion(t *testing.T) {
 func TestUpdateWithoutASelectionKeepsTheCurrentOneAndItsRule(t *testing.T) {
 	r := newToolsRig(t)
 	ctx := context.Background()
-	if _, err := r.svc.Update(ctx, r.flow.ID, UpdateRequest{Config: stepsConfig(r.server + "/echo"), MCPTools: &[]ToolSelection{r.sel("echo")}}); err != nil {
+	if _, err := r.svc.Update(ctx, r.agent.ID, UpdateRequest{Config: stepsConfig(r.server + "/echo"), MCPTools: &[]ToolSelection{r.sel("echo")}}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := r.svc.Update(ctx, r.flow.ID, UpdateRequest{Config: stepsConfig(r.server + "/echo")})
+	got, err := r.svc.Update(ctx, r.agent.ID, UpdateRequest{Config: stepsConfig(r.server + "/echo")})
 	if err != nil || len(got.Version.MCPTools) != 1 {
 		t.Fatalf("keep: %+v err %v", got.Version, err)
 	}
 	// A step may not list a tool the flow has not selected.
-	if _, err := r.svc.Update(ctx, r.flow.ID, UpdateRequest{Config: stepsConfig(r.server + "/lookup")}); err == nil || !strings.Contains(err.Error(), "has not selected") {
+	if _, err := r.svc.Update(ctx, r.agent.ID, UpdateRequest{Config: stepsConfig(r.server + "/lookup")}); err == nil || !strings.Contains(err.Error(), "has not selected") {
 		t.Fatalf("an unselected step tool: %v", err)
 	}
 }
@@ -85,19 +85,19 @@ func TestUpdateWithoutASelectionKeepsTheCurrentOneAndItsRule(t *testing.T) {
 func TestUpdateRefusesASelectionThatDropsAToolAStillUses(t *testing.T) {
 	r := newToolsRig(t)
 	ctx := context.Background()
-	if _, err := r.svc.Update(ctx, r.flow.ID, UpdateRequest{Config: stepsConfig(r.server + "/echo"), MCPTools: &[]ToolSelection{r.sel("echo")}}); err != nil {
+	if _, err := r.svc.Update(ctx, r.agent.ID, UpdateRequest{Config: stepsConfig(r.server + "/echo"), MCPTools: &[]ToolSelection{r.sel("echo")}}); err != nil {
 		t.Fatal(err)
 	}
 	none := []ToolSelection{}
-	if _, err := r.svc.Update(ctx, r.flow.ID, UpdateRequest{Config: stepsConfig(r.server + "/echo"), MCPTools: &none}); err == nil || !strings.Contains(err.Error(), "has not selected") {
+	if _, err := r.svc.Update(ctx, r.agent.ID, UpdateRequest{Config: stepsConfig(r.server + "/echo"), MCPTools: &none}); err == nil || !strings.Contains(err.Error(), "has not selected") {
 		t.Fatalf("got %v", err)
 	}
-	cur, _ := r.svc.Get(ctx, r.flow.ID)
+	cur, _ := r.svc.Get(ctx, r.agent.ID)
 	if cur.Version.Number != 2 {
 		t.Fatalf("a rejected update published version %d", cur.Version.Number)
 	}
 	// Dropping the tool from the steps too clears the selection.
-	got, err := r.svc.Update(ctx, r.flow.ID, UpdateRequest{Config: stepsConfig(), MCPTools: &none})
+	got, err := r.svc.Update(ctx, r.agent.ID, UpdateRequest{Config: stepsConfig(), MCPTools: &none})
 	if err != nil || len(got.Version.MCPTools) != 0 {
 		t.Fatalf("clear: %+v err %v", got.Version, err)
 	}
@@ -107,7 +107,7 @@ func TestUpdateRefusesAStaleHash(t *testing.T) {
 	r := newToolsRig(t)
 	stale := r.sel("echo")
 	stale.SchemaHash = "0000"
-	_, err := r.svc.Update(context.Background(), r.flow.ID, UpdateRequest{Config: stepsConfig(), MCPTools: &[]ToolSelection{stale}})
+	_, err := r.svc.Update(context.Background(), r.agent.ID, UpdateRequest{Config: stepsConfig(), MCPTools: &[]ToolSelection{stale}})
 	if !errors.Is(err, storage.ErrInvalidToolSelection) {
 		t.Fatalf("got %v", err)
 	}
@@ -115,11 +115,11 @@ func TestUpdateRefusesAStaleHash(t *testing.T) {
 
 func TestASelectionWithoutAConfigIsRefusedNotSilentlyDropped(t *testing.T) {
 	r := newToolsRig(t)
-	_, err := r.svc.Update(context.Background(), r.flow.ID, UpdateRequest{MCPTools: &[]ToolSelection{r.sel("lookup")}})
+	_, err := r.svc.Update(context.Background(), r.agent.ID, UpdateRequest{MCPTools: &[]ToolSelection{r.sel("lookup")}})
 	if !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("got %v", err)
 	}
-	cur, _ := r.svc.Get(context.Background(), r.flow.ID)
+	cur, _ := r.svc.Get(context.Background(), r.agent.ID)
 	if cur.Version.Number != 1 {
 		t.Fatalf("a refused update published version %d", cur.Version.Number)
 	}
@@ -133,10 +133,10 @@ func TestMalformedSelectionsAreTheCallersMistake(t *testing.T) {
 	notAnID := []ToolSelection{{ServerID: "not-an-id", RemoteName: "echo", SchemaHash: "h"}}
 	for name, sels := range map[string][]ToolSelection{"duplicate": dup, "empty name": empty, "bad server id": notAnID} {
 		sels := sels
-		if _, err := r.svc.Update(ctx, r.flow.ID, UpdateRequest{Config: stepsConfig(), MCPTools: &sels}); !errors.Is(err, storage.ErrInvalidToolSelection) {
+		if _, err := r.svc.Update(ctx, r.agent.ID, UpdateRequest{Config: stepsConfig(), MCPTools: &sels}); !errors.Is(err, storage.ErrInvalidToolSelection) {
 			t.Errorf("update %s: %v", name, err)
 		}
-		if _, _, err := r.svc.ResolveDraft(ctx, r.flow.ID, stepsConfig(), &sels); !errors.Is(err, storage.ErrInvalidToolSelection) {
+		if _, _, err := r.svc.ResolveDraft(ctx, r.agent.ID, stepsConfig(), &sels); !errors.Is(err, storage.ErrInvalidToolSelection) {
 			t.Errorf("draft %s: %v", name, err)
 		}
 	}

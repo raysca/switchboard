@@ -1247,11 +1247,11 @@ func (c *Connection) Context() context.Context { return c.ctx }
 func (c *Connection) PushToTalk() bool { return c.rtvi.PushToTalk() }
 
 // FlowID returns the stored flow the token authorizes this call to run.
-func (c *Connection) FlowID() string {
+func (c *Connection) AgentID() string {
 	if c.claims == nil {
 		return ""
 	}
-	return c.claims.FlowID
+	return c.claims.AgentID
 }
 
 // ID returns the unique connection identifier.

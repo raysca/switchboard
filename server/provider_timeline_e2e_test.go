@@ -23,7 +23,7 @@ func (flakyLLM) GenerateStream(context.Context, string, string, []core.Message, 
 // The real Google processor against a dead backend, with the echo breaker the server shares: one turn of five
 // attempts retries four times and opens the circuit (threshold 5), and the call's timeline says both.
 func TestCallBehaviorTimelineShowsProviderRetriesAndTheCircuitOpening(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe())
+	r := newAgentRigE2E(t, newProbe())
 	healthy := r.s.registry.factories["echo.llm"]
 	r.s.registry.Register("echo.llm", func(cfg *Config, spec StageSpec) (core.Processor, error) {
 		if spec.SystemPrompt != "Broken" {
@@ -48,10 +48,10 @@ func TestCallBehaviorTimelineShowsProviderRetriesAndTheCircuitOpening(t *testing
 		})
 		return ids
 	}
-	c := r.dial(behaviorFlow(t, r, "Broken", "brokenmodel", ``))
+	c := r.dial(behaviorAgent(t, r, "Broken", "brokenmodel", ``))
 	brokenID := activeIDs(1)[0]
 	// A bystander call shares the echo LLM circuit but its own model works.
-	bystander := r.dial(behaviorFlow(t, r, "Bystander", "bystandervoice", ``))
+	bystander := r.dial(behaviorAgent(t, r, "Bystander", "bystandervoice", ``))
 	var bystanderID uint64
 	for _, id := range activeIDs(2) {
 		if id != brokenID {

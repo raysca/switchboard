@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"govoice/core"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/transport/ws"
 )
 
@@ -44,7 +44,7 @@ func backgroundServer(t *testing.T, allow bool, def string) *Server {
 		"loud":  {File: constWAV(t, "loud", 20000), GainDB: ptrF(0)},
 		"quiet": {File: constWAV(t, "quiet", 20000), GainDB: ptrF(-20)},
 	}
-	c.Audio.BackgroundDefault, c.Audio.AllowFlowBackground = def, allow
+	c.Audio.BackgroundDefault, c.Audio.AllowAgentBackground = def, allow
 	m, err := loadBackgrounds(c, 24000)
 	if err != nil {
 		t.Fatal(err)
@@ -52,13 +52,13 @@ func backgroundServer(t *testing.T, allow bool, def string) *Server {
 	return &Server{cfg: c, backgrounds: m, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 }
 
-func TestABackgroundIsChosenFromTheFlowThenTheServerDefaultAndNeverFromAPath(t *testing.T) {
+func TestABackgroundIsChosenFromTheAgentThenTheServerDefaultAndNeverFromAPath(t *testing.T) {
 	s := backgroundServer(t, true, "quiet")
 	if u := s.backgroundFor(nil); u == nil || !near(level(t, u), 2000) { // -20 dB of 20000
 		t.Fatalf("no flow settings: the server default (quiet, ~2000)")
 	}
-	pick := func(name string, gain *float64) *flow.AudioSettings {
-		return &flow.AudioSettings{Background: &flow.BackgroundSettings{Name: name, GainDB: gain}}
+	pick := func(name string, gain *float64) *agent.AudioSettings {
+		return &agent.AudioSettings{Background: &agent.BackgroundSettings{Name: name, GainDB: gain}}
 	}
 	if u := s.backgroundFor(pick("loud", nil)); u == nil || !near(level(t, u), 20000) {
 		t.Fatal("the flow's sound with the catalogue's level")
@@ -66,7 +66,7 @@ func TestABackgroundIsChosenFromTheFlowThenTheServerDefaultAndNeverFromAPath(t *
 	if u := s.backgroundFor(pick("loud", ptrF(-20))); u == nil || !near(level(t, u), 2000) {
 		t.Fatal("the flow's own gain_db overrides the catalogue's")
 	}
-	if u := s.backgroundFor(&flow.AudioSettings{OutputGainDB: ptrF(-3)}); u == nil || !near(level(t, u), 2000) {
+	if u := s.backgroundFor(&agent.AudioSettings{OutputGainDB: ptrF(-3)}); u == nil || !near(level(t, u), 2000) {
 		t.Fatal("a flow that sets other audio members keeps the server default background")
 	}
 	for _, bad := range []string{"../../etc/passwd", "nope"} {
@@ -77,18 +77,18 @@ func TestABackgroundIsChosenFromTheFlowThenTheServerDefaultAndNeverFromAPath(t *
 	if u := s.backgroundFor(pick("", nil)); u != nil {
 		t.Fatal("a flow that asks for none plays none, even when the server has a default")
 	}
-	if none := backgroundServer(t, true, ""); none.backgroundFor(nil) != nil || none.backgroundFor(&flow.AudioSettings{OutputGainDB: ptrF(0)}) != nil {
+	if none := backgroundServer(t, true, ""); none.backgroundFor(nil) != nil || none.backgroundFor(&agent.AudioSettings{OutputGainDB: ptrF(0)}) != nil {
 		t.Fatal("no default and no flow choice: no background")
 	}
 }
 
-func TestTheCeilingOffIgnoresAFlowsBackgroundAtCallTime(t *testing.T) {
+func TestTheCeilingOffIgnoresAnAgentsBackgroundAtCallTime(t *testing.T) {
 	s := backgroundServer(t, false, "quiet")
-	u := s.backgroundFor(&flow.AudioSettings{Background: &flow.BackgroundSettings{Name: "loud"}})
+	u := s.backgroundFor(&agent.AudioSettings{Background: &agent.BackgroundSettings{Name: "loud"}})
 	if u == nil || !near(level(t, u), 2000) {
 		t.Fatal("with allow_flow_background off the flow's choice is ignored and the server default plays")
 	}
-	if none := backgroundServer(t, false, ""); none.backgroundFor(&flow.AudioSettings{Background: &flow.BackgroundSettings{Name: "loud"}}) != nil {
+	if none := backgroundServer(t, false, ""); none.backgroundFor(&agent.AudioSettings{Background: &agent.BackgroundSettings{Name: "loud"}}) != nil {
 		t.Fatal("ceiling off and no default: silence")
 	}
 }
@@ -99,7 +99,7 @@ func near(got, want int16) bool { return got >= want-10 && got <= want+10 }
 // the sound already playing (each SetBackground restarts it) and restores the start step's resolved bed.
 func TestRouteBackgroundSwitchesOnArrivalKeepsOtherwiseAndSkipsTheSame(t *testing.T) {
 	s := backgroundServer(t, true, "quiet") // the start step names none: it plays the default, ~2000
-	g := &CallFlow{Start: "front", Backgrounds: map[string]*flow.BackgroundSettings{
+	g := &CallAgent{Start: "front", Backgrounds: map[string]*agent.BackgroundSettings{
 		"sales": {Name: "loud"}, "shop": {Name: "loud"}, "mute": {Name: ""},
 	}}
 	var sets []ws.Underlay
@@ -137,7 +137,7 @@ func TestRouteBackgroundSwitchesOnArrivalKeepsOtherwiseAndSkipsTheSame(t *testin
 	active("mute")
 	want(3, "none again is not a switch")
 
-	if s.routeBackground(&CallFlow{Start: "front"}, nil, func(ws.Underlay) {}) != nil {
+	if s.routeBackground(&CallAgent{Start: "front"}, nil, func(ws.Underlay) {}) != nil {
 		t.Fatal("no step names a sound: nothing to watch")
 	}
 }
@@ -147,9 +147,9 @@ func TestRouteBackgroundSwitchesOnArrivalKeepsOtherwiseAndSkipsTheSame(t *testin
 func TestARefusedStepBackgroundKeepsTheCurrentSoundInsteadOfTheServerDefault(t *testing.T) {
 	for name, s := range map[string]*Server{"ceiling off": backgroundServer(t, false, "quiet"), "sound dropped": backgroundServer(t, true, "quiet")} {
 		t.Run(name, func(t *testing.T) {
-			g := &CallFlow{Start: "front", Backgrounds: map[string]*flow.BackgroundSettings{"b": {Name: "loud"}, "gone": {Name: "nope"}}}
+			g := &CallAgent{Start: "front", Backgrounds: map[string]*agent.BackgroundSettings{"b": {Name: "loud"}, "gone": {Name: "nope"}}}
 			var sets int
-			hook := s.routeBackground(g, &flow.AudioSettings{Background: &flow.BackgroundSettings{Name: ""}}, func(ws.Underlay) { sets++ })
+			hook := s.routeBackground(g, &agent.AudioSettings{Background: &agent.BackgroundSettings{Name: ""}}, func(ws.Underlay) { sets++ })
 			hook(core.RouteEvent{Kind: core.RouteActive, To: "gone"})
 			if name == "ceiling off" {
 				hook(core.RouteEvent{Kind: core.RouteActive, To: "b"})

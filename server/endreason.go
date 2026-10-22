@@ -47,8 +47,8 @@ func reasonFromEnd(reason string) string {
 		return storage.EndSilentCaller
 	case core.IdleReasonBot:
 		return storage.EndAgentStuck
-	case EndReasonFlow:
-		return storage.EndedByFlow
+	case EndReasonAgent:
+		return storage.EndedByAgent
 	}
 	return storage.EndCallerHungUp
 }

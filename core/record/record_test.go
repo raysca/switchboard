@@ -77,7 +77,7 @@ func newRec(t *testing.T, cfg Config) (*Recorder, *clock, string) {
 	}
 	c := newClock()
 	cfg.Now = c.Now
-	return New(s, Meta{ID: "a1-7-1", SessionID: "7", FlowID: "a1", CallID: "7"}, cfg), c, dir
+	return New(s, Meta{ID: "a1-7-1", SessionID: "7", AgentID: "a1", CallID: "7"}, cfg), c, dir
 }
 
 func nonzero(s []int16, from, to int) bool {
@@ -120,7 +120,7 @@ func TestAlignmentAndSilencePadding(t *testing.T) {
 	}
 	var sc Sidecar
 	b, _ := os.ReadFile(filepath.Join(dir, "a1-7-1.json"))
-	if err := json.Unmarshal(b, &sc); err != nil || sc.SessionID != "7" || sc.FlowID != "a1" || sc.Duration != 1100 || len(sc.Turns) != 1 || sc.Format.Layout != "L=user,R=bot" {
+	if err := json.Unmarshal(b, &sc); err != nil || sc.SessionID != "7" || sc.AgentID != "a1" || sc.Duration != 1100 || len(sc.Turns) != 1 || sc.Format.Layout != "L=user,R=bot" {
 		t.Fatalf("sidecar %+v err=%v", sc, err)
 	}
 }

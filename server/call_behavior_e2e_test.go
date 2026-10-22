@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/server/storage"
 )
 
@@ -18,17 +18,17 @@ import (
 // WebSocket calls, flows that set (or do not set) idle and audio. The echo TTS speaks silence, so what
 // was said is read from the voice's synthesis units and audio energy is the background's.
 
-func behaviorFlow(t *testing.T, r *flowRigE2E, name, voice, extra string) string {
+func behaviorAgent(t *testing.T, r *agentRigE2E, name, voice, extra string) string {
 	t.Helper()
 	cfg := `{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"` + name + `"},"tts":{"provider":"echo","voice":"` + voice + `"}` + extra + `}`
-	f, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: name, Config: json.RawMessage(cfg)})
-	if err != nil || f.Readiness.State != flow.ReadinessReady {
+	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: name, Config: json.RawMessage(cfg)})
+	if err != nil || f.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("%s: %+v err %v", name, f.Readiness, err)
 	}
 	return f.ID
 }
 
-func (r *flowRigE2E) spokenBy(voice, want string) bool {
+func (r *agentRigE2E) spokenBy(voice, want string) bool {
 	for _, s := range r.probe.sayings(voice) {
 		if strings.Contains(s, want) {
 			return true
@@ -62,10 +62,10 @@ func serverIdle(timeout time.Duration, prompt string) func(*Config) {
 	}
 }
 
-func TestCallBehaviorAFlowsQuietCallerSettingsPromptThenEndTheCall(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe(), serverIdle(time.Minute, "server prompt"))
-	quiet := behaviorFlow(t, r, "Quiet", "quietvoice", `,"idle":{"user_timeout_ms":1000,"max_prompts":1,"prompt":"Still there for the test?","prompt_mode":"say","goodbye":"Goodbye for now."}`)
-	plain := behaviorFlow(t, r, "Plain", "plainvoice", ``)
+func TestCallBehaviorAnAgentsQuietCallerSettingsPromptThenEndTheCall(t *testing.T) {
+	r := newAgentRigE2E(t, newProbe(), serverIdle(time.Minute, "server prompt"))
+	quiet := behaviorAgent(t, r, "Quiet", "quietvoice", `,"idle":{"user_timeout_ms":1000,"max_prompts":1,"prompt":"Still there for the test?","prompt_mode":"say","goodbye":"Goodbye for now."}`)
+	plain := behaviorAgent(t, r, "Plain", "plainvoice", ``)
 	c := r.dial(quiet)
 	c2 := r.dial(plain)
 	eventually(t, "the exact prompt", func() bool { return r.spokenBy("quietvoice", "Still there for the test?") })
@@ -84,9 +84,9 @@ func TestCallBehaviorAFlowsQuietCallerSettingsPromptThenEndTheCall(t *testing.T)
 	}
 }
 
-func TestCallBehaviorAFlowCanSwitchQuietCallerHandlingOff(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe(), serverIdle(time.Second, "server prompt"))
-	off := behaviorFlow(t, r, "Off", "offvoice", `,"idle":{"user_timeout_ms":0}`)
+func TestCallBehaviorAnAgentCanSwitchQuietCallerHandlingOff(t *testing.T) {
+	r := newAgentRigE2E(t, newProbe(), serverIdle(time.Second, "server prompt"))
+	off := behaviorAgent(t, r, "Off", "offvoice", `,"idle":{"user_timeout_ms":0}`)
 	c := r.dial(off)
 	time.Sleep(2500 * time.Millisecond)
 	if n := len(r.probe.sayings("offvoice")); n != 0 || c.ended() {
@@ -94,16 +94,16 @@ func TestCallBehaviorAFlowCanSwitchQuietCallerHandlingOff(t *testing.T) {
 	}
 }
 
-func TestCallBehaviorAFlowWithoutIdleSettingsUsesTheServers(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe(), serverIdle(time.Second, "server prompt"))
-	plain := behaviorFlow(t, r, "Plain", "plainvoice", ``)
+func TestCallBehaviorAnAgentWithoutIdleSettingsUsesTheServers(t *testing.T) {
+	r := newAgentRigE2E(t, newProbe(), serverIdle(time.Second, "server prompt"))
+	plain := behaviorAgent(t, r, "Plain", "plainvoice", ``)
 	r.dial(plain)
 	eventually(t, "the server's prompt", func() bool { return r.spokenBy("plainvoice", "server prompt") })
 }
 
 func TestCallBehaviorADraftCallUsesTheDraftsQuietCallerSettings(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe(), func(c *Config) { c.Idle.UserTimeout = 0 })
-	id := behaviorFlow(t, r, "Published", "pubvoice", ``)
+	r := newAgentRigE2E(t, newProbe(), func(c *Config) { c.Idle.UserTimeout = 0 })
+	id := behaviorAgent(t, r, "Published", "pubvoice", ``)
 	draft := `{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"D"},"tts":{"provider":"echo","voice":"draftvoice"},` +
 		`"idle":{"user_timeout_ms":1000,"max_prompts":1,"prompt":"Draft prompt.","prompt_mode":"say"}}`
 	code, token, body := issueDraftToken(r, id, draft)
@@ -119,15 +119,15 @@ func TestCallBehaviorADraftCallUsesTheDraftsQuietCallerSettings(t *testing.T) {
 	}
 }
 
-func TestCallBehaviorAFlowsBackgroundSoundIsHeardAtItsLevelAndAnotherFlowsIsNot(t *testing.T) {
+func TestCallBehaviorAnAgentsBackgroundSoundIsHeardAtItsLevelAndAnotherAgentsIsNot(t *testing.T) {
 	loud, soft := constWAV(t, "loud", 20000), constWAV(t, "soft", 20000)
-	r := newFlowRigE2E(t, newProbe(), func(c *Config) {
+	r := newAgentRigE2E(t, newProbe(), func(c *Config) {
 		c.Idle.UserTimeout = 0
 		c.Audio.Backgrounds = map[string]CueConfig{"loud": {File: loud, GainDB: ptrF(0)}, "soft": {File: soft, GainDB: ptrF(-30)}}
 	})
-	withLoud := r.dial(behaviorFlow(t, r, "A", "a", `,"audio":{"background":{"name":"loud"}}`))
-	withSoftened := r.dial(behaviorFlow(t, r, "B", "b", `,"audio":{"background":{"name":"loud","gain_db":-20}}`))
-	none := r.dial(behaviorFlow(t, r, "C", "c", ``))
+	withLoud := r.dial(behaviorAgent(t, r, "A", "a", `,"audio":{"background":{"name":"loud"}}`))
+	withSoftened := r.dial(behaviorAgent(t, r, "B", "b", `,"audio":{"background":{"name":"loud","gain_db":-20}}`))
+	none := r.dial(behaviorAgent(t, r, "C", "c", ``))
 	time.Sleep(1500 * time.Millisecond)
 	if p := withLoud.maxPeak(); p < 15000 {
 		t.Fatalf("the background should be heard at its own level in silence, peak %d", p)
@@ -140,15 +140,15 @@ func TestCallBehaviorAFlowsBackgroundSoundIsHeardAtItsLevelAndAnotherFlowsIsNot(
 	}
 }
 
-func TestCallBehaviorTheServerDefaultBackgroundPlaysUnlessAFlowChoosesAnother(t *testing.T) {
+func TestCallBehaviorTheServerDefaultBackgroundPlaysUnlessAnAgentChoosesAnother(t *testing.T) {
 	loud, soft := constWAV(t, "loud", 20000), constWAV(t, "soft", 4000)
-	r := newFlowRigE2E(t, newProbe(), func(c *Config) {
+	r := newAgentRigE2E(t, newProbe(), func(c *Config) {
 		c.Idle.UserTimeout = 0
 		c.Audio.Backgrounds = map[string]CueConfig{"loud": {File: loud, GainDB: ptrF(0)}, "soft": {File: soft, GainDB: ptrF(0)}}
 		c.Audio.BackgroundDefault = "soft"
 	})
-	def := r.dial(behaviorFlow(t, r, "D", "d", ``))
-	own := r.dial(behaviorFlow(t, r, "E", "e", `,"audio":{"background":{"name":"loud"}}`))
+	def := r.dial(behaviorAgent(t, r, "D", "d", ``))
+	own := r.dial(behaviorAgent(t, r, "E", "e", `,"audio":{"background":{"name":"loud"}}`))
 	time.Sleep(1200 * time.Millisecond)
 	if p := def.maxPeak(); p < 3000 || p > 5000 {
 		t.Fatalf("default sound should play at its own level, peak %d", p)
@@ -160,14 +160,14 @@ func TestCallBehaviorTheServerDefaultBackgroundPlaysUnlessAFlowChoosesAnother(t 
 
 func TestCallBehaviorThePublishAPIRefusesASoundTheServerDoesNotOfferOrAllow(t *testing.T) {
 	sound := constWAV(t, "office", 12000)
-	post := func(r *flowRigE2E, name, extra string) (int, string) {
+	post := func(r *agentRigE2E, name, extra string) (int, string) {
 		body := `{"name":"` + name + `","config":{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m"},"tts":{"provider":"echo","voice":"v"},` + extra + `}}`
 		w := apiRequest(r.s, http.MethodPost, "/api/v1/flows", e2eMgmtKey, body)
 		return w.Code, w.Body.String()
 	}
-	allowed := newFlowRigE2E(t, newProbe(), func(c *Config) {
+	allowed := newAgentRigE2E(t, newProbe(), func(c *Config) {
 		c.Audio.Backgrounds = map[string]CueConfig{"office": {File: sound}, "cafe": {File: sound}}
-		c.Audio.AllowFlowBackground = true
+		c.Audio.AllowAgentBackground = true
 	})
 	code, body := post(allowed, "Unknown", `"audio":{"background":{"name":"nope"}}`)
 	if code != http.StatusBadRequest || !strings.Contains(body, "invalid_request") || !strings.Contains(body, "available: cafe, office") {
@@ -179,9 +179,9 @@ func TestCallBehaviorThePublishAPIRefusesASoundTheServerDoesNotOfferOrAllow(t *t
 	if code, body := post(allowed, "NoneAtAll", `"audio":{"background":{"name":""}}`); code != http.StatusCreated {
 		t.Fatalf("an explicit none: %d %s", code, body)
 	}
-	denied := newFlowRigE2E(t, newProbe(), func(c *Config) {
+	denied := newAgentRigE2E(t, newProbe(), func(c *Config) {
 		c.Audio.Backgrounds = map[string]CueConfig{"office": {File: sound}}
-		c.Audio.AllowFlowBackground = false
+		c.Audio.AllowAgentBackground = false
 	})
 	code, body = post(denied, "Denied", `"audio":{"background":{"name":"office"}}`)
 	if code != http.StatusBadRequest || !strings.Contains(body, "audio.allow_flow_background") {
@@ -195,10 +195,10 @@ func TestCallBehaviorThePublishAPIRefusesASoundTheServerDoesNotOfferOrAllow(t *t
 // The route sound is one of the server's cues: publish says which, and the editor reads the list from /server-config.
 func TestCallBehaviorThePublishAPIRefusesAnUnknownRouteCue(t *testing.T) {
 	cue := constWAV(t, "chime", 12000)
-	r := newFlowRigE2E(t, newProbe(), func(c *Config) {
+	r := newAgentRigE2E(t, newProbe(), func(c *Config) {
 		c.Audio.Cues = map[string]CueConfig{"ding": {File: cue}, "chime": {File: cue}}
 	})
-	id := r.createRoutedFlow("salesvoice", `{"name":"chime","after_ms":50}`)
+	id := r.createRoutedAgent("salesvoice", `{"name":"chime","after_ms":50}`)
 	w := apiRequest(r.s, http.MethodGet, "/api/v1/server-config", e2eMgmtKey, "")
 	var cfg struct {
 		Data struct {
@@ -211,7 +211,7 @@ func TestCallBehaviorThePublishAPIRefusesAnUnknownRouteCue(t *testing.T) {
 		t.Fatalf("server-config cues = %v (err %v): %s", cfg.Data.Audio.Cues, err, w.Body.String())
 	}
 	put := func(cue string) (int, string) {
-		body := `{"config":` + string(flowConfigJSON("SALES", "salesvoice", cue)) + `}`
+		body := `{"config":` + string(agentConfigJSON("SALES", "salesvoice", cue)) + `}`
 		w := apiRequest(r.s, http.MethodPut, "/api/v1/flows/"+id, e2eMgmtKey, body)
 		return w.Code, w.Body.String()
 	}
@@ -226,9 +226,9 @@ func TestCallBehaviorThePublishAPIRefusesAnUnknownRouteCue(t *testing.T) {
 
 // failover is a call-wide setting: on a later step publish says invalid_request and names the step.
 func TestCallBehaviorThePublishAPIRefusesCallWideSettingsOnALaterStep(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe())
-	id := r.createRoutedFlow("salesvoice")
-	cfg := string(flowConfigJSON("SALES", "salesvoice"))
+	r := newAgentRigE2E(t, newProbe())
+	id := r.createRoutedAgent("salesvoice")
+	cfg := string(agentConfigJSON("SALES", "salesvoice"))
 	i := strings.Index(cfg, `"id":"sales"`)
 	cfg = cfg[:i] + strings.Replace(cfg[i:], `"config":{`, `"config":{"failover":{"on":["timeout"]},`, 1)
 	w := apiRequest(r.s, http.MethodPut, "/api/v1/flows/"+id, e2eMgmtKey, `{"config":`+cfg+`}`)
@@ -240,8 +240,8 @@ func TestCallBehaviorThePublishAPIRefusesCallWideSettingsOnALaterStep(t *testing
 // The prompt and the goodbye are lines the assistant spoke: they are in the call's turns (as the greeting
 // is), they are no caller turn, and they leave no reply-time sample.
 func TestCallBehaviorIdleLinesAreInTheCallsTurns(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe(), serverIdle(time.Minute, "server prompt"))
-	c := r.dial(behaviorFlow(t, r, "Quiet", "quietvoice", `,"idle":{"user_timeout_ms":1000,"max_prompts":1,"prompt":"Still there for the test?","prompt_mode":"say","goodbye":"Goodbye for now."}`))
+	r := newAgentRigE2E(t, newProbe(), serverIdle(time.Minute, "server prompt"))
+	c := r.dial(behaviorAgent(t, r, "Quiet", "quietvoice", `,"idle":{"user_timeout_ms":1000,"max_prompts":1,"prompt":"Still there for the test?","prompt_mode":"say","goodbye":"Goodbye for now."}`))
 	r.waitEnded(c.sessionID, storage.EndSilentCaller)
 	var turns []storage.TurnRecord
 	eventually(t, "the prompt and the goodbye as stored turns", func() bool {
@@ -275,7 +275,7 @@ func TestCallBehaviorIdleLinesAreInTheCallsTurns(t *testing.T) {
 // A flow can ask for the Smart Turn model only on a server that loaded it: the echo rig has none, so publish
 // says why (and names the key that loads it).
 func TestCallBehaviorPublishRefusesSmartEndOfTurnWithoutTheModel(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe())
+	r := newAgentRigE2E(t, newProbe())
 	body := func(turn string) string {
 		return `{"name":"smart","config":{"stt":{"provider":"echo","model":"m"},"llm":{"provider":"echo","model":"m"},"tts":{"provider":"echo","voice":"v"},"turn":` + turn + `}}`
 	}
@@ -290,12 +290,12 @@ func TestCallBehaviorPublishRefusesSmartEndOfTurnWithoutTheModel(t *testing.T) {
 
 // With the model loaded (for_flows) a smart flow is ready, and a call on it connects and replies. It does not
 // prove the smart chain runs (a typed turn bypasses the detector): TestTurnForCall and the build test do.
-func TestCallBehaviorASmartFlowConnectsAndRepliesWhenTheModelIsLoaded(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe(), func(c *Config) { c.Turn.Analyzer.ForFlows = true })
+func TestCallBehaviorASmartAgentConnectsAndRepliesWhenTheModelIsLoaded(t *testing.T) {
+	r := newAgentRigE2E(t, newProbe(), func(c *Config) { c.Turn.Analyzer.ForAgents = true })
 	r.s.SetTurnBackend(smartBackend{p: 0.9})
-	f, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "smart", Config: json.RawMessage(
+	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "smart", Config: json.RawMessage(
 		`{"stt":{"provider":"echo","model":"m"},"llm":{"provider":"echo","model":"m"},"tts":{"provider":"echo","voice":"v"},"turn":{"end_of_turn":"smart","smart_hold_ms":1500}}`)})
-	if err != nil || f.Readiness.State != flow.ReadinessReady {
+	if err != nil || f.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("a smart flow on a server with the model: %+v err %v", f.Readiness, err)
 	}
 	c := r.dial(f.ID)
@@ -305,7 +305,7 @@ func TestCallBehaviorASmartFlowConnectsAndRepliesWhenTheModelIsLoaded(t *testing
 
 // A flow can shorten the call limit, never lengthen it: the publish API refuses a limit above the server's.
 func TestCallBehaviorThePublishAPIRefusesALongerCallLimit(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe(), func(c *Config) { c.Limits.MaxCallDuration = 10 * time.Minute })
+	r := newAgentRigE2E(t, newProbe(), func(c *Config) { c.Limits.MaxCallDuration = 10 * time.Minute })
 	post := func(name string, seconds int) (int, string) {
 		body := fmt.Sprintf(`{"name":%q,"config":{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m"},"tts":{"provider":"echo","voice":"v"},"max_call_duration_seconds":%d}}`, name, seconds)
 		w := apiRequest(r.s, http.MethodPost, "/api/v1/flows", e2eMgmtKey, body)
@@ -325,9 +325,9 @@ func TestCallBehaviorThePublishAPIRefusesALongerCallLimit(t *testing.T) {
 
 // The server lowered its limit after the flow was published: the call still ends at the server's limit,
 // the flow's longer one does not extend it.
-func TestCallBehaviorAFlowLimitLongerThanTheServersDoesNotExtendIt(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe(), serverIdle(0, ""))
-	id := behaviorFlow(t, r, "Plain", "plainvoice", `,"max_call_duration_seconds":1500`)
+func TestCallBehaviorAnAgentLimitLongerThanTheServersDoesNotExtendIt(t *testing.T) {
+	r := newAgentRigE2E(t, newProbe(), serverIdle(0, ""))
+	id := behaviorAgent(t, r, "Plain", "plainvoice", `,"max_call_duration_seconds":1500`)
 	r.s.cfg.Limits.MaxCallDuration = time.Second
 	c := r.dial(id)
 	r.waitEnded(c.sessionID, storage.EndTimeLimit)

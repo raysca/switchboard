@@ -11,7 +11,7 @@ import (
 	"govoice/core"
 	"govoice/core/audio/filter"
 	"govoice/core/audio/mixer"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/transport/ws"
 )
 
@@ -98,13 +98,13 @@ func loadCues(cfg *Config, rate int) (map[string]func() ws.Underlay, error) {
 
 // buildOutputGain returns the pre-transport gain stage, or nil at 0 dB. A flow's output_gain_db
 // (even an explicit 0) replaces the server's.
-func buildOutputGain(cfg *Config, flowAudio *flow.AudioSettings) (core.Processor, error) {
+func buildOutputGain(cfg *Config, agentAudio *agent.AudioSettings) (core.Processor, error) {
 	if cfg == nil {
 		return nil, nil
 	}
 	db := cfg.Audio.OutputGainDB
-	if flowAudio != nil && flowAudio.OutputGainDB != nil {
-		db = *flowAudio.OutputGainDB
+	if agentAudio != nil && agentAudio.OutputGainDB != nil {
+		db = *agentAudio.OutputGainDB
 	}
 	if db == 0 {
 		return nil, nil
@@ -153,14 +153,14 @@ func loadBackgrounds(cfg *Config, rate int) (map[string]background, error) {
 // filters are on (the pipeline is then unchanged). The server's input_filters apply to every call; a
 // flow can also turn denoise on for its own calls. Each call gets its own filter instances: they carry
 // per-session adaptive state.
-func buildInputFilter(cfg *Config, flowAudio *flow.AudioSettings, obs filter.Observer) (core.Processor, error) {
+func buildInputFilter(cfg *Config, agentAudio *agent.AudioSettings, obs filter.Observer) (core.Processor, error) {
 	if cfg == nil {
 		return nil, nil
 	}
 	strength, denoise := cfg.Audio.DenoiseStrength, slices.Contains(cfg.Audio.InputFilters, "denoise")
-	if flowAudio != nil && flowAudio.Denoise != nil {
+	if agentAudio != nil && agentAudio.Denoise != nil {
 		strength, denoise = filter.DefaultDnSt, true
-		if s := flowAudio.Denoise.Strength; s != nil {
+		if s := agentAudio.Denoise.Strength; s != nil {
 			strength = *s
 		}
 	}

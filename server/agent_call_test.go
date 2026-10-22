@@ -13,17 +13,17 @@ import (
 	"unicode/utf8"
 
 	"govoice/core"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/server/runtime"
 )
 
 func runtimeName(serverID, remote string) string { return runtime.ToolName(serverID, remote) }
 
-func twoStepFlow(t *testing.T) flow.Definition {
+func twoStepAgent(t *testing.T) agent.Definition {
 	t.Helper()
 	flat := `{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}}`
 	step := `{"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}}`
-	g, err := flow.Decode(json.RawMessage(`{"start":"front","steps":[` +
+	g, err := agent.Decode(json.RawMessage(`{"start":"front","steps":[` +
 		`{"id":"front","name":"Front desk","config":` + flat + `},{"id":"sales","name":"Sales","config":` + step + `}],` +
 		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`))
 	if err != nil {
@@ -33,7 +33,7 @@ func twoStepFlow(t *testing.T) flow.Definition {
 }
 
 func TestTransferToolsFromRoutes(t *testing.T) {
-	g := twoStepFlow(t)
+	g := twoStepAgent(t)
 	defs := transferTools(g, "front")
 	if len(defs) != 1 || defs[0].Name != "transfer_to_sales" || !strings.Contains(defs[0].Description, "wants to buy") {
 		t.Fatalf("%+v", defs)
@@ -90,7 +90,7 @@ func TestStepDefinitionsKeepsOnlyListedTools(t *testing.T) {
 
 // A non-start step's secret is read when the step is activated, not at call
 // start: a variable changed mid-call reaches the step's spec.
-func TestFlowStepActivationRereadsTheEnvironment(t *testing.T) {
+func TestAgentStepActivationRereadsTheEnvironment(t *testing.T) {
 	s := apiTestServer(t)
 	env := newLiveEnv(testProviderVars(t))
 	s.env = env.get
@@ -99,13 +99,13 @@ func TestFlowStepActivationRereadsTheEnvironment(t *testing.T) {
 	raw := json.RawMessage(`{"start":"front","steps":[` +
 		`{"id":"front","name":"Front desk","config":` + flat + `},{"id":"sales","name":"Sales","config":` + step + `}],` +
 		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`)
-	rs := &runtime.Session{Snapshot: flow.Snapshot{Version: flow.Version{Config: raw}}}
+	rs := &runtime.Session{Snapshot: agent.Snapshot{Version: agent.Version{Config: raw}}}
 	call, err := s.callSpec(t.Context(), rs)
 	if err != nil {
 		t.Fatal(err)
 	}
 	env.set("XAI_API_KEY", "rotated-xai-key")
-	spec, err := call.Flow.Resolve(t.Context(), "sales")
+	spec, err := call.Agent.Resolve(t.Context(), "sales")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestEndCallDefinition(t *testing.T) {
 }
 
 func TestTransferToolsCarryAnOptionalNote(t *testing.T) {
-	d := transferTools(twoStepFlow(t), "front")[0]
+	d := transferTools(twoStepAgent(t), "front")[0]
 	var schema struct {
 		Properties map[string]struct {
 			Type      string `json:"type"`
@@ -205,8 +205,8 @@ func TestTransferGreetingCarriesTheNote(t *testing.T) {
 	}
 }
 
-func TestCallFlowNoteIsConsumedOnce(t *testing.T) {
-	var cg CallFlow
+func TestCallAgentNoteIsConsumedOnce(t *testing.T) {
+	var cg CallAgent
 	cg.setNote("Sam")
 	if cg.takeNote() != "Sam" || cg.takeNote() != "" {
 		t.Fatal("a note greets one transfer only")
@@ -216,7 +216,7 @@ func TestCallFlowNoteIsConsumedOnce(t *testing.T) {
 // A failed transfer (duplicate while one is pending) must not clobber the
 // note of the one that went through; a failed first transfer leaves no note.
 func TestCommitWithNoteRestoresOnFailure(t *testing.T) {
-	cg := &CallFlow{}
+	cg := &CallAgent{}
 	fail := errors.New("route pending")
 	cg.Commit = func(string) error { return fail }
 	if err := cg.commitWithNote("b", "N0"); !errors.Is(err, fail) || cg.takeNote() != "" {
@@ -240,7 +240,7 @@ func TestCommitWithNoteKeepsTheWinnersNote(t *testing.T) {
 	for i := 0; i < 500; i++ {
 		var calls atomic.Int32
 		var winner atomic.Value
-		cf := &CallFlow{}
+		cf := &CallAgent{}
 		cf.Commit = func(target string) error {
 			if calls.Add(1) == 1 {
 				winner.Store(target)
@@ -267,7 +267,7 @@ func TestCallSpecTakesTheShorterCallLimit(t *testing.T) {
 	s := apiTestServer(t)
 	cases := []struct {
 		name   string
-		flow   string
+		agent  string
 		server time.Duration
 		want   time.Duration
 	}{
@@ -279,8 +279,8 @@ func TestCallSpecTakesTheShorterCallLimit(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			s.cfg.Limits.MaxCallDuration = c.server
-			raw := json.RawMessage(`{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}` + c.flow + `}`)
-			call, err := s.callSpec(t.Context(), &runtime.Session{Snapshot: flow.Snapshot{Version: flow.Version{Config: raw}}})
+			raw := json.RawMessage(`{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}` + c.agent + `}`)
+			call, err := s.callSpec(t.Context(), &runtime.Session{Snapshot: agent.Snapshot{Version: agent.Version{Config: raw}}})
 			if err != nil {
 				t.Fatal(err)
 			}

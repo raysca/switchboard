@@ -254,7 +254,7 @@ test("flows list: status, enable toggle without a new version, copy and archive"
   await expect(row.locator("summary")).toBeFocused();
   await row.locator("summary").click();
   await row.getByRole("button", { name: `Duplicate ${FLOW}` }).click();
-  // The server names a copy "<name> copy" (server/flow/service.go, Duplicate).
+  // The server names a copy "<name> copy" (server/agent/service.go, Duplicate).
   const copyName = `${FLOW} copy`;
   const copy = page.getByRole("link", { name: copyName, exact: true });
   await expect(copy).toBeVisible();

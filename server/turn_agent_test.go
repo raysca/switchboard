@@ -15,7 +15,7 @@ import (
 	"govoice/core"
 	"govoice/core/coretest"
 	coreturn "govoice/core/turn"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/smartturn"
 	"govoice/vad"
 )
@@ -30,53 +30,53 @@ func TestTurnForCall(t *testing.T) {
 		return TurnConfig{Manager: true, Stop: []string{"llm-completion", "speech-timeout"}}
 	}
 	cases := []struct {
-		name string
-		srv  func() TurnConfig
-		flow *flow.TurnSettings
-		want func(TurnConfig) TurnConfig
+		name  string
+		srv   func() TurnConfig
+		agent *agent.TurnSettings
+		want  func(TurnConfig) TurnConfig
 	}{
 		{"absent is the server's", server, nil, func(c TurnConfig) TurnConfig { return c }},
-		{"min words alone", server, &flow.TurnSettings{MinWords: ptr(2)}, func(c TurnConfig) TurnConfig { c.MinWords = 2; return c }},
-		{"min words 0 turns the filter off", server, &flow.TurnSettings{MinWords: ptr(0)}, func(c TurnConfig) TurnConfig { c.MinWords = 0; return c }},
-		{"mute replaces the list", server, &flow.TurnSettings{Mute: &[]string{"always"}}, func(c TurnConfig) TurnConfig { c.Mute = []string{"always"}; return c }},
-		{"empty mute means none", server, &flow.TurnSettings{Mute: &[]string{}}, func(c TurnConfig) TurnConfig { c.Mute = []string{}; return c }},
-		{"max mute tightens", server, &flow.TurnSettings{MaxMuteMS: ptr(5000)}, func(c TurnConfig) TurnConfig { c.MaxMute = 5 * time.Second; return c }},
-		{"max mute above the server's is clamped", server, &flow.TurnSettings{MaxMuteMS: ptr(40000)}, func(c TurnConfig) TurnConfig { return c }},
-		{"max mute against the default 30 s when the server sets none", func() TurnConfig { return TurnConfig{Manager: true} }, &flow.TurnSettings{MaxMuteMS: ptr(40000)},
+		{"min words alone", server, &agent.TurnSettings{MinWords: ptr(2)}, func(c TurnConfig) TurnConfig { c.MinWords = 2; return c }},
+		{"min words 0 turns the filter off", server, &agent.TurnSettings{MinWords: ptr(0)}, func(c TurnConfig) TurnConfig { c.MinWords = 0; return c }},
+		{"mute replaces the list", server, &agent.TurnSettings{Mute: &[]string{"always"}}, func(c TurnConfig) TurnConfig { c.Mute = []string{"always"}; return c }},
+		{"empty mute means none", server, &agent.TurnSettings{Mute: &[]string{}}, func(c TurnConfig) TurnConfig { c.Mute = []string{}; return c }},
+		{"max mute tightens", server, &agent.TurnSettings{MaxMuteMS: ptr(5000)}, func(c TurnConfig) TurnConfig { c.MaxMute = 5 * time.Second; return c }},
+		{"max mute above the server's is clamped", server, &agent.TurnSettings{MaxMuteMS: ptr(40000)}, func(c TurnConfig) TurnConfig { return c }},
+		{"max mute against the default 30 s when the server sets none", func() TurnConfig { return TurnConfig{Manager: true} }, &agent.TurnSettings{MaxMuteMS: ptr(40000)},
 			func(c TurnConfig) TurnConfig { c.MaxMute = 30 * time.Second; return c }},
-		{"max mute under the default when the server sets none", func() TurnConfig { return TurnConfig{Manager: true} }, &flow.TurnSettings{MaxMuteMS: ptr(9000)},
+		{"max mute under the default when the server sets none", func() TurnConfig { return TurnConfig{Manager: true} }, &agent.TurnSettings{MaxMuteMS: ptr(9000)},
 			func(c TurnConfig) TurnConfig { c.MaxMute = 9 * time.Second; return c }},
-		{"members are independent", server, &flow.TurnSettings{MinWords: ptr(1), Mute: &[]string{"function_call"}, MaxMuteMS: ptr(1000)},
+		{"members are independent", server, &agent.TurnSettings{MinWords: ptr(1), Mute: &[]string{"function_call"}, MaxMuteMS: ptr(1000)},
 			func(c TurnConfig) TurnConfig {
 				c.MinWords, c.Mute, c.MaxMute = 1, []string{"function_call"}, time.Second
 				return c
 			}},
-		{"speech timeout", server, &flow.TurnSettings{SpeechTimeoutMS: ptr(900)}, func(c TurnConfig) TurnConfig { c.SpeechTimeout = 900 * time.Millisecond; return c }},
-		{"default on a server with no chain stays empty", server, &flow.TurnSettings{EndOfTurn: "default"}, func(c TurnConfig) TurnConfig { return c }},
-		{"smart", server, &flow.TurnSettings{EndOfTurn: "smart"}, func(c TurnConfig) TurnConfig { c.Stop = []string{"turn-analyzer", "speech-timeout"}; return c }},
-		{"eager", server, &flow.TurnSettings{EndOfTurn: "eager"}, func(c TurnConfig) TurnConfig { c.Stop = []string{"eager", "speech-timeout"}; return c }},
-		{"smart hold", server, &flow.TurnSettings{EndOfTurn: "smart", SmartHoldMS: ptr(2000)}, func(c TurnConfig) TurnConfig {
+		{"speech timeout", server, &agent.TurnSettings{SpeechTimeoutMS: ptr(900)}, func(c TurnConfig) TurnConfig { c.SpeechTimeout = 900 * time.Millisecond; return c }},
+		{"default on a server with no chain stays empty", server, &agent.TurnSettings{EndOfTurn: "default"}, func(c TurnConfig) TurnConfig { return c }},
+		{"smart", server, &agent.TurnSettings{EndOfTurn: "smart"}, func(c TurnConfig) TurnConfig { c.Stop = []string{"turn-analyzer", "speech-timeout"}; return c }},
+		{"eager", server, &agent.TurnSettings{EndOfTurn: "eager"}, func(c TurnConfig) TurnConfig { c.Stop = []string{"eager", "speech-timeout"}; return c }},
+		{"smart hold", server, &agent.TurnSettings{EndOfTurn: "smart", SmartHoldMS: ptr(2000)}, func(c TurnConfig) TurnConfig {
 			c.Stop, c.Analyzer.Hold = []string{"turn-analyzer", "speech-timeout"}, 2*time.Second
 			return c
 		}},
-		{"eager keeps the server's llm-completion", withCompletion, &flow.TurnSettings{EndOfTurn: "eager"}, func(c TurnConfig) TurnConfig {
+		{"eager keeps the server's llm-completion", withCompletion, &agent.TurnSettings{EndOfTurn: "eager"}, func(c TurnConfig) TurnConfig {
 			c.Stop = []string{"eager", "speech-timeout", "llm-completion"}
 			return c
 		}},
-		{"smart keeps the server's llm-completion", withCompletion, &flow.TurnSettings{EndOfTurn: "smart"}, func(c TurnConfig) TurnConfig {
+		{"smart keeps the server's llm-completion", withCompletion, &agent.TurnSettings{EndOfTurn: "smart"}, func(c TurnConfig) TurnConfig {
 			c.Stop = []string{"turn-analyzer", "speech-timeout", "llm-completion"}
 			return c
 		}},
-		{"default keeps llm-completion and the speech-timeout it needs", withCompletion, &flow.TurnSettings{EndOfTurn: "default"}, func(c TurnConfig) TurnConfig {
+		{"default keeps llm-completion and the speech-timeout it needs", withCompletion, &agent.TurnSettings{EndOfTurn: "default"}, func(c TurnConfig) TurnConfig {
 			c.Stop = []string{"speech-timeout", "llm-completion"}
 			return c
 		}},
-		{"timeout alone keeps the server's chain", withCompletion, &flow.TurnSettings{SpeechTimeoutMS: ptr(900)}, func(c TurnConfig) TurnConfig { c.SpeechTimeout = 900 * time.Millisecond; return c }},
+		{"timeout alone keeps the server's chain", withCompletion, &agent.TurnSettings{SpeechTimeoutMS: ptr(900)}, func(c TurnConfig) TurnConfig { c.SpeechTimeout = 900 * time.Millisecond; return c }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			srv := c.srv()
-			got := srv.forCall(c.flow)
+			got := srv.forCall(c.agent)
 			want := c.want(c.srv())
 			if got.MinWords != want.MinWords || got.MaxMute != want.MaxMute || got.Manager != want.Manager || !slices.Equal(got.Mute, want.Mute) ||
 				got.SpeechTimeout != want.SpeechTimeout || !slices.Equal(got.Stop, want.Stop) || got.Analyzer.Hold != want.Analyzer.Hold {
@@ -95,7 +95,7 @@ func TestTurnForCallChainsAreAcceptedByTheStopDetector(t *testing.T) {
 	model := func(time.Duration) coreturn.UserTurnStopStrategy { return nil }
 	for _, srvStop := range [][]string{nil, {"speech-timeout"}, {"llm-completion", "speech-timeout"}, {"eager", "speech-timeout", "llm-completion"}} {
 		for _, eot := range []string{"", "default", "smart", "eager"} {
-			got := TurnConfig{Manager: true, Stop: srvStop}.forCall(&flow.TurnSettings{EndOfTurn: eot})
+			got := TurnConfig{Manager: true, Stop: srvStop}.forCall(&agent.TurnSettings{EndOfTurn: eot})
 			if _, err := turnStopDetector(got.Stop, coreturn.SpeechTimeoutConfig{}, 0, model); err != nil {
 				t.Errorf("server %v + %q -> %v: %v", srvStop, eot, got.Stop, err)
 			}
@@ -115,7 +115,7 @@ func TestLoadsSmartTurn(t *testing.T) {
 	if !c.LoadsSmartTurn() {
 		t.Fatal("a smart server default must load the model")
 	}
-	c.Turn.Stop, c.Turn.Analyzer.ForFlows = nil, true
+	c.Turn.Stop, c.Turn.Analyzer.ForAgents = nil, true
 	if !c.LoadsSmartTurn() {
 		t.Fatal("for_flows must load the model")
 	}
@@ -124,21 +124,21 @@ func TestLoadsSmartTurn(t *testing.T) {
 	}
 }
 
-func TestForFlowsIsValidatedLikeASmartDefault(t *testing.T) {
+func TestForAgentsIsValidatedLikeASmartDefault(t *testing.T) {
 	for name, mut := range map[string]func(*Config){
 		"bad mode":        func(c *Config) { c.Turn.Analyzer.Mode = "thread" },
 		"negative budget": func(c *Config) { c.Turn.Analyzer.Budget = -1 },
 		"manager off":     func(c *Config) { c.Turn.Manager = false },
 	} {
 		cfg := DefaultConfig(ProfileDevelopment)
-		cfg.Turn.Analyzer.ForFlows = true
+		cfg.Turn.Analyzer.ForAgents = true
 		mut(cfg)
 		if err := validateTurn(cfg); err == nil {
 			t.Errorf("%s: for_flows accepted", name)
 		}
 	}
 	cfg := DefaultConfig(ProfileDevelopment)
-	cfg.Turn.Analyzer.ForFlows = true
+	cfg.Turn.Analyzer.ForAgents = true
 	if err := validateTurn(cfg); err != nil {
 		t.Fatalf("a valid for_flows config: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestForFlowsIsValidatedLikeASmartDefault(t *testing.T) {
 
 func TestTurnForCallDoesNotAliasOrMutateTheServersConfig(t *testing.T) {
 	srv := TurnConfig{Manager: true, Mute: []string{"always", "function_call"}}
-	for _, f := range []*flow.TurnSettings{nil, {MinWords: ptr(1)}, {Mute: &[]string{"first_speech"}}} {
+	for _, f := range []*agent.TurnSettings{nil, {MinWords: ptr(1)}, {Mute: &[]string{"first_speech"}}} {
 		got := srv.forCall(f)
 		if len(got.Mute) > 0 {
 			got.Mute[0] = "scribbled"
@@ -155,10 +155,10 @@ func TestTurnForCallDoesNotAliasOrMutateTheServersConfig(t *testing.T) {
 	if !slices.Equal(srv.Mute, []string{"always", "function_call"}) {
 		t.Fatalf("the shared server slice was written through: %v", srv.Mute)
 	}
-	flowMute := []string{"always"}
-	got := srv.forCall(&flow.TurnSettings{Mute: &flowMute})
+	agentMute := []string{"always"}
+	got := srv.forCall(&agent.TurnSettings{Mute: &agentMute})
 	got.Mute[0] = "scribbled"
-	if flowMute[0] != "always" {
+	if agentMute[0] != "always" {
 		t.Fatal("the result aliases the flow's slice")
 	}
 }
@@ -166,7 +166,7 @@ func TestTurnForCallDoesNotAliasOrMutateTheServersConfig(t *testing.T) {
 func TestTurnForCallIsRaceFreeOnOneSharedConfig(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
 	cfg.Turn.Mute = []string{"first_speech"}
-	f := &flow.TurnSettings{MinWords: ptr(2), Mute: &[]string{"always"}, MaxMuteMS: ptr(5000)}
+	f := &agent.TurnSettings{MinWords: ptr(2), Mute: &[]string{"always"}, MaxMuteMS: ptr(5000)}
 	var wg sync.WaitGroup
 	for i := range 8 {
 		wg.Add(1)
@@ -234,7 +234,7 @@ func TestServerConfigSaysWhetherSmartTurnIsAvailable(t *testing.T) {
 	t.Setenv("GOVOICE_MANAGEMENT_API_KEY", "management-test-key-32-bytes-long-and-separate")
 	cfg := DefaultConfig(ProfileDevelopment)
 	cfg.Token.Secret = "voice-test-secret-32-bytes-long-and-separate"
-	cfg.Turn.Analyzer.ForFlows = true
+	cfg.Turn.Analyzer.ForAgents = true
 	s, err := NewServer(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -281,7 +281,7 @@ func turnTestBuild(t *testing.T, cfg *Config, call CallSpec, model ...smartturn.
 	return pipe, llm, err
 }
 
-func TestBuildCallPipelineUsesTheFlowsTurnSettings(t *testing.T) {
+func TestBuildCallPipelineUsesTheAgentsTurnSettings(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment) // the server has no mute list
 	cfg.Idle.UserTimeout = 0                 // idle also wraps the tools: keep it out of the way
 	if _, llm, err := turnTestBuild(t, cfg, CallSpec{}); err != nil || llm.ToolExecutor == nil {
@@ -290,38 +290,38 @@ func TestBuildCallPipelineUsesTheFlowsTurnSettings(t *testing.T) {
 		t.Fatal("tools are wrapped although nothing asks for function_call mute")
 	}
 	// The flow's list is the one parsed: an unknown name only fails the build if it is the flow's.
-	if _, _, err := turnTestBuild(t, cfg, CallSpec{Turn: &flow.TurnSettings{Mute: &[]string{"nope"}}}); err == nil {
+	if _, _, err := turnTestBuild(t, cfg, CallSpec{Turn: &agent.TurnSettings{Mute: &[]string{"nope"}}}); err == nil {
 		t.Fatal("the flow's mute list was not used")
 	}
-	if _, llm, err := turnTestBuild(t, cfg, CallSpec{Turn: &flow.TurnSettings{Mute: &[]string{"function_call"}}}); err != nil {
+	if _, llm, err := turnTestBuild(t, cfg, CallSpec{Turn: &agent.TurnSettings{Mute: &[]string{"function_call"}}}); err != nil {
 		t.Fatal(err)
 	} else if _, wrapped := llm.ToolExecutor.(*markedExecutor); wrapped {
 		t.Fatal("function_call from the flow did not create the tool activity")
 	}
 	// Push-to-talk keeps the flow's mute; a server with the manager off ignores the rest.
-	if _, _, err := turnTestBuild(t, cfg, CallSpec{PushToTalk: true, Turn: &flow.TurnSettings{MinWords: ptr(3), Mute: &[]string{"nope"}}}); err == nil {
+	if _, _, err := turnTestBuild(t, cfg, CallSpec{PushToTalk: true, Turn: &agent.TurnSettings{MinWords: ptr(3), Mute: &[]string{"nope"}}}); err == nil {
 		t.Fatal("push-to-talk dropped the flow's mute list")
 	}
 	// The flow's chain is the one built: smart needs the model, and fails the build without it (readiness
 	// keeps such a flow off the line); eager and a timeout need nothing.
-	smart := CallSpec{Turn: &flow.TurnSettings{EndOfTurn: "smart", SmartHoldMS: ptr(1500)}}
+	smart := CallSpec{Turn: &agent.TurnSettings{EndOfTurn: "smart", SmartHoldMS: ptr(1500)}}
 	if _, _, err := turnTestBuild(t, cfg, smart); err == nil || !strings.Contains(err.Error(), "smart-turn model is not loaded") {
 		t.Fatalf("smart without the model: %v", err)
 	}
 	if _, _, err := turnTestBuild(t, cfg, smart, smartBackend{p: 0.9}); err != nil {
 		t.Fatalf("smart with the model: %v", err)
 	}
-	if _, _, err := turnTestBuild(t, cfg, CallSpec{Turn: &flow.TurnSettings{EndOfTurn: "eager", SpeechTimeoutMS: ptr(900)}}); err != nil {
+	if _, _, err := turnTestBuild(t, cfg, CallSpec{Turn: &agent.TurnSettings{EndOfTurn: "eager", SpeechTimeoutMS: ptr(900)}}); err != nil {
 		t.Fatalf("eager: %v", err)
 	}
 	off := DefaultConfig(ProfileDevelopment)
 	off.Idle.UserTimeout, off.Turn.Manager = 0, false
-	if _, _, err := turnTestBuild(t, off, CallSpec{Turn: &flow.TurnSettings{MinWords: ptr(3)}}); err != nil {
+	if _, _, err := turnTestBuild(t, off, CallSpec{Turn: &agent.TurnSettings{MinWords: ptr(3)}}); err != nil {
 		t.Fatalf("manager off must ignore the flow's turn settings: %v", err)
 	}
 }
 
-func TestTurnSettingsIgnoredWarningIsLoggedOncePerFlowVersion(t *testing.T) {
+func TestTurnSettingsIgnoredWarningIsLoggedOncePerAgentVersion(t *testing.T) {
 	var buf bytes.Buffer
 	old := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
@@ -334,7 +334,7 @@ func TestTurnSettingsIgnoredWarningIsLoggedOncePerFlowVersion(t *testing.T) {
 	cfg.Idle.UserTimeout, cfg.Turn.Manager = 0, false
 	build := func(version string) {
 		t.Helper()
-		call := CallSpec{FlowVersionID: version, Turn: &flow.TurnSettings{MinWords: ptr(3)},
+		call := CallSpec{AgentVersionID: version, Turn: &agent.TurnSettings{MinWords: ptr(3)},
 			STT: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google"}}
 		vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
 		if _, err := reg.BuildCallPipeline(cfg, call, vadProc, &fakeTransportSink{}); err != nil {
@@ -353,7 +353,7 @@ func TestTurnSettingsIgnoredWarningIsLoggedOncePerFlowVersion(t *testing.T) {
 	}
 }
 
-func TestCallStopWaitsForTheFlowsSpeechTimeout(t *testing.T) {
+func TestCallStopWaitsForTheAgentsSpeechTimeout(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
 	cfg.Turn.SpeechTimeout = 600 * time.Millisecond // the server's own; the flow's 900 ms must win
 	vadStop := cfg.vadStop(0)
@@ -367,11 +367,11 @@ func TestCallStopWaitsForTheFlowsSpeechTimeout(t *testing.T) {
 		_, done := stop.Detect(coreturn.DetectionInput{SilenceFor: silence, Text: "hello there", TextFinal: true})
 		return done
 	}
-	flowCall := CallSpec{Turn: &flow.TurnSettings{SpeechTimeoutMS: ptr(900)}}
-	if ends(flowCall, vadStop+899*time.Millisecond) {
+	agentCall := CallSpec{Turn: &agent.TurnSettings{SpeechTimeoutMS: ptr(900)}}
+	if ends(agentCall, vadStop+899*time.Millisecond) {
 		t.Fatal("the turn ended before the flow's 900 ms resume window")
 	}
-	if !ends(flowCall, vadStop+900*time.Millisecond) {
+	if !ends(agentCall, vadStop+900*time.Millisecond) {
 		t.Fatal("the turn did not end at the flow's 900 ms resume window")
 	}
 	if !ends(CallSpec{}, vadStop+600*time.Millisecond) || ends(CallSpec{}, vadStop+599*time.Millisecond) {

@@ -1,6 +1,6 @@
 // Package flow contains persistent flow product behavior. Framework runtime
 // construction is intentionally left to the server runtime layer.
-package flow
+package agent
 
 import (
 	"context"
@@ -101,7 +101,7 @@ type Readiness struct {
 	ToolDependencies []ToolDependency `json:"tool_dependencies,omitempty"`
 }
 
-type Flow struct {
+type Agent struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
@@ -114,7 +114,7 @@ type Flow struct {
 }
 
 type Snapshot struct {
-	FlowID     string            `json:"flow_id"`
+	AgentID    string            `json:"flow_id"`
 	Version    Version           `json:"version"`
 	ConfigHash string            `json:"config_hash"`
 	MCPTools   []MCPToolSnapshot `json:"mcp_tools"`
@@ -124,31 +124,31 @@ type Snapshot struct {
 }
 
 type SessionPin struct {
-	ID            string
-	FlowID        string
-	FlowVersionID string
-	ConfigHash    string
+	ID             string
+	AgentID        string
+	AgentVersionID string
+	ConfigHash     string
 }
 
-func (s *Service) Create(ctx context.Context, req CreateRequest) (Flow, error) {
+func (s *Service) Create(ctx context.Context, req CreateRequest) (Agent, error) {
 	return s.create(ctx, req, false)
 }
 
-func (s *Service) create(ctx context.Context, req CreateRequest, mcpReviewRequired bool) (Flow, error) {
+func (s *Service) create(ctx context.Context, req CreateRequest, mcpReviewRequired bool) (Agent, error) {
 	name := strings.TrimSpace(req.Name)
 	if err := validateDetails(name, req.Description); err != nil {
-		return Flow{}, err
+		return Agent{}, err
 	}
 	config, err := s.attachedConfig(ctx, req.Config, req.fromStored)
 	if err != nil {
-		return Flow{}, err
+		return Agent{}, err
 	}
 	g, err := Decode(config)
 	if err != nil {
-		return Flow{}, err
+		return Agent{}, err
 	}
 	if err := checkStepTools(g, req.MCPTools); err != nil {
-		return Flow{}, err
+		return Agent{}, err
 	}
 	enabled := true
 	if req.Enabled != nil {
@@ -157,28 +157,28 @@ func (s *Service) create(ctx context.Context, req CreateRequest, mcpReviewRequir
 	row := storage.Agent{ID: storage.NewID(), Name: name, Description: req.Description, Enabled: enabled}
 	selected, err := toStorageSelections(req.MCPTools)
 	if err != nil {
-		return Flow{}, err
+		return Agent{}, err
 	}
 	if _, err := s.store.Agents().CreateWithVersionAndToolsAndReviewRequired(ctx, row, config, selected, mcpReviewRequired); err != nil {
-		return Flow{}, err
+		return Agent{}, err
 	}
 	return s.Get(ctx, row.ID)
 }
 
-func (s *Service) Get(ctx context.Context, id string) (Flow, error) {
+func (s *Service) Get(ctx context.Context, id string) (Agent, error) {
 	row, err := s.store.Agents().Current(ctx, id)
 	if err != nil {
-		return Flow{}, err
+		return Agent{}, err
 	}
 	return s.fromRow(ctx, row)
 }
 
-func (s *Service) List(ctx context.Context, limit, offset int) ([]Flow, error) {
+func (s *Service) List(ctx context.Context, limit, offset int) ([]Agent, error) {
 	rows, err := s.store.Agents().List(ctx, limit, offset)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Flow, 0, len(rows))
+	out := make([]Agent, 0, len(rows))
 	for _, row := range rows {
 		a, err := s.fromRow(ctx, row)
 		if err != nil {
@@ -189,33 +189,33 @@ func (s *Service) List(ctx context.Context, limit, offset int) ([]Flow, error) {
 	return out, nil
 }
 
-func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (Flow, error) {
+func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (Agent, error) {
 	var config json.RawMessage
 	var err error
 	if len(req.Config) > 0 {
 		config, err = s.attachedConfig(ctx, req.Config, false)
 		if err != nil {
-			return Flow{}, err
+			return Agent{}, err
 		}
 	}
 	mutation := storage.AgentMutation{Name: req.Name, Description: req.Description, Enabled: req.Enabled}
 	if req.MCPTools != nil {
 		selected, err := toStorageSelections(*req.MCPTools)
 		if err != nil {
-			return Flow{}, err
+			return Agent{}, err
 		}
 		mutation.Tools = &selected
 		if len(config) == 0 {
-			return Flow{}, fmt.Errorf("%w: mcp_tools must be sent with config", ErrInvalidConfig)
+			return Agent{}, fmt.Errorf("%w: mcp_tools must be sent with config", ErrInvalidConfig)
 		}
 	}
 	if len(config) > 0 {
 		if err := s.checkConfigTools(ctx, id, config, req.MCPTools); err != nil {
-			return Flow{}, err
+			return Agent{}, err
 		}
 	}
 	if _, _, err := s.store.Agents().MutateAndPublish(ctx, id, mutation, config); err != nil {
-		return Flow{}, err
+		return Agent{}, err
 	}
 	return s.Get(ctx, id)
 }
@@ -259,13 +259,13 @@ func (s *Service) Archive(ctx context.Context, id string) error {
 	return s.store.Agents().Archive(ctx, id)
 }
 
-func (s *Service) Duplicate(ctx context.Context, id, name string) (Flow, error) {
+func (s *Service) Duplicate(ctx context.Context, id, name string) (Agent, error) {
 	source, err := s.Get(ctx, id)
 	if err != nil {
-		return Flow{}, err
+		return Agent{}, err
 	}
 	if source.Version == nil {
-		return Flow{}, errors.New("flow has no current version")
+		return Agent{}, errors.New("flow has no current version")
 	}
 	if strings.TrimSpace(name) == "" {
 		name = source.Name + " copy"
@@ -315,8 +315,8 @@ func (s *Service) ResolveDraft(ctx context.Context, id string, config json.RawMe
 		draft.MCPTools = selected
 		draft.MCPReviewRequired = false // choosing the tools again is the review, as in a publish
 	}
-	readiness, tools := s.flowReadiness(ctx, draft, row.Enabled, row.Archived)
-	return Snapshot{FlowID: row.ID, Version: toVersion(draft), ConfigHash: hash, MCPTools: tools, Draft: true}, readiness, nil
+	readiness, tools := s.agentReadiness(ctx, draft, row.Enabled, row.Archived)
+	return Snapshot{AgentID: row.ID, Version: toVersion(draft), ConfigHash: hash, MCPTools: tools, Draft: true}, readiness, nil
 }
 
 func (s *Service) ResolveCurrent(ctx context.Context, id string) (Snapshot, error) {
@@ -332,11 +332,11 @@ func (s *Service) ResolveCurrent(ctx context.Context, id string) (Snapshot, erro
 		return Snapshot{}, err
 	}
 	version := toVersion(v)
-	readiness, tools := s.flowReadiness(ctx, v, row.Enabled, row.Archived)
+	readiness, tools := s.agentReadiness(ctx, v, row.Enabled, row.Archived)
 	if readiness.State == ReadinessNotReady || readiness.State == ReadinessNeedsToolReview || readiness.State == ReadinessToolUnavailable {
 		return Snapshot{}, errors.New("flow not ready")
 	}
-	return Snapshot{FlowID: row.ID, Version: version, ConfigHash: v.ConfigHash, MCPTools: tools}, nil
+	return Snapshot{AgentID: row.ID, Version: version, ConfigHash: v.ConfigHash, MCPTools: tools}, nil
 }
 
 // StartSession resolves and persists one immutable version reference. A later
@@ -370,12 +370,12 @@ func (s *Service) StartCapturedSession(ctx context.Context, snapshot Snapshot, s
 		runtimeTools = append(runtimeTools, storage.SelectedTool{ServerID: tool.ServerID, RemoteName: tool.RemoteName, SchemaHash: tool.SchemaHash, Required: tool.Required})
 	}
 	if err := s.store.Sessions().Create(ctx, storage.SessionRecord{
-		ID: sessionID, AgentID: snapshot.FlowID, AgentVersionID: snapshot.Version.ID,
+		ID: sessionID, AgentID: snapshot.AgentID, AgentVersionID: snapshot.Version.ID,
 		ConfigHash: snapshot.ConfigHash, StartedAt: time.Now().UTC(), Status: "active", RuntimeSnapshotJSON: runtimeJSON, RuntimeTools: runtimeTools, Draft: snapshot.Draft, Caller: caller,
 	}); err != nil {
 		return SessionPin{}, err
 	}
-	return SessionPin{ID: sessionID, FlowID: snapshot.FlowID, FlowVersionID: snapshot.Version.ID, ConfigHash: snapshot.ConfigHash}, nil
+	return SessionPin{ID: sessionID, AgentID: snapshot.AgentID, AgentVersionID: snapshot.Version.ID, ConfigHash: snapshot.ConfigHash}, nil
 }
 
 // EndSession ends a session, recording why (one of storage.EndReasons).
@@ -403,9 +403,9 @@ func (s *Service) ResolveSession(ctx context.Context, sessionID string) (Snapsho
 		}
 	}
 	if runtimeTools == nil {
-		_, runtimeTools = s.flowReadiness(ctx, v, true, false)
+		_, runtimeTools = s.agentReadiness(ctx, v, true, false)
 	}
-	return Snapshot{FlowID: session.AgentID, Version: version, ConfigHash: session.ConfigHash, MCPTools: runtimeTools}, nil
+	return Snapshot{AgentID: session.AgentID, Version: version, ConfigHash: session.ConfigHash, MCPTools: runtimeTools}, nil
 }
 
 // SetMCPTools publishes a new immutable flow version. Existing versions and
@@ -430,15 +430,15 @@ func (s *Service) SetMCPTools(ctx context.Context, id string, tools []ToolSelect
 	return *updated.Version, nil
 }
 
-func (s *Service) fromRow(ctx context.Context, row storage.Agent) (Flow, error) {
-	a := Flow{ID: row.ID, Name: row.Name, Description: row.Description, Enabled: row.Enabled, Archived: row.Archived, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+func (s *Service) fromRow(ctx context.Context, row storage.Agent) (Agent, error) {
+	a := Agent{ID: row.ID, Name: row.Name, Description: row.Description, Enabled: row.Enabled, Archived: row.Archived, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 	if row.CurrentVersionID != "" {
 		v, err := s.store.Agents().Version(ctx, row.CurrentVersionID)
 		if err != nil {
-			return Flow{}, err
+			return Agent{}, err
 		}
 		converted := toVersion(v)
-		a.Readiness, _ = s.flowReadiness(ctx, v, row.Enabled, row.Archived)
+		a.Readiness, _ = s.agentReadiness(ctx, v, row.Enabled, row.Archived)
 		a.Version = &converted
 	} else {
 		a.Readiness = Readiness{State: ReadinessNotReady, Reasons: []string{"missing_configuration"}}
@@ -456,7 +456,7 @@ const (
 
 // flowReadiness evaluates an already-loaded version (with its MCPTools)
 // against the current provider availability.
-func (s *Service) flowReadiness(ctx context.Context, version storage.AgentVersion, enabled, archived bool) (Readiness, []MCPToolSnapshot) {
+func (s *Service) agentReadiness(ctx context.Context, version storage.AgentVersion, enabled, archived bool) (Readiness, []MCPToolSnapshot) {
 	if version.MCPReviewRequired {
 		return Readiness{State: ReadinessNeedsToolReview, Reasons: []string{"mcp_tools_detached_review_required"}, ToolDependencies: []ToolDependency{}}, nil
 	}

@@ -58,7 +58,7 @@ var (
 	// process-wide breaker for the other scenarios.
 	classFailover = serverClass{"failover", ""}
 	// classFlow runs S14 in its own server: its flow is a two-step flow.
-	classFlow = serverClass{"graph", ""}
+	classAgent = serverClass{"graph", ""}
 )
 
 const pingIdleTimeout = 3 * time.Second

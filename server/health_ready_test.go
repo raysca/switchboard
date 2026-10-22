@@ -124,7 +124,7 @@ func TestNetworkSurface_PublicAdminSeparation(t *testing.T) {
 	}
 }
 
-func TestReady_RequiresFlowStoreAndReportsCircuits(t *testing.T) {
+func TestReady_RequiresAgentStoreAndReportsCircuits(t *testing.T) {
 	srv, err := NewServer(DefaultConfig(ProfileDevelopment))
 	if err != nil {
 		t.Fatalf("new server: %v", err)

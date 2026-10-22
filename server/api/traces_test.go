@@ -26,31 +26,31 @@ func newTestStore(t *testing.T) *storage.Store {
 	return s
 }
 
-func createTestFlowAndVersion(t *testing.T, s *storage.Store) (string, string, string) {
+func createTestAgentAndVersion(t *testing.T, s *storage.Store) (string, string, string) {
 	t.Helper()
 	ctx := context.Background()
-	flowID := storage.NewID()
-	a := storage.Agent{ID: flowID, Name: "APIAgent", Enabled: true, CreatedAt: time.Now()}
+	agentID := storage.NewID()
+	a := storage.Agent{ID: agentID, Name: "APIAgent", Enabled: true, CreatedAt: time.Now()}
 	if err := s.Agents().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := publishTestVersion(ctx, s, flowID, []byte(`{"llm":"test"}`), nil)
+	v, err := publishTestVersion(ctx, s, agentID, []byte(`{"llm":"test"}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return flowID, v.ID, v.ConfigHash
+	return agentID, v.ID, v.ConfigHash
 }
 
 func setupTracesHandler(t *testing.T) (*storage.Store, http.Handler, string, string) {
 	t.Helper()
 	s := newTestStore(t)
-	flowID, vID, hash := createTestFlowAndVersion(t, s)
+	agentID, vID, hash := createTestAgentAndVersion(t, s)
 
 	sessID := storage.NewID()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	sess := storage.SessionRecord{
 		ID:                  sessID,
-		AgentID:             flowID,
+		AgentID:             agentID,
 		AgentVersionID:      vID,
 		ConfigHash:          hash,
 		Status:              "active",
@@ -327,13 +327,13 @@ func TestTracesMethodNotAllowedAndNotFound(t *testing.T) {
 
 func TestSessionsSayWhetherTheyWereADraft(t *testing.T) {
 	s, handler, sessID, _ := setupTracesHandler(t)
-	flowID, versionID, _ := createTestFlowAndVersion(t, s)
+	agentID, versionID, _ := createTestAgentAndVersion(t, s)
 	draftHash, _, err := storage.ConfigHash([]byte(`{"draft":"yes"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	draftID := storage.NewID()
-	if err := s.Sessions().Create(context.Background(), storage.SessionRecord{ID: draftID, AgentID: flowID, AgentVersionID: versionID, ConfigHash: draftHash, Status: "active", StartedAt: time.Now().UTC(), Draft: true}); err != nil {
+	if err := s.Sessions().Create(context.Background(), storage.SessionRecord{ID: draftID, AgentID: agentID, AgentVersionID: versionID, ConfigHash: draftHash, Status: "active", StartedAt: time.Now().UTC(), Draft: true}); err != nil {
 		t.Fatal(err)
 	}
 	for id, want := range map[string]bool{sessID: false, draftID: true} {
@@ -353,11 +353,11 @@ func TestSessionsSayWhetherTheyWereADraft(t *testing.T) {
 
 func TestSessionsCarryTheCallerTheEndReasonAndAMedianReply(t *testing.T) {
 	s := newTestStore(t)
-	flowID, vID, hash := createTestFlowAndVersion(t, s)
+	agentID, vID, hash := createTestAgentAndVersion(t, s)
 	ctx := context.Background()
 	id := storage.NewID()
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	if err := s.Sessions().Create(ctx, storage.SessionRecord{ID: id, AgentID: flowID, AgentVersionID: vID, ConfigHash: hash, Status: "active", StartedAt: now, Caller: "flow-test-abc"}); err != nil {
+	if err := s.Sessions().Create(ctx, storage.SessionRecord{ID: id, AgentID: agentID, AgentVersionID: vID, ConfigHash: hash, Status: "active", StartedAt: now, Caller: "flow-test-abc"}); err != nil {
 		t.Fatal(err)
 	}
 	for i, l := range []string{`{"voice_to_voice_ms":500}`, `{"voice_to_voice_ms":900}`, `{"voice_to_voice_ms":700}`} {
@@ -366,7 +366,7 @@ func TestSessionsCarryTheCallerTheEndReasonAndAMedianReply(t *testing.T) {
 		}
 	}
 	idle := storage.NewID() // a session with no measured turn
-	if err := s.Sessions().Create(ctx, storage.SessionRecord{ID: idle, AgentID: flowID, AgentVersionID: vID, ConfigHash: hash, Status: "active", StartedAt: now.Add(time.Second)}); err != nil {
+	if err := s.Sessions().Create(ctx, storage.SessionRecord{ID: idle, AgentID: agentID, AgentVersionID: vID, ConfigHash: hash, Status: "active", StartedAt: now.Add(time.Second)}); err != nil {
 		t.Fatal(err)
 	}
 	handler := api.NewTracesHandler(s.Sessions(), s.Traces())
@@ -403,7 +403,7 @@ func TestSessionsCarryTheCallerTheEndReasonAndAMedianReply(t *testing.T) {
 }
 
 // publishTestVersion publishes config (with the given MCP selection) as the flow's next version.
-func publishTestVersion(ctx context.Context, s *storage.Store, flowID string, config []byte, tools []storage.SelectedTool) (storage.AgentVersion, error) {
-	v, _, err := s.Agents().MutateAndPublish(ctx, flowID, storage.AgentMutation{Tools: &tools}, config)
+func publishTestVersion(ctx context.Context, s *storage.Store, agentID string, config []byte, tools []storage.SelectedTool) (storage.AgentVersion, error) {
+	v, _, err := s.Agents().MutateAndPublish(ctx, agentID, storage.AgentMutation{Tools: &tools}, config)
 	return v, err
 }

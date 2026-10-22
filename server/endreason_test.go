@@ -54,7 +54,7 @@ func TestEndCauses(t *testing.T) {
 	for in, want := range map[string]string{
 		core.IdleReasonUser: storage.EndSilentCaller,
 		core.IdleReasonBot:  storage.EndAgentStuck,
-		EndReasonFlow:       storage.EndedByFlow,
+		EndReasonAgent:      storage.EndedByAgent,
 		"something_new":     storage.EndCallerHungUp,
 		"":                  storage.EndCallerHungUp,
 	} {

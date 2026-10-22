@@ -6,7 +6,7 @@ import (
 	"time"
 
 	coreturn "govoice/core/turn"
-	"govoice/server/flow"
+	"govoice/server/agent"
 )
 
 // effectiveMaxMute is the cap on one continuous mute: turn.max_mute, or the library's default.
@@ -23,17 +23,17 @@ func (t TurnConfig) effectiveSpeechTimeout() time.Duration {
 func (t TurnConfig) endOfTurn() string {
 	switch {
 	case slices.Contains(t.Stop, "turn-analyzer"):
-		return flow.EndOfTurnSmart
+		return agent.EndOfTurnSmart
 	case slices.Contains(t.Stop, "eager"):
-		return flow.EndOfTurnEager
+		return agent.EndOfTurnEager
 	}
-	return flow.EndOfTurnDefault
+	return agent.EndOfTurnDefault
 }
 
 // forCall is the server's turn settings with a flow's choices laid over them, member by member. The
 // server's config is shared by every call, so the result never aliases its slices, and a flow can only
 // shorten the mute cap.
-func (t TurnConfig) forCall(f *flow.TurnSettings) TurnConfig {
+func (t TurnConfig) forCall(f *agent.TurnSettings) TurnConfig {
 	t.Mute = slices.Clone(t.Mute)
 	t.Stop = slices.Clone(t.Stop)
 	if f == nil {
@@ -55,7 +55,7 @@ func (t TurnConfig) forCall(f *flow.TurnSettings) TurnConfig {
 		t.Analyzer.Hold = time.Duration(*f.SmartHoldMS) * time.Millisecond
 	}
 	if f.EndOfTurn != "" {
-		t.Stop = flowStop(f.EndOfTurn, t.Stop)
+		t.Stop = agentStop(f.EndOfTurn, t.Stop)
 	}
 	return t
 }
@@ -63,12 +63,12 @@ func (t TurnConfig) forCall(f *flow.TurnSettings) TurnConfig {
 // flowStop is the stop chain for a flow's end_of_turn. It replaces only the detector entries: an
 // llm-completion entry is the prompt protocol, which stays the server's. Every chain keeps speech-timeout
 // (a chain of llm-completion alone is refused by turnStopDetector), so default is [] only without it.
-func flowStop(endOfTurn string, server []string) []string {
+func agentStop(endOfTurn string, server []string) []string {
 	var stop []string
 	switch endOfTurn {
-	case flow.EndOfTurnSmart:
+	case agent.EndOfTurnSmart:
 		stop = []string{"turn-analyzer", "speech-timeout"}
-	case flow.EndOfTurnEager:
+	case agent.EndOfTurnEager:
 		stop = []string{"eager", "speech-timeout"}
 	}
 	if slices.Contains(server, "llm-completion") {

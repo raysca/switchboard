@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"govoice/server/flow"
+	"govoice/server/agent"
 )
 
 // maxDrafts bounds the draft calls waiting for their caller to connect.
@@ -21,7 +21,7 @@ const draftGrace = time.Minute
 // draftCall is a validated draft held until its voice token connects. It is in
 // memory only: a draft is never stored as a flow version.
 type draftCall struct {
-	snapshot flow.Snapshot
+	snapshot agent.Snapshot
 	expires  time.Time
 }
 

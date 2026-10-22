@@ -119,7 +119,7 @@ call panel) and `lib/mcp-helpers.ts` (the MCP test servers).
 | `50-screens.spec.ts` | Walks the canvas boards 3 to 12 with a numbered screenshot of each, on a stack that already has flows |
 | `60-dental.spec.ts` | Load demo from the Dashboard, a new-patient call and a returning-patient call with the real dentistry MCP server (`cmd/dental-mcp`): routing, MCP tool calls, the call ended by the flow; the Calls page shows the path, how it ended ("By the flow (...)") and the step-labelled transcript, and the tool-call spans are counted through the traces API (the page does not list individual tool calls). The fake LLM sends no transfer note, so the note is covered by Go unit tests, not here. Fake only |
 
-The server-side twin of the fake suite is `server/flow_e2e_test.go` (`make test-e2e-go`): it also decodes the audio frames on the WebSocket, so the cue is checked as bytes on the wire (it plays in the gap, is paced at 20 ms, stops when sales speaks or the handoff fails, and a quick handoff or an unknown sound plays nothing). CI
+The server-side twin of the fake suite is `server/agent_e2e_test.go` (`make test-e2e-go`): it also decodes the audio frames on the WebSocket, so the cue is checked as bytes on the wire (it plays in the gap, is paced at 20 ms, stops when sales speaks or the handoff fails, and a quick handoff or an unknown sound plays nothing). CI
 runs the fake suite as the `graph-e2e` job (the name is a required status check, so it keeps its old name).
 
 ## One-port suite

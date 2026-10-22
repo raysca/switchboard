@@ -109,7 +109,7 @@ func DefaultConfig(profile Profile) *Config {
 	cfg.Idle.UserTimeout, cfg.Idle.MaxPrompts = defaultUserTimeout, defaultMaxPrompts
 	cfg.Idle.Prompt, cfg.Idle.Goodbye = defaultIdlePrompt, defaultIdleBye
 	cfg.Idle.BotMaxStuck = 3
-	cfg.Audio.AllowFlowBackground = profile == ProfileDevelopment
+	cfg.Audio.AllowAgentBackground = profile == ProfileDevelopment
 	cfg.DTMF.AggregateTimeout = 2 * time.Second
 	cfg.Audio.DenoiseStrength = 0.5
 	cfg.Warmup.Timeout = 3 * time.Second

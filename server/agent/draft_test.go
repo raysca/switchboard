@@ -1,4 +1,4 @@
-package flow
+package agent
 
 import (
 	"context"
@@ -15,7 +15,7 @@ func draftConfig(prompt string) json.RawMessage {
 	return json.RawMessage(`{"stt":{"provider":"google","model":"google.stt"},"llm":{"provider":"google","model":"google.llm","system_prompt":"` + prompt + `"},"tts":{"provider":"google","voice":"google.tts"}}`)
 }
 
-func publishedFlow(t *testing.T, svc *Service, prompt string) Flow {
+func publishedAgent(t *testing.T, svc *Service, prompt string) Agent {
 	t.Helper()
 	f, err := svc.Create(context.Background(), CreateRequest{Name: "Support", Config: draftConfig(prompt)})
 	if err != nil {
@@ -27,13 +27,13 @@ func publishedFlow(t *testing.T, svc *Service, prompt string) Flow {
 func TestResolveDraftReturnsTheDraftOnTheCurrentVersion(t *testing.T) {
 	svc := testService(t)
 	ctx := context.Background()
-	f := publishedFlow(t, svc, "PUBLISHED")
+	f := publishedAgent(t, svc, "PUBLISHED")
 	snap, readiness, err := svc.ResolveDraft(ctx, f.ID, draftConfig("DRAFT"), nil)
 	if err != nil || readiness.State != ReadinessReady {
 		t.Fatalf("readiness %+v err %v", readiness, err)
 	}
 	wantHash, _, _ := storage.ConfigHash(draftConfig("DRAFT"))
-	if !snap.Draft || snap.FlowID != f.ID || snap.Version.ID != f.Version.ID || snap.Version.Number != f.Version.Number {
+	if !snap.Draft || snap.AgentID != f.ID || snap.Version.ID != f.Version.ID || snap.Version.Number != f.Version.Number {
 		t.Fatalf("snapshot %+v: a draft must sit on the current version %+v", snap, f.Version)
 	}
 	if snap.ConfigHash != wantHash || snap.ConfigHash == f.Version.ConfigHash || snap.Version.ConfigHash != wantHash {
@@ -51,7 +51,7 @@ func TestResolveDraftReturnsTheDraftOnTheCurrentVersion(t *testing.T) {
 func TestResolveDraftRejectsWhatAPublishWouldReject(t *testing.T) {
 	ctx := context.Background()
 	svc := testService(t)
-	f := publishedFlow(t, svc, "P")
+	f := publishedAgent(t, svc, "P")
 	for name, cfg := range map[string]json.RawMessage{
 		"not json":            json.RawMessage(`{`),
 		"not an object":       json.RawMessage(`[1]`),
@@ -74,20 +74,20 @@ func TestResolveDraftRejectsWhatAPublishWouldReject(t *testing.T) {
 // flow's attached MCP tools.
 func TestResolveDraftRefusesAnIncompleteDraftLikeAPublish(t *testing.T) {
 	svc := testService(t)
-	f := publishedFlow(t, svc, "P")
+	f := publishedAgent(t, svc, "P")
 	incomplete := json.RawMessage(`{"stt":{"provider":"google","model":"google.stt"},"llm":{"provider":"google"},"tts":{"provider":"google","voice":"google.tts"}}`)
 	if _, _, err := svc.ResolveDraft(context.Background(), f.ID, incomplete, nil); !errors.Is(err, ErrNotAttached) {
 		t.Fatalf("incomplete draft: %v, want ErrNotAttached", err)
 	}
 }
 
-func TestResolveDraftNeedsAUsableFlow(t *testing.T) {
+func TestResolveDraftNeedsAUsableAgent(t *testing.T) {
 	ctx := context.Background()
 	svc := testService(t)
 	if _, _, err := svc.ResolveDraft(ctx, storage.NewID(), draftConfig("D"), nil); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("unknown flow: %v", err)
 	}
-	f := publishedFlow(t, svc, "P")
+	f := publishedAgent(t, svc, "P")
 	if err := svc.Archive(ctx, f.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestResolveDraftNeedsAUsableFlow(t *testing.T) {
 func TestResolveDraftWritesNothing(t *testing.T) {
 	svc := testService(t)
 	ctx := context.Background()
-	f := publishedFlow(t, svc, "P")
+	f := publishedAgent(t, svc, "P")
 	var before, after int
 	count := func(n *int) {
 		if err := svc.store.DB().QueryRowContext(ctx, "SELECT count(*) FROM agent_versions").Scan(n); err != nil {
@@ -116,23 +116,23 @@ func TestResolveDraftWritesNothing(t *testing.T) {
 	}
 }
 
-func TestResolveDraftCanSelectToolsTheFlowHasNotPublished(t *testing.T) {
+func TestResolveDraftCanSelectToolsTheAgentHasNotPublished(t *testing.T) {
 	r := newToolsRig(t)
 	ctx := context.Background()
 	cfg := stepsConfig(r.server + "/echo")
 	// Without a selection the S1 rule stands: a step may only list tools the flow has.
-	if _, _, err := r.svc.ResolveDraft(ctx, r.flow.ID, cfg, nil); err == nil || !strings.Contains(err.Error(), "has not selected") {
+	if _, _, err := r.svc.ResolveDraft(ctx, r.agent.ID, cfg, nil); err == nil || !strings.Contains(err.Error(), "has not selected") {
 		t.Fatalf("an unselected step tool: %v", err)
 	}
 	tools := []ToolSelection{r.sel("echo")}
-	snap, readiness, err := r.svc.ResolveDraft(ctx, r.flow.ID, cfg, &tools)
+	snap, readiness, err := r.svc.ResolveDraft(ctx, r.agent.ID, cfg, &tools)
 	if err != nil || readiness.State != ReadinessReady {
 		t.Fatalf("readiness %+v err %v", readiness, err)
 	}
 	if len(snap.MCPTools) != 1 || snap.MCPTools[0].RemoteName != "echo" || !snap.Draft {
 		t.Fatalf("snapshot tools %+v", snap.MCPTools)
 	}
-	again, err := r.svc.Get(ctx, r.flow.ID)
+	again, err := r.svc.Get(ctx, r.agent.ID)
 	if err != nil || again.Version.Number != 1 || len(again.Version.MCPTools) != 0 {
 		t.Fatalf("a draft must not change the stored flow: %+v err %v", again.Version, err)
 	}
@@ -143,13 +143,13 @@ func TestResolveDraftRefusesAToolSelectionAPublishWouldRefuse(t *testing.T) {
 	ctx := context.Background()
 	stale := r.sel("echo")
 	stale.SchemaHash = "0000"
-	if _, _, err := r.svc.ResolveDraft(ctx, r.flow.ID, stepsConfig(), &[]ToolSelection{stale}); !errors.Is(err, storage.ErrInvalidToolSelection) {
+	if _, _, err := r.svc.ResolveDraft(ctx, r.agent.ID, stepsConfig(), &[]ToolSelection{stale}); !errors.Is(err, storage.ErrInvalidToolSelection) {
 		t.Fatalf("stale hash: %v", err)
 	}
 	if err := r.svc.store.MCP().DisableServer(ctx, r.server); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := r.svc.ResolveDraft(ctx, r.flow.ID, stepsConfig(), &[]ToolSelection{r.sel("echo")}); !errors.Is(err, storage.ErrInvalidToolSelection) {
+	if _, _, err := r.svc.ResolveDraft(ctx, r.agent.ID, stepsConfig(), &[]ToolSelection{r.sel("echo")}); !errors.Is(err, storage.ErrInvalidToolSelection) {
 		t.Fatalf("disabled server: %v", err)
 	}
 }
@@ -157,13 +157,13 @@ func TestResolveDraftRefusesAToolSelectionAPublishWouldRefuse(t *testing.T) {
 func TestADraftThatChoosesToolsAgainIsNotHeldBackByTheReviewFlag(t *testing.T) {
 	r := newToolsRig(t)
 	ctx := context.Background()
-	if _, err := r.svc.Update(ctx, r.flow.ID, UpdateRequest{Config: stepsConfig(r.server + "/echo"), MCPTools: &[]ToolSelection{r.sel("echo")}}); err != nil {
+	if _, err := r.svc.Update(ctx, r.agent.ID, UpdateRequest{Config: stepsConfig(r.server + "/echo"), MCPTools: &[]ToolSelection{r.sel("echo")}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.svc.store.MCP().DetachAndDelete(ctx, r.server); err != nil { // publishes a version that needs review
 		t.Fatal(err)
 	}
-	cur, _ := r.svc.Get(ctx, r.flow.ID)
+	cur, _ := r.svc.Get(ctx, r.agent.ID)
 	if cur.Readiness.State != ReadinessNeedsToolReview {
 		t.Fatalf("setup: %+v", cur.Readiness)
 	}
@@ -176,11 +176,11 @@ func TestADraftThatChoosesToolsAgainIsNotHeldBackByTheReviewFlag(t *testing.T) {
 		t.Fatal(err)
 	}
 	tools := []ToolSelection{{ServerID: m.ID, RemoteName: "echo", SchemaHash: d.Tools[0].SchemaHash}}
-	_, readiness, err := r.svc.ResolveDraft(ctx, r.flow.ID, stepsConfig(m.ID+"/echo"), &tools)
+	_, readiness, err := r.svc.ResolveDraft(ctx, r.agent.ID, stepsConfig(m.ID+"/echo"), &tools)
 	if err != nil || readiness.State != ReadinessReady {
 		t.Fatalf("a draft that chooses its tools again is the review: %+v err %v", readiness, err)
 	}
-	if _, readiness, _ = r.svc.ResolveDraft(ctx, r.flow.ID, stepsConfig(), nil); readiness.State != ReadinessNeedsToolReview {
+	if _, readiness, _ = r.svc.ResolveDraft(ctx, r.agent.ID, stepsConfig(), nil); readiness.State != ReadinessNeedsToolReview {
 		t.Fatalf("a draft without a selection keeps the flag: %+v", readiness)
 	}
 }

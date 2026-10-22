@@ -11,7 +11,7 @@ import (
 	"unicode/utf8"
 
 	"govoice/core"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/server/runtime"
 )
 
@@ -41,13 +41,13 @@ func (n *StepSpec) wipe() {
 
 // CallFlow is what a call needs to move between steps. Commit is set by the
 // pipeline builder once the route exists; transfer tools call it.
-type CallFlow struct {
+type CallAgent struct {
 	Start   string
 	Resolve func(ctx context.Context, stepID string) (StepSpec, error)
 	Commit  func(target string) error
-	Cue     *flow.RouteCue
+	Cue     *agent.RouteCue
 	// Backgrounds is the background each step names (by step id); the steps that name none are absent.
-	Backgrounds map[string]*flow.BackgroundSettings
+	Backgrounds map[string]*agent.BackgroundSettings
 
 	noteMu   sync.Mutex
 	note     string
@@ -57,8 +57,8 @@ type CallFlow struct {
 const (
 	// EndReasonFlow is the hang-up reason, trace attribute and RTVI error code when
 	// a step's end_call tool ends the call.
-	EndReasonFlow = "ended_by_flow"
-	endCallName   = "end_call"
+	EndReasonAgent = "ended_by_flow"
+	endCallName    = "end_call"
 	// endCallWait caps the wait for the goodbye to finish before the call ends anyway.
 	endCallWait = 15 * time.Second
 	endCallOK   = `{"status":"ending","instruction":"The call ends right after your next words. Say a brief goodbye now if you have not already, then stop."}`
@@ -92,7 +92,7 @@ func endCallDefinition() core.ToolDefinition {
 	}
 }
 
-func anyEndCall(g flow.Definition) bool {
+func anyEndCall(g agent.Definition) bool {
 	for _, n := range g.Steps {
 		if n.EndCall {
 			return true
@@ -103,13 +103,13 @@ func anyEndCall(g flow.Definition) bool {
 
 // transferTools are the transfer tools of one step: one per outgoing route, the
 // route condition being the model's cue to call it.
-func transferTools(g flow.Definition, stepID string) []core.ToolDefinition {
+func transferTools(g agent.Definition, stepID string) []core.ToolDefinition {
 	routes := g.RoutesFrom(stepID)
 	defs := make([]core.ToolDefinition, 0, len(routes))
 	for _, e := range routes {
 		to, _ := g.Step(e.To)
 		defs = append(defs, core.ToolDefinition{
-			Name:        flow.TransferToolName(to.Name),
+			Name:        agent.TransferToolName(to.Name),
 			Description: "Hand the caller to " + to.Name + ". Use when: " + e.Condition,
 			InputSchema: json.RawMessage(transferSchema),
 			Policy:      core.ToolPolicy{Timeout: 5 * time.Second},
@@ -119,11 +119,11 @@ func transferTools(g flow.Definition, stepID string) []core.ToolDefinition {
 }
 
 // transferTargets maps a step's transfer tool names to the target step ids.
-func transferTargets(g flow.Definition, stepID string) map[string]string {
+func transferTargets(g agent.Definition, stepID string) map[string]string {
 	out := map[string]string{}
 	for _, e := range g.RoutesFrom(stepID) {
 		to, _ := g.Step(e.To)
-		out[flow.TransferToolName(to.Name)] = to.ID
+		out[agent.TransferToolName(to.Name)] = to.ID
 	}
 	return out
 }
@@ -231,7 +231,7 @@ func saysOwnGreeting(stepID, start, greeting string) bool { return greeting != "
 // greeting speaks it (after a context-only message carrying the previous agent's note, if any) and the model is
 // not asked to greet; otherwise the model is told to greet, as before. add records a history message; speak
 // queues the greeting (it must not block).
-func (c *CallFlow) greetStep(stepID, stepName, greeting string, add func(core.Message) error, speak func(string)) error {
+func (c *CallAgent) greetStep(stepID, stepName, greeting string, add func(core.Message) error, speak func(string)) error {
 	note := c.takeNote()
 	if saysOwnGreeting(stepID, c.Start, greeting) {
 		if note != "" {
@@ -246,11 +246,11 @@ func (c *CallFlow) greetStep(stepID, stepName, greeting string, add func(core.Me
 }
 
 // setNote keeps the note of the transfer in progress for the greeting; every transfer overwrites it.
-func (c *CallFlow) setNote(n string) { c.noteMu.Lock(); c.note = n; c.noteMu.Unlock() }
+func (c *CallAgent) setNote(n string) { c.noteMu.Lock(); c.note = n; c.noteMu.Unlock() }
 
 // commitWithNote records note for the greeting and commits the transfer; on any
 // failure (a duplicate while one is pending, the limit) the previous note is restored.
-func (c *CallFlow) commitWithNote(target, note string) error {
+func (c *CallAgent) commitWithNote(target, note string) error {
 	if c.Commit == nil {
 		return errors.New("route not ready")
 	}
@@ -271,7 +271,7 @@ func (c *CallFlow) commitWithNote(target, note string) error {
 
 // takeNote returns the note once. In theory a greeting can read a losing commit's note for
 // microseconds before it is restored; Router.Commit rejects at once while a transfer is pending.
-func (c *CallFlow) takeNote() string {
+func (c *CallAgent) takeNote() string {
 	c.noteMu.Lock()
 	defer c.noteMu.Unlock()
 	n := c.note

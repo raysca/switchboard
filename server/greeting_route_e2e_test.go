@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"govoice/core"
-	"govoice/server/flow"
+	"govoice/server/agent"
 )
 
 const salesGreeting = "Sales here, what are you looking for?"
@@ -29,20 +29,20 @@ func routedGreetingConfig(frontGreeting, salesGreeting, salesVoice string) strin
 		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."},{"id":"e2","from":"sales","to":"front","condition":"The caller wants support."}]}`
 }
 
-func routedGreetingFlow(t *testing.T, r *flowRigE2E, frontGreeting, salesGreeting, salesVoice string) string {
+func routedGreetingAgent(t *testing.T, r *agentRigE2E, frontGreeting, salesGreeting, salesVoice string) string {
 	t.Helper()
-	f, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "Routed greeting", Config: json.RawMessage(routedGreetingConfig(frontGreeting, salesGreeting, salesVoice))})
-	if err != nil || f.Readiness.State != flow.ReadinessReady {
+	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Routed greeting", Config: json.RawMessage(routedGreetingConfig(frontGreeting, salesGreeting, salesVoice))})
+	if err != nil || f.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("flow: %+v err %v", f.Readiness, err)
 	}
-	r.flowID = f.ID
+	r.agentID = f.ID
 	return f.ID
 }
 
 func TestAStepsGreetingIsSpokenWordForWordInItsVoiceAndReplacesTheModelsGreeting(t *testing.T) {
 	probe := newProbe()
-	r := newFlowRigE2E(t, probe)
-	c := r.dial(routedGreetingFlow(t, r, "", salesGreeting, "salesvoice"))
+	r := newAgentRigE2E(t, probe)
+	c := r.dial(routedGreetingAgent(t, r, "", salesGreeting, "salesvoice"))
 	c.say("please transfer to sales")
 	c.waitReplies("Connecting you.", 1)
 	c.waitReplies(salesGreeting, 1)
@@ -66,8 +66,8 @@ func TestAStepsGreetingIsSpokenWordForWordInItsVoiceAndReplacesTheModelsGreeting
 }
 
 func TestAReturnToTheStartStepDoesNotReplayTheOpeningGreeting(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe())
-	c := r.dial(routedGreetingFlow(t, r, greetingText, salesGreeting, "salesvoice"))
+	r := newAgentRigE2E(t, newProbe())
+	c := r.dial(routedGreetingAgent(t, r, greetingText, salesGreeting, "salesvoice"))
 	c.waitReplies(greetingText, 1) // the opening
 	c.say("please transfer to sales")
 	c.waitReplies(salesGreeting, 1)
@@ -82,8 +82,8 @@ func TestAReturnToTheStartStepDoesNotReplayTheOpeningGreeting(t *testing.T) {
 func TestAGreetingOnAStepThatCannotBeBuiltIsNeverSpokenAndTheCallGoesOn(t *testing.T) {
 	probe := newProbe()
 	probe.failTTS = "brokenvoice"
-	r := newFlowRigE2E(t, probe)
-	c := r.dial(routedGreetingFlow(t, r, "", salesGreeting, "brokenvoice"))
+	r := newAgentRigE2E(t, probe)
+	c := r.dial(routedGreetingAgent(t, r, "", salesGreeting, "brokenvoice"))
 	c.say("please transfer to sales")
 	c.waitReplies("Connecting you.", 1)
 	time.Sleep(1200 * time.Millisecond)
@@ -95,12 +95,12 @@ func TestAGreetingOnAStepThatCannotBeBuiltIsNeverSpokenAndTheCallGoesOn(t *testi
 }
 
 func TestADraftCallPlaysTheDraftsRouteGreeting(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe())
-	f, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "Draft routed", Config: json.RawMessage(routedGreetingConfig("", "", "salesvoice"))})
+	r := newAgentRigE2E(t, newProbe())
+	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Draft routed", Config: json.RawMessage(routedGreetingConfig("", "", "salesvoice"))})
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.flowID = f.ID
+	r.agentID = f.ID
 	code, token, body := issueDraftToken(r, f.ID, routedGreetingConfig("", salesGreeting, "salesvoice"))
 	if code != http.StatusCreated {
 		t.Fatalf("%d %s", code, body)
@@ -120,7 +120,7 @@ func (g *greetLog) add(m core.Message) error { g.messages = append(g.messages, m
 func (g *greetLog) speak(s string)           { g.spoken = append(g.spoken, s) }
 
 func TestGreetStepKeepsTheNoteBeforeAFixedGreetingAndNeverShowsItToTheCaller(t *testing.T) {
-	cf := &CallFlow{Start: "front"}
+	cf := &CallAgent{Start: "front"}
 	cf.setNote("Ana needs a quote for a car")
 	var l greetLog
 	if err := cf.greetStep("sales", "Sales", salesGreeting, l.add, l.speak); err != nil {
@@ -135,7 +135,7 @@ func TestGreetStepKeepsTheNoteBeforeAFixedGreetingAndNeverShowsItToTheCaller(t *
 }
 
 func TestGreetStepWithoutANoteAddsNothingToTheHistoryBeforeAFixedGreeting(t *testing.T) {
-	cf := &CallFlow{Start: "front"}
+	cf := &CallAgent{Start: "front"}
 	var l greetLog
 	if err := cf.greetStep("sales", "Sales", salesGreeting, l.add, l.speak); err != nil {
 		t.Fatal(err)
@@ -151,7 +151,7 @@ func TestGreetStepFallsBackToTheModelsGreetingWithoutAGreetingOrForTheStartStep(
 		"the start step":  {"front", "Opening line."},
 		"blank greeting?": {"sales", ""},
 	} {
-		cf := &CallFlow{Start: "front"}
+		cf := &CallAgent{Start: "front"}
 		cf.setNote("a note")
 		var l greetLog
 		if err := cf.greetStep(tc.step, "Sales", tc.greeting, l.add, l.speak); err != nil {

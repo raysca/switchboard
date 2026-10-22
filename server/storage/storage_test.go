@@ -43,7 +43,7 @@ func TestMigrationEmptyAndIdempotentReopen(t *testing.T) {
 	}
 }
 
-func TestRepositoryFlowVersionImmutabilityAndHistorySafety(t *testing.T) {
+func TestRepositoryAgentVersionImmutabilityAndHistorySafety(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	a := Agent{ID: NewID(), Name: "A", Enabled: true, CreatedAt: time.Now()}
@@ -80,7 +80,7 @@ func TestRepositoryFlowVersionImmutabilityAndHistorySafety(t *testing.T) {
 	}
 }
 
-func TestSessionAdmissionRejectsDisabledOrArchivedFlow(t *testing.T) {
+func TestSessionAdmissionRejectsDisabledOrArchivedAgent(t *testing.T) {
 	s := testStore(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -139,7 +139,7 @@ func TestSessionEndRetriesPendingDeleteFinalization(t *testing.T) {
 	}
 }
 
-func TestRepositoryFlowVersionsAreMonotonicAndFlowListUpdateWork(t *testing.T) {
+func TestRepositoryAgentVersionsAreMonotonicAndAgentListUpdateWork(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	a := Agent{ID: NewID(), Name: "before"}
@@ -433,7 +433,7 @@ func TestRepositoryRejectsInvalidDurableIDs(t *testing.T) {
 	}
 }
 
-func TestRepositoryFlowCreateHonorsFlags(t *testing.T) {
+func TestRepositoryAgentCreateHonorsFlags(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	a := Agent{ID: NewID(), Name: "archived", Enabled: false, Archived: true}

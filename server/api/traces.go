@@ -29,16 +29,16 @@ type TraceRepository interface {
 
 // SessionDTO represents a persisted voice session for the management API.
 type SessionDTO struct {
-	ID            string     `json:"id"`
-	FlowID        string     `json:"flow_id"`
-	FlowVersionID string     `json:"flow_version_id"`
-	ConfigHash    string     `json:"config_hash"`
-	StartedAt     time.Time  `json:"started_at"`
-	EndedAt       *time.Time `json:"ended_at,omitempty"`
-	Status        string     `json:"status"`
-	TurnCount     int        `json:"turn_count"`
-	SafeSummary   string     `json:"safe_summary"`
-	Draft         bool       `json:"draft"` // a test call on an unpublished config
+	ID             string     `json:"id"`
+	AgentID        string     `json:"flow_id"`
+	AgentVersionID string     `json:"flow_version_id"`
+	ConfigHash     string     `json:"config_hash"`
+	StartedAt      time.Time  `json:"started_at"`
+	EndedAt        *time.Time `json:"ended_at,omitempty"`
+	Status         string     `json:"status"`
+	TurnCount      int        `json:"turn_count"`
+	SafeSummary    string     `json:"safe_summary"`
+	Draft          bool       `json:"draft"` // a test call on an unpublished config
 	// Caller is the label the integration chose for the call (the voice token's principal).
 	Caller string `json:"caller"`
 	// EndReason is why the call ended (empty while it is live): caller_hung_up, silent_caller,
@@ -348,17 +348,17 @@ func (h tracesHandler) tracesRoute(w http.ResponseWriter, r *http.Request, id, r
 
 func toSessionDTO(r storage.SessionRecord) SessionDTO {
 	dto := SessionDTO{
-		ID:            r.ID,
-		FlowID:        r.AgentID,
-		FlowVersionID: r.AgentVersionID,
-		ConfigHash:    r.ConfigHash,
-		StartedAt:     r.StartedAt,
-		Status:        r.Status,
-		TurnCount:     r.TurnCount,
-		SafeSummary:   r.SafeSummary,
-		Draft:         r.Draft,
-		Caller:        r.Caller,
-		EndReason:     r.EndReason,
+		ID:             r.ID,
+		AgentID:        r.AgentID,
+		AgentVersionID: r.AgentVersionID,
+		ConfigHash:     r.ConfigHash,
+		StartedAt:      r.StartedAt,
+		Status:         r.Status,
+		TurnCount:      r.TurnCount,
+		SafeSummary:    r.SafeSummary,
+		Draft:          r.Draft,
+		Caller:         r.Caller,
+		EndReason:      r.EndReason,
 	}
 	for _, t := range r.RuntimeTools {
 		dto.RuntimeTools = append(dto.RuntimeTools, RuntimeToolDTO{MCPServerID: t.ServerID, RemoteName: t.RemoteName, SchemaHash: t.SchemaHash, Required: t.Required})

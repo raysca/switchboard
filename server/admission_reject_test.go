@@ -43,7 +43,7 @@ func TestAdmissionRejectSignalsReason(t *testing.T) {
 			s.SetVADExecutor(&mockVADExecutor{ready: false})
 		}},
 		{"flow", "flow_limit", func(s *Server, dial func(bool) (*websocket.Conn, error)) {
-			s.cfg.Limits.MaxSessionsPerFlow = 1
+			s.cfg.Limits.MaxSessionsPerAgent = 1
 			c, _ := dial(true) // occupies the only slot
 			waitFor(t, func() bool { return s.metrics.ActiveSessions.Load() == 1 })
 			_ = c

@@ -13,7 +13,7 @@ import (
 
 	"govoice/core"
 	"govoice/core/coretest"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/vad"
 )
 
@@ -88,7 +88,7 @@ func newSumRig(t *testing.T, enabled bool, summarize func(context.Context, strin
 	})
 	call := CallSpec{STT: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google"},
 		MaxMessages: 40, MaxTokens: 600,
-		Summary: flow.SummarizationConfig{Enabled: enabled, TriggerTokens: 300, KeepTurns: 2}}
+		Summary: agent.SummarizationConfig{Enabled: enabled, TriggerTokens: 300, KeepTurns: 2}}
 	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
 	pipe, err := reg.BuildCallPipeline(DefaultConfig(ProfileDevelopment), call, vadProc, coretest.NewTransportOutput(coretest.TransportConfig{}))
 	if err != nil {
@@ -348,8 +348,8 @@ func TestFormatTranscriptHostileContent(t *testing.T) {
 // Short voice turns reach max_messages long before max_tokens: the message
 // trigger must sit below it or the budget evicts turns unsummarized.
 func TestSummaryConfigTriggersBelowBothLimits(t *testing.T) {
-	maxMsgs, maxToks := flow.ContextLimits{}.Limits()
-	sc := summaryConfig(flow.SummarizationConfig{Enabled: true}, maxMsgs, maxToks, textFn(nil), nil)
+	maxMsgs, maxToks := agent.ContextLimits{}.Limits()
+	sc := summaryConfig(agent.SummarizationConfig{Enabled: true}, maxMsgs, maxToks, textFn(nil), nil)
 	if sc.TriggerMessages <= 0 || sc.TriggerMessages >= maxMsgs || sc.TriggerTokens <= 0 || sc.TriggerTokens >= maxToks {
 		t.Fatalf("triggers %d msgs / %d tokens vs limits %d / %d", sc.TriggerMessages, sc.TriggerTokens, maxMsgs, maxToks)
 	}

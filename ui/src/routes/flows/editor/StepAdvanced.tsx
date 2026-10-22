@@ -208,7 +208,7 @@ function FallbackList({ kind, title, what, hint, items, providers, idPrefix, onC
           ))}
         </ol>
       )}
-      {/* silence takes no fallbacks and cannot be one (server/flow/fallback.go) */}
+      {/* silence takes no fallbacks and cannot be one (server/agent/fallback.go) */}
       <StageFields kind={kind} providers={providers.filter((p) => p.id !== TEXT_ONLY_PROVIDER)} idPrefix={idPrefix} value={draft} onChange={setDraft} />
       <button type="button" className="action-button-small" disabled={!ready} onClick={add}>
         Add {what} fallback

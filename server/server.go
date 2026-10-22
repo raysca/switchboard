@@ -24,10 +24,10 @@ import (
 	"govoice/core/redact"
 	"govoice/core/resilience"
 	"govoice/server/adminui"
+	"govoice/server/agent"
 	"govoice/server/api"
 	"govoice/server/auth"
 	"govoice/server/catalog"
-	"govoice/server/flow"
 	"govoice/server/mcp"
 	"govoice/server/otelexport"
 	"govoice/server/storage"
@@ -61,7 +61,7 @@ type Server struct {
 	validator             *token.Validator
 	management            *auth.Management
 	providerManagementAPI http.Handler
-	flowManagementAPI     http.Handler
+	agentManagementAPI    http.Handler
 	mcpManagementAPI      http.Handler
 	sessionManagementAPI  http.Handler
 	store                 *storage.Store
@@ -74,7 +74,7 @@ type Server struct {
 	vadExecutor           vad.SharedExecutor
 	turnBackend           smartturn.Backend
 	mgmt                  atomic.Pointer[management]
-	flows                 *flow.Service
+	agents                *agent.Service
 	mcpService            *mcp.Service
 	logger                *slog.Logger
 
@@ -299,8 +299,8 @@ func (s *Server) setProviderManagementAPI(handler http.Handler) {
 
 // setFlowManagementAPI installs the flow route handler behind management
 // authentication. Configure it before serving requests.
-func (s *Server) setFlowManagementAPI(handler http.Handler) {
-	s.flowManagementAPI = handler
+func (s *Server) setAgentManagementAPI(handler http.Handler) {
+	s.agentManagementAPI = handler
 }
 
 // setMCPManagementAPI installs the MCP handler behind the management listener
@@ -519,7 +519,7 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 		principal = conn.Claims().Subject
 	}
 
-	flowID := conn.FlowID()
+	agentID := conn.AgentID()
 
 	// 1. Admission Control check
 	vadCapacity := true
@@ -528,7 +528,7 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 		vadCapacity = s.vadExecutor.IsReady() && avail > 0
 	}
 
-	if err := s.admission.AcquireSession(principal, flowID, vadCapacity); err != nil {
+	if err := s.admission.AcquireSession(principal, agentID, vadCapacity); err != nil {
 		return nil, &ws.RejectError{Reason: admissionReason(err), Err: err}
 	}
 
@@ -537,7 +537,7 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 	sessionID := s.nextCallID.Add(1)
 	var fail func(error) (*core.Session, error)
 	var releaseCall func()
-	releaseSlot := sync.OnceFunc(func() { s.admission.ReleaseSession(principal, flowID) }) // fail may run twice
+	releaseSlot := sync.OnceFunc(func() { s.admission.ReleaseSession(principal, agentID) }) // fail may run twice
 	registered := false
 	defer func() {
 		if r := recover(); r != nil {
@@ -565,14 +565,14 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 		tokenID = claims.ID
 	}
 	ending := &endReason{transport: conn.CloseCause}
-	call, rel, err := s.resolveCall(resolveCtx, conn.FlowID(), tokenID, principal, ending)
+	call, rel, err := s.resolveCall(resolveCtx, conn.AgentID(), tokenID, principal, ending)
 	cancelResolve()
 	releaseCall = rel
 	if err != nil {
 		releaseSlot()
 		s.metrics.SessionsFailedTotal.Add(1)
 		timeline.Record(TimelineEvent{Type: EventError, Details: s.redactor.Redact(err.Error())})
-		s.logSetupFailure(sessionID, flowID, "resolve", err)
+		s.logSetupFailure(sessionID, agentID, "resolve", err)
 		return nil, fmt.Errorf("resolve flow: %w", err)
 	}
 	call.PushToTalk = conn.PushToTalk()
@@ -590,11 +590,11 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 	call.OnProviderRetry = func(stage, provider string, retry int) {
 		timeline.Record(TimelineEvent{Type: EventProviderRetry, Provider: provider, Details: fmt.Sprintf("%s retry %d", stage, retry)})
 	}
-	if hook := s.routeBackground(call.Flow, call.Audio, conn.SetBackground); hook != nil {
+	if hook := s.routeBackground(call.Agent, call.Audio, conn.SetBackground); hook != nil {
 		base := call.OnRoute
 		call.OnRoute = func(e core.RouteEvent) { base(e); hook(e) }
 	}
-	cue := s.newCallCue(call.Flow, conn.Cue(), timeline)
+	cue := s.newCallCue(call.Agent, conn.Cue(), timeline)
 	hold := s.newCallHold(call.Audio, conn.Cue(), timeline, cue)
 	call.toolHold = hold
 	if cue != nil || hold != nil {
@@ -627,7 +627,7 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 		s.recoverEach(sessionID, "stopRecording", stopRecording)
 		s.metrics.SessionsFailedTotal.Add(1)
 		timeline.Record(TimelineEvent{Type: EventError, Details: s.redactor.Redact(err.Error())})
-		s.logSetupFailure(sessionID, flowID, phase, err)
+		s.logSetupFailure(sessionID, agentID, phase, err)
 		return nil, err
 	}
 
@@ -780,13 +780,13 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 
 	var otelTracer *otelexport.SessionTracer
 	if s.otel != nil {
-		otelTracer = s.otel.Session(flowID, call.FlowVersionID)
+		otelTracer = s.otel.Session(agentID, call.AgentVersionID)
 		if err := session.SetTracer(otelTracer, s.otel.Policy()); err != nil {
 			return fail(fmt.Errorf("otel tracer: %w", err))
 		}
 	}
 
-	stopRecording = s.attachRecording(call, flowID, sessionID, conn, session)
+	stopRecording = s.attachRecording(call, agentID, sessionID, conn, session)
 
 	// Latency observer: attach before Start so startup timing is captured.
 	if _, err := observe.Attach(session, func(m observe.Measurement) {
@@ -827,7 +827,7 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 	go func() {
 		<-session.Done()
 		s.live.Delete(call.StoredSessionID) // gone for operators before teardown work starts
-		s.finishCall(sessionID, principal, flowID, session, conn, timeline, errProviders, ending, releaseCall, stopRecording)
+		s.finishCall(sessionID, principal, agentID, session, conn, timeline, errProviders, ending, releaseCall, stopRecording)
 	}()
 	registered = true
 
@@ -898,7 +898,7 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if s.flows == nil {
+	if s.agents == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "unready", "reason": "flow storage is not enabled"})
 		return
@@ -1444,7 +1444,7 @@ func (s *Server) recoverEach(sessionID uint64, label string, fn func()) {
 	fn()
 }
 
-func (s *Server) finishCall(sessionID uint64, principal, flowID string, session *core.Session, conn *ws.Connection, timeline *SessionTimeline, errProviders map[string]string, ending *endReason, release func(), stopRecording func()) {
+func (s *Server) finishCall(sessionID uint64, principal, agentID string, session *core.Session, conn *ws.Connection, timeline *SessionTimeline, errProviders map[string]string, ending *endReason, release func(), stopRecording func()) {
 	recDone := make(chan struct{})
 	go func() {
 		defer close(recDone)
@@ -1463,7 +1463,7 @@ func (s *Server) finishCall(sessionID uint64, principal, flowID string, session 
 		}
 		s.metrics.SessionsStoppedTotal.Add(1)
 	}()
-	defer s.admission.ReleaseSession(principal, flowID)
+	defer s.admission.ReleaseSession(principal, agentID)
 
 	if session != nil {
 		if n := session.LeakedTasks(); n > 0 {
@@ -1492,13 +1492,13 @@ func (s *Server) finishCall(sessionID uint64, principal, flowID string, session 
 // provider stage but never the error text: that may echo endpoints, credential
 // fragments or provider messages, and s.redactor masks PII, not secrets. The
 // redacted text is on the call timeline.
-func (s *Server) logSetupFailure(session uint64, flowID, phase string, err error) {
+func (s *Server) logSetupFailure(session uint64, agentID, phase string, err error) {
 	category := phase
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		category = "timeout"
 	}
-	s.logger.Warn("call setup failed", slog.Uint64("session", session), slog.String("flow", flowID),
+	s.logger.Warn("call setup failed", slog.Uint64("session", session), slog.String("flow", agentID),
 		slog.String("category", category), slog.String("stage", setupStage(err.Error())))
 }
 

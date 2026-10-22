@@ -15,7 +15,7 @@ import (
 
 	"govoice/core"
 	"govoice/core/turn"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/server/mcp"
 	"govoice/server/mcp/mcptest"
 	"govoice/transport/ws"
@@ -25,7 +25,7 @@ import (
 // MCP servers. The echo LLM calls an attached MCP tool when a user turn says
 // "call tool <name> {args}" and replies with what came back.
 type mcpCallRig struct {
-	*flowRigE2E
+	*agentRigE2E
 	mcp    *mcptest.Server
 	ts     *httptest.Server
 	refuse string
@@ -38,14 +38,14 @@ func newMCPCallRig(t *testing.T, mods ...func(*Config)) *mcpCallRig {
 	mcp := mcptest.New(mcptest.Options{Token: "tok-1"})
 	ts := httptest.NewServer(mcp.Handler())
 	t.Cleanup(ts.Close)
-	g := newFlowRigE2E(t, newProbe(), append([]func(*Config){func(c *Config) {
+	g := newAgentRigE2E(t, newProbe(), append([]func(*Config){func(c *Config) {
 		c.MCP.AllowLocalHTTP = true
 		c.MCP.Timeout = 800 * time.Millisecond
 	}}, mods...)...)
 	vars := testProviderVars(t)
 	vars["MCP_TOKEN_TEST"] = "tok-1"
 	g.s.env = mapEnv(vars)
-	r := &mcpCallRig{flowRigE2E: g, mcp: mcp, ts: ts}
+	r := &mcpCallRig{agentRigE2E: g, mcp: mcp, ts: ts}
 	free, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -94,29 +94,29 @@ func (r *mcpCallRig) discovered(id string) (string, map[string]string) {
 }
 
 // flowWith creates a plain echo flow with the given tools of one server attached.
-func (r *mcpCallRig) flowWith(serverID string, hashes map[string]string, required bool, async []string, tools ...string) flow.Flow {
+func (r *mcpCallRig) agentWith(serverID string, hashes map[string]string, required bool, async []string, tools ...string) agent.Agent {
 	r.t.Helper()
-	return r.flowWithExtra("", serverID, hashes, required, async, tools...)
+	return r.agentWithExtra("", serverID, hashes, required, async, tools...)
 }
 
 // flowWithExtra is flowWith with more top-level config members (a JSON fragment starting with a comma).
-func (r *mcpCallRig) flowWithExtra(extra, serverID string, hashes map[string]string, required bool, async []string, tools ...string) flow.Flow {
+func (r *mcpCallRig) agentWithExtra(extra, serverID string, hashes map[string]string, required bool, async []string, tools ...string) agent.Agent {
 	r.t.Helper()
-	sel := make([]flow.ToolSelection, 0, len(tools))
+	sel := make([]agent.ToolSelection, 0, len(tools))
 	for _, name := range tools {
 		hash := hashes[name]
 		if hash == "" {
 			hash = strings.Repeat("0", 64) // a server that never answered discovery
 		}
-		sel = append(sel, flow.ToolSelection{ServerID: serverID, RemoteName: name, SchemaHash: hash, Required: required})
+		sel = append(sel, agent.ToolSelection{ServerID: serverID, RemoteName: name, SchemaHash: hash, Required: required})
 	}
 	asyncJSON, _ := json.Marshal(async)
 	cfg := `{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"P"},"tts":{"provider":"echo","voice":"v"},"async_tools":` + string(asyncJSON) + extra + `}`
-	a, err := r.s.flows.Create(r.t.Context(), flow.CreateRequest{Name: "MCP " + strings.Join(tools, "+"), Config: json.RawMessage(cfg), MCPTools: sel})
+	a, err := r.s.agents.Create(r.t.Context(), agent.CreateRequest{Name: "MCP " + strings.Join(tools, "+"), Config: json.RawMessage(cfg), MCPTools: sel})
 	if err != nil {
 		r.t.Fatalf("flow: %v", err)
 	}
-	r.flowID = a.ID
+	r.agentID = a.ID
 	return a
 }
 
@@ -133,8 +133,8 @@ func (r *mcpCallRig) lastCall(tool string) mcptest.Record {
 func TestMCPCallOK(t *testing.T) {
 	r := newMCPCallRig(t)
 	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
-	a := r.flowWith(id, hashes, true, nil, "lookup_order")
-	if a.Readiness.State != flow.ReadinessReady {
+	a := r.agentWith(id, hashes, true, nil, "lookup_order")
+	if a.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("readiness %+v", a.Readiness)
 	}
 	c := r.dial(a.ID)
@@ -151,7 +151,7 @@ func TestMCPCallFailures(t *testing.T) {
 	id, hashes := r.server("fail", r.ts.URL+"/fail/tools", "")
 	for _, tool := range []string{"tool_error", "protocol_error", "drop", "too_big"} {
 		t.Run(tool, func(t *testing.T) {
-			c := r.dial(r.flowWith(id, hashes, false, nil, tool).ID)
+			c := r.dial(r.agentWith(id, hashes, false, nil, tool).ID)
 			c.say("call tool " + tool)
 			c.waitReplies("Tool "+tool+" failed", 1)
 			// The call goes on after the failure. Paced: a text turn sent the instant a
@@ -166,7 +166,7 @@ func TestMCPCallFailures(t *testing.T) {
 func TestMCPCallSlow(t *testing.T) {
 	r := newMCPCallRig(t)
 	id, hashes := r.server("slow", r.ts.URL+"/slow", "")
-	c := r.dial(r.flowWith(id, hashes, false, nil, "slow_lookup").ID)
+	c := r.dial(r.agentWith(id, hashes, false, nil, "slow_lookup").ID)
 	c.say(`call tool slow_lookup {"delay_ms":200}`)
 	c.waitReplies("Tool slow_lookup returned", 1)
 
@@ -193,7 +193,7 @@ func TestMCPCallBargeInCancelsSlowTool(t *testing.T) {
 		return onText(conn, text)
 	}
 	id, hashes := r.server("slow", r.ts.URL+"/slow", "")
-	c := r.dial(r.flowWith(id, hashes, false, nil, "slow_lookup").ID)
+	c := r.dial(r.agentWith(id, hashes, false, nil, "slow_lookup").ID)
 	c.say(`call tool slow_lookup {"delay_ms":4000}`)
 	eventually(t, "the tool call to start", func() bool { return r.lastCall("slow_lookup").Tool != "" })
 
@@ -231,7 +231,7 @@ func TestMCPCallUnreachable(t *testing.T) {
 	// Tools are attached while the server answers; then it goes away.
 	gone := httptest.NewServer(mcptest.New(mcptest.Options{}).Handler())
 	id, hashes := r.server("gone", gone.URL+"/open", "")
-	a := r.flowWith(id, hashes, false, nil, "lookup_order")
+	a := r.agentWith(id, hashes, false, nil, "lookup_order")
 	gone.Close()
 	c := r.dial(a.ID)
 	began := time.Now()
@@ -254,7 +254,7 @@ func TestMCPCallAHoldSoundPlaysWhileASlowToolRuns(t *testing.T) {
 		if async {
 			asyncTools = []string{id + "/slow_lookup"}
 		}
-		return rig.dial(rig.flowWithExtra(holdCue, id, hashes, false, asyncTools, "slow_lookup").ID)
+		return rig.dial(rig.agentWithExtra(holdCue, id, hashes, false, asyncTools, "slow_lookup").ID)
 	}
 	t.Run("a synchronous tool", func(t *testing.T) {
 		r := newMCPCallRig(t, withCue(t), func(c *Config) { c.MCP.Timeout = 10 * time.Second })
@@ -299,7 +299,7 @@ func TestMCPCallBargeInStopsTheHoldSound(t *testing.T) {
 		return onText(conn, text)
 	}
 	id, hashes := r.server("slow", r.ts.URL+"/slow", "")
-	c := r.dial(r.flowWithExtra(`,"audio":{"tool_cue":{"name":"chime","after_ms":300}}`, id, hashes, false, nil, "slow_lookup").ID)
+	c := r.dial(r.agentWithExtra(`,"audio":{"tool_cue":{"name":"chime","after_ms":300}}`, id, hashes, false, nil, "slow_lookup").ID)
 	c.say(`call tool slow_lookup {"delay_ms":6000}`)
 	eventually(t, "the hold sound", func() bool { return r.has(EventCueStart, "tool") && c.cueFrames() >= 5 })
 
@@ -348,23 +348,23 @@ func TestMCPCallBargeInStopsTheHoldSound(t *testing.T) {
 }
 
 // An empty token variable counts as missing: flow readiness names it, and setting it clears it.
-func TestFlowReadinessNamesAnEmptyMCPTokenVariable(t *testing.T) {
+func TestAgentReadinessNamesAnEmptyMCPTokenVariable(t *testing.T) {
 	r := newMCPCallRig(t)
 	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
-	a := r.flowWith(id, hashes, true, nil, "lookup_order")
+	a := r.agentWith(id, hashes, true, nil, "lookup_order")
 	vars := testProviderVars(t)
 	vars["MCP_TOKEN_TEST"] = ""
 	r.s.env = mapEnv(vars)
-	got, err := r.s.flows.Get(t.Context(), a.ID)
-	if err != nil || got.Readiness.State != flow.ReadinessToolUnavailable || got.Readiness.ToolDependencies[0].State != "auth_env_missing" || len(got.Readiness.MissingEnv) != 1 || got.Readiness.MissingEnv[0] != "MCP_TOKEN_TEST" {
+	got, err := r.s.agents.Get(t.Context(), a.ID)
+	if err != nil || got.Readiness.State != agent.ReadinessToolUnavailable || got.Readiness.ToolDependencies[0].State != "auth_env_missing" || len(got.Readiness.MissingEnv) != 1 || got.Readiness.MissingEnv[0] != "MCP_TOKEN_TEST" {
 		t.Fatalf("readiness=%+v err=%v", got.Readiness, err)
 	}
 	vars["MCP_TOKEN_TEST"] = "  " // whitespace-only: the token reader rejects it, so readiness must too
-	if got, err = r.s.flows.Get(t.Context(), a.ID); err != nil || got.Readiness.ToolDependencies[0].State != "auth_env_missing" {
+	if got, err = r.s.agents.Get(t.Context(), a.ID); err != nil || got.Readiness.ToolDependencies[0].State != "auth_env_missing" {
 		t.Fatalf("whitespace token: readiness=%+v err=%v", got.Readiness, err)
 	}
 	vars["MCP_TOKEN_TEST"] = "tok-1"
-	if got, err = r.s.flows.Get(t.Context(), a.ID); err != nil || got.Readiness.State != flow.ReadinessReady {
+	if got, err = r.s.agents.Get(t.Context(), a.ID); err != nil || got.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("readiness=%+v err=%v", got.Readiness, err)
 	}
 }
@@ -373,7 +373,7 @@ func TestFlowReadinessNamesAnEmptyMCPTokenVariable(t *testing.T) {
 // (after two failed rounds, which the unit test TestSyncTwoStrikes pins exactly) and a flow that
 // requires its tool not ready; restarting the endpoint makes both healthy again. Rounds come from a
 // short timer, so the strike counting is not asserted here.
-func TestMCPCallBackgroundSyncFailsAndHealsAServerAndFlowReadiness(t *testing.T) {
+func TestMCPCallBackgroundSyncFailsAndHealsAServerAndAgentReadiness(t *testing.T) {
 	r := newMCPCallRig(t, func(c *Config) { c.MCP.SyncInterval = 0 })
 	var down atomic.Bool
 	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -390,8 +390,8 @@ func TestMCPCallBackgroundSyncFailsAndHealsAServerAndFlowReadiness(t *testing.T)
 	y.Start()
 	t.Cleanup(func() { _ = y.Stop(context.Background()) })
 	id, hashes := r.server("flaky", live.URL+"/ok", "MCP_TOKEN_TEST")
-	a := r.flowWith(id, hashes, true, nil, "lookup_order")
-	state := func() (server, flowState string) {
+	a := r.agentWith(id, hashes, true, nil, "lookup_order")
+	state := func() (server, agentState string) {
 		w := apiRequest(r.s, http.MethodGet, "/api/v1/mcp-servers/"+id, e2eMgmtKey, "")
 		var d struct {
 			Data struct {
@@ -401,23 +401,23 @@ func TestMCPCallBackgroundSyncFailsAndHealsAServerAndFlowReadiness(t *testing.T)
 		if err := json.Unmarshal(w.Body.Bytes(), &d); err != nil {
 			t.Fatalf("server detail %d %s: %v", w.Code, w.Body.String(), err)
 		}
-		got, err := r.s.flows.Get(t.Context(), a.ID)
+		got, err := r.s.agents.Get(t.Context(), a.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return d.Data.ValidationState, string(got.Readiness.State)
 	}
-	if s, f := state(); s != "healthy" || f != string(flow.ReadinessReady) {
+	if s, f := state(); s != "healthy" || f != string(agent.ReadinessReady) {
 		t.Fatalf("before: server %q flow %q", s, f)
 	}
 	down.Store(true)
 	eventually(t, "the server to be marked failed and the flow not ready", func() bool {
 		s, f := state()
-		return s == "connection_failed" && f != string(flow.ReadinessReady)
+		return s == "connection_failed" && f != string(agent.ReadinessReady)
 	})
 	down.Store(false)
 	eventually(t, "the server healthy and the flow ready again", func() bool {
 		s, f := state()
-		return s == "healthy" && f == string(flow.ReadinessReady)
+		return s == "healthy" && f == string(agent.ReadinessReady)
 	})
 }

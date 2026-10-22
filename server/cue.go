@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"govoice/core"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/transport/ws"
 )
 
@@ -184,7 +184,7 @@ func (c *cueController) finish(reason string, end bool) {
 // newCallCue returns the call's cue controller, or nil when the flow has no
 // route cue, the transport has no cue output, or the named sound is not
 // configured (logged; the call runs without a cue).
-func (s *Server) newCallCue(g *CallFlow, player cuePlayer, tl *SessionTimeline) *cueController {
+func (s *Server) newCallCue(g *CallAgent, player cuePlayer, tl *SessionTimeline) *cueController {
 	if g == nil || g.Cue == nil || g.Cue.Name == "" {
 		return nil
 	}
@@ -422,7 +422,7 @@ func holdTools(next core.ToolExecutor, defs []core.ToolDefinition, h *holdCue) c
 
 // newCallHold returns the call's hold sound controller: nil when the flow has no tool cue, the transport has no cue output, or the named
 // sound is not configured (logged; the call runs without it).
-func (s *Server) newCallHold(a *flow.AudioSettings, player cuePlayer, tl *SessionTimeline, route *cueController) *holdCue {
+func (s *Server) newCallHold(a *agent.AudioSettings, player cuePlayer, tl *SessionTimeline, route *cueController) *holdCue {
 	if a == nil || a.ToolCue == nil || a.ToolCue.Name == "" {
 		return nil
 	}

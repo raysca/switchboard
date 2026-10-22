@@ -20,8 +20,8 @@ import (
 
 	"govoice/core"
 	"govoice/core/coretest"
+	"govoice/server/agent"
 	"govoice/server/catalog"
-	"govoice/server/flow"
 	"govoice/server/runtime"
 	"govoice/server/storage"
 	"govoice/transport/ws"
@@ -31,7 +31,7 @@ import (
 // WebSocket call. The call's provider factories must receive exactly the
 // flow's settings and the environment's secrets, the session row must be
 // persisted while the call runs and ended when it hangs up.
-func TestStoredFlowDrivesCall(t *testing.T) {
+func TestStoredAgentDrivesCall(t *testing.T) {
 	s := apiTestServer(t)
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
 	vars := testProviderVars(t)
@@ -39,9 +39,9 @@ func TestStoredFlowDrivesCall(t *testing.T) {
 	s.env = mapEnv(vars)
 	const serviceAccount = `{"type":"service_account"}` // testProviderVars' file, compacted
 	enableTestManagement(t, s)
-	created, err := s.flows.Create(t.Context(), flow.CreateRequest{Name: "Billing", Config: json.RawMessage(
+	created, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "Billing", Config: json.RawMessage(
 		`{"stt":{"provider":"google","model":"chirp_2","language":"en-GB"},"llm":{"provider":"google","model":"gemini-test","system_prompt":"You handle billing."},"tts":{"provider":"google","voice":"en-GB-Neural2-A"},"context":{"max_messages":12,"max_tokens":900}}`)})
-	if err != nil || created.Readiness.State != flow.ReadinessReady {
+	if err != nil || created.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("flow=%+v err=%v", created.Readiness, err)
 	}
 
@@ -65,8 +65,8 @@ func TestStoredFlowDrivesCall(t *testing.T) {
 	ts := httptest.NewServer(s.wsServer)
 	defer ts.Close()
 	lastTokenID := ""
-	call := func(flowID string) (*websocket.Conn, error) {
-		w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+flowID+`"}`)
+	call := func(agentID string) (*websocket.Conn, error) {
+		w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+agentID+`"}`)
 		if w.Code != http.StatusCreated {
 			t.Fatalf("token: %d %s", w.Code, w.Body)
 		}
@@ -144,7 +144,7 @@ func TestStoredFlowDrivesCall(t *testing.T) {
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	disabled := false
-	if _, err := s.flows.Update(t.Context(), created.ID, flow.UpdateRequest{Enabled: &disabled}); err != nil {
+	if _, err := s.agents.Update(t.Context(), created.ID, agent.UpdateRequest{Enabled: &disabled}); err != nil {
 		t.Fatal(err)
 	}
 	dialUntilRefused(t, ts, resp.Data.Token)
@@ -208,10 +208,10 @@ func (r *userTurnRecorder) ProcessFrame(_ context.Context, f core.Frame, d core.
 
 // A client text turn (RTVI send-text) is echoed back as a final user
 // transcription and reaches the flow's LLM as a committed user turn.
-func TestTextTurnReachesFlowLLM(t *testing.T) {
+func TestTextTurnReachesAgentLLM(t *testing.T) {
 	s := apiTestServer(t)
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
-	flowID := readyTestFlow(t, s)
+	agentID := readyTestAgent(t, s)
 	llm := &userTurnRecorder{}
 	s.registry.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 	s.registry.Register("google.llm", func(*Config, StageSpec) (core.Processor, error) { return llm, nil })
@@ -219,7 +219,7 @@ func TestTextTurnReachesFlowLLM(t *testing.T) {
 
 	ts := httptest.NewServer(s.wsServer)
 	defer ts.Close()
-	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+flowID+`"}`)
+	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+agentID+`"}`)
 	var resp struct {
 		Data struct{ Token string } `json:"data"`
 	}
@@ -241,7 +241,7 @@ func TestTextTurnReachesFlowLLM(t *testing.T) {
 	if _, _, err := conn.Read(ctx); err != nil { // bot-ready
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return activeSessionCount(t, s, flowID) == 1 })
+	waitFor(t, func() bool { return activeSessionCount(t, s, agentID) == 1 })
 
 	send(`{"id":"2","label":"rtvi-ai","type":"send-text","data":{"content":"What is two plus two?"}}`)
 	echoed := false
@@ -292,9 +292,9 @@ func TestTextTurnReachesFlowLLM(t *testing.T) {
 	waitFor(t, func() bool { llm.mu.Lock(); defer llm.mu.Unlock(); return len(llm.turns) == 2 })
 }
 
-func activeSessionCount(t *testing.T, s *Server, flowID string) int {
+func activeSessionCount(t *testing.T, s *Server, agentID string) int {
 	t.Helper()
-	rows, err := s.store.Sessions().List(t.Context(), storage.SessionFilter{AgentID: flowID, Status: "active"})
+	rows, err := s.store.Sessions().List(t.Context(), storage.SessionFilter{AgentID: agentID, Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,13 +306,13 @@ func activeSessionCount(t *testing.T, s *Server, flowID string) int {
 func TestShutdownEndsActiveSessionRows(t *testing.T) {
 	s := apiTestServer(t)
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
-	flowID := readyTestFlow(t, s)
+	agentID := readyTestAgent(t, s)
 	for _, stage := range []string{"stt", "llm", "tts"} {
 		s.registry.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 	}
 	ts := httptest.NewServer(s.wsServer)
 	defer ts.Close()
-	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+flowID+`"}`)
+	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+agentID+`"}`)
 	var resp struct {
 		Data struct{ Token string } `json:"data"`
 	}
@@ -329,7 +329,7 @@ func TestShutdownEndsActiveSessionRows(t *testing.T) {
 	if _, _, err := conn.Read(ctx); err != nil { // bot-ready
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return activeSessionCount(t, s, flowID) == 1 })
+	waitFor(t, func() bool { return activeSessionCount(t, s, agentID) == 1 })
 
 	s.cfg.Limits.ImmediateCancel = true // force-cancel the live call
 	_ = s.Shutdown(ctx)
@@ -339,7 +339,7 @@ func TestShutdownEndsActiveSessionRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	rows, err := store.Sessions().List(ctx, storage.SessionFilter{AgentID: flowID})
+	rows, err := store.Sessions().List(ctx, storage.SessionFilter{AgentID: agentID})
 	if err != nil || len(rows) != 1 || rows[0].Status != "ended" {
 		t.Fatalf("session rows after shutdown = %+v (err %v), want one ended", rows, err)
 	}
@@ -382,7 +382,7 @@ func TestTurnRecorderPairsUserAndAssistant(t *testing.T) {
 	}
 }
 
-func TestStoredFlow_ConfiguresMaxParallelAndVADStopMS(t *testing.T) {
+func TestStoredAgent_ConfiguresMaxParallelAndVADStopMS(t *testing.T) {
 	s := apiTestServer(t)
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
 	enableTestManagement(t, s)
@@ -393,8 +393,8 @@ func TestStoredFlow_ConfiguresMaxParallelAndVADStopMS(t *testing.T) {
 		"tts": {"provider": "google", "voice": "en-GB-Neural2-A"}
 	}`
 
-	created, err := s.flows.Create(t.Context(), flow.CreateRequest{Name: "ParallelAgent", Config: json.RawMessage(cfgJSON)})
-	if err != nil || created.Readiness.State != flow.ReadinessReady {
+	created, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "ParallelAgent", Config: json.RawMessage(cfgJSON)})
+	if err != nil || created.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("flow creation failed: %v", err)
 	}
 
@@ -458,7 +458,7 @@ func TestStoredFlow_ConfiguresMaxParallelAndVADStopMS(t *testing.T) {
 	}
 }
 
-func TestStoredFlow_ConfiguresMaxParallelFallbacksAndServerDefault(t *testing.T) {
+func TestStoredAgent_ConfiguresMaxParallelFallbacksAndServerDefault(t *testing.T) {
 	s := apiTestServer(t)
 	s.cfg.Tools.MaxParallel = 3
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
@@ -472,8 +472,8 @@ func TestStoredFlow_ConfiguresMaxParallelFallbacksAndServerDefault(t *testing.T)
 		"tts": {"provider": "google", "voice": "en-GB-Neural2-A"}
 	}`
 
-	created, err := s.flows.Create(t.Context(), flow.CreateRequest{Name: "FallbackParallelAgent", Config: json.RawMessage(cfgJSON)})
-	if err != nil || created.Readiness.State != flow.ReadinessReady {
+	created, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "FallbackParallelAgent", Config: json.RawMessage(cfgJSON)})
+	if err != nil || created.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("flow creation failed: %v", err)
 	}
 
@@ -494,7 +494,7 @@ func TestStoredFlow_ConfiguresMaxParallelFallbacksAndServerDefault(t *testing.T)
 	}
 }
 
-func TestStoredFlow_CleanTextConfiguration(t *testing.T) {
+func TestStoredAgent_CleanTextConfiguration(t *testing.T) {
 	s := apiTestServer(t)
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
 	enableTestManagement(t, s)
@@ -505,7 +505,7 @@ func TestStoredFlow_CleanTextConfiguration(t *testing.T) {
 		"llm": {"provider": "google", "model": "gemini-primary"},
 		"tts": {"provider": "google", "voice": "en-GB-Neural2-A"}
 	}`
-	createdDefault, err := s.flows.Create(t.Context(), flow.CreateRequest{Name: "DefaultAgent", Config: json.RawMessage(cfgDefault)})
+	createdDefault, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "DefaultAgent", Config: json.RawMessage(cfgDefault)})
 	if err != nil {
 		t.Fatalf("flow creation failed: %v", err)
 	}
@@ -524,7 +524,7 @@ func TestStoredFlow_CleanTextConfiguration(t *testing.T) {
 		"llm": {"provider": "google", "model": "gemini-primary"},
 		"tts": {"provider": "google", "voice": "en-GB-Neural2-A", "clean_text": false}
 	}`
-	createdDisabled, err := s.flows.Create(t.Context(), flow.CreateRequest{Name: "DisabledCleanAgent", Config: json.RawMessage(cfgDisabled)})
+	createdDisabled, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "DisabledCleanAgent", Config: json.RawMessage(cfgDisabled)})
 	if err != nil {
 		t.Fatalf("flow creation failed: %v", err)
 	}
@@ -543,7 +543,7 @@ func TestStoredFlow_CleanTextConfiguration(t *testing.T) {
 		"llm": {"provider": "google", "model": "gemini-primary"},
 		"tts": {"provider": "google", "voice": "en-GB-Neural2-A", "clean_text": true}
 	}`
-	createdEnabled, err := s.flows.Create(t.Context(), flow.CreateRequest{Name: "ExplicitCleanAgent", Config: json.RawMessage(cfgEnabled)})
+	createdEnabled, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "ExplicitCleanAgent", Config: json.RawMessage(cfgEnabled)})
 	if err != nil {
 		t.Fatalf("flow creation failed: %v", err)
 	}
@@ -584,7 +584,7 @@ func TestStageSecretsComeFromTheEnvironmentAtCallTime(t *testing.T) {
 	s := apiTestServer(t)
 	env := newLiveEnv(map[string]string{"GOOGLE_API_KEY": "k1"})
 	s.env = env.get
-	cfg, err := flow.DecodeConfig(json.RawMessage(`{"llm":{"provider":"google","model":"m"}}`))
+	cfg, err := agent.DecodeConfig(json.RawMessage(`{"llm":{"provider":"google","model":"m"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -614,11 +614,11 @@ func TestCallRefusedWhenTheVariableIsGone(t *testing.T) {
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
 	env := newLiveEnv(testProviderVars(t))
 	s.env = env.get
-	flowID := readyTestFlow(t, s)
+	agentID := readyTestAgent(t, s)
 	for _, stage := range []string{"stt", "llm", "tts"} {
 		s.registry.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 	}
-	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+flowID+`"}`)
+	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+agentID+`"}`)
 	var resp struct {
 		Data struct{ Token string } `json:"data"`
 	}
@@ -626,7 +626,7 @@ func TestCallRefusedWhenTheVariableIsGone(t *testing.T) {
 		t.Fatalf("token: %d %s", w.Code, w.Body)
 	}
 	env.set("GOOGLE_APPLICATION_CREDENTIALS", "")
-	a, err := s.flows.Get(t.Context(), flowID)
+	a, err := s.agents.Get(t.Context(), agentID)
 	if err != nil || !slices.Contains(a.Readiness.Reasons, "missing_credential_stt") || !slices.Contains(a.Readiness.MissingEnv, "GOOGLE_APPLICATION_CREDENTIALS") {
 		t.Fatalf("readiness = %+v (err %v), want missing_credential_stt naming GOOGLE_APPLICATION_CREDENTIALS", a.Readiness, err)
 	}
@@ -634,7 +634,7 @@ func TestCallRefusedWhenTheVariableIsGone(t *testing.T) {
 	ts := httptest.NewServer(s.wsServer)
 	defer ts.Close()
 	dialUntilRefused(t, ts, resp.Data.Token)
-	rows, err := s.store.Sessions().List(t.Context(), storage.SessionFilter{AgentID: flowID})
+	rows, err := s.store.Sessions().List(t.Context(), storage.SessionFilter{AgentID: agentID})
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("refused call left sessions %v (err %v)", rows, err)
 	}
@@ -646,12 +646,12 @@ func TestFallbackSecretsResolveByProvider(t *testing.T) {
 	s := apiTestServer(t)
 	env := newLiveEnv(map[string]string{"GOOGLE_API_KEY": "g", "XAI_API_KEY": "x"})
 	s.env = env.get
-	cfg, err := flow.DecodeConfig(json.RawMessage(`{"llm":{"provider":"google","model":"m","fallbacks":[{"provider":"xai","model":"grok"}]}}`))
+	cfg, err := agent.DecodeConfig(json.RawMessage(`{"llm":{"provider":"google","model":"m","fallbacks":[{"provider":"xai","model":"grok"}]}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	rs := &runtime.Session{}
-	build := func(c flow.Candidate, secret []byte) StageSpec {
+	build := func(c agent.Candidate, secret []byte) StageSpec {
 		return StageSpec{Provider: c.Provider, Secret: secret}
 	}
 	got := s.resolveFallbacks(t.Context(), rs, "llm", cfg, &s.metrics.LLMFallbacksSkippedTotal, build)
@@ -670,7 +670,7 @@ func TestFallbackSecretsResolveByProvider(t *testing.T) {
 
 // voice_settings saved on a flow reach the started call's TTS StageSpec (single
 // step and a routed step); fallbacks carry none.
-func TestStoredFlow_VoiceSettingsReachStageSpec(t *testing.T) {
+func TestStoredAgent_VoiceSettingsReachStageSpec(t *testing.T) {
 	s := apiTestServer(t)
 	vars := testProviderVars(t)
 	vars["ELEVENLABS_API_KEY"] = "test-elevenlabs-key"
@@ -679,7 +679,7 @@ func TestStoredFlow_VoiceSettingsReachStageSpec(t *testing.T) {
 	enableTestManagement(t, s)
 
 	vs := `{"stability":0.3,"similarity_boost":0.9,"style":0.1,"speed":1.1}`
-	check := func(name string, got *flow.ElevenLabsVoiceSettings) {
+	check := func(name string, got *agent.ElevenLabsVoiceSettings) {
 		t.Helper()
 		if got == nil || got.Stability == nil || *got.Stability != 0.3 || *got.SimilarityBoost != 0.9 || *got.Style != 0.1 || *got.Speed != 1.1 {
 			t.Fatalf("%s: voice settings = %+v", name, got)
@@ -687,8 +687,8 @@ func TestStoredFlow_VoiceSettingsReachStageSpec(t *testing.T) {
 	}
 	single := `{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m"},` +
 		`"tts":{"provider":"elevenlabs","voice":"v1","voice_settings":` + vs + `,"fallbacks":[{"provider":"google","voice":"en-GB-Neural2-A"}]}}`
-	created, err := s.flows.Create(t.Context(), flow.CreateRequest{Name: "VS", Config: json.RawMessage(single)})
-	if err != nil || created.Readiness.State != flow.ReadinessReady {
+	created, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "VS", Config: json.RawMessage(single)})
+	if err != nil || created.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("create: %v %+v", err, created.Readiness)
 	}
 	spec, release, err := s.resolveCall(t.Context(), created.ID, "vs-1", "", nil)
@@ -703,7 +703,7 @@ func TestStoredFlow_VoiceSettingsReachStageSpec(t *testing.T) {
 
 	flat := `{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}}`
 	step := `{"llm":{"provider":"google","model":"m"},"tts":{"provider":"elevenlabs","voice_settings":` + vs + `}}`
-	rs := &runtime.Session{Snapshot: flow.Snapshot{Version: flow.Version{Config: json.RawMessage(`{"start":"front","steps":[` +
+	rs := &runtime.Session{Snapshot: agent.Snapshot{Version: agent.Version{Config: json.RawMessage(`{"start":"front","steps":[` +
 		`{"id":"front","name":"Front","config":` + flat + `},{"id":"sales","name":"Sales","config":` + step + `}],` +
 		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"buy"}]}`)}}}
 	call, err := s.callSpec(t.Context(), rs)
@@ -713,7 +713,7 @@ func TestStoredFlow_VoiceSettingsReachStageSpec(t *testing.T) {
 	if call.TTS.VoiceSettings != nil {
 		t.Fatal("start step has no voice settings")
 	}
-	st, err := call.Flow.Resolve(t.Context(), "sales")
+	st, err := call.Agent.Resolve(t.Context(), "sales")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -722,7 +722,7 @@ func TestStoredFlow_VoiceSettingsReachStageSpec(t *testing.T) {
 
 // llm sampling saved on a flow reaches the started call's LLM StageSpec (single
 // step, routed step) and is copied to LLM fallbacks; an unset step carries none.
-func TestStoredFlow_SamplingReachesStageSpec(t *testing.T) {
+func TestStoredAgent_SamplingReachesStageSpec(t *testing.T) {
 	s := apiTestServer(t)
 	vars := testProviderVars(t)
 	vars["XAI_API_KEY"] = "test-xai-key"
@@ -731,15 +731,15 @@ func TestStoredFlow_SamplingReachesStageSpec(t *testing.T) {
 	enableTestManagement(t, s)
 
 	samp := `"temperature":0.3,"top_p":0.9,"max_output_tokens":200`
-	check := func(name string, got flow.LLMSampling) {
+	check := func(name string, got agent.LLMSampling) {
 		t.Helper()
 		if got.Temperature == nil || *got.Temperature != 0.3 || got.TopP == nil || *got.TopP != 0.9 || got.MaxOutputTokens == nil || *got.MaxOutputTokens != 200 {
 			t.Fatalf("%s: sampling = %+v", name, got)
 		}
 	}
 	single := `{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m",` + samp + `,"fallbacks":[{"provider":"xai","model":"grok"}]},"tts":{"provider":"google"}}`
-	created, err := s.flows.Create(t.Context(), flow.CreateRequest{Name: "Samp", Config: json.RawMessage(single)})
-	if err != nil || created.Readiness.State != flow.ReadinessReady {
+	created, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "Samp", Config: json.RawMessage(single)})
+	if err != nil || created.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("create: %v %+v", err, created.Readiness)
 	}
 	spec, release, err := s.resolveCall(t.Context(), created.ID, "samp-1", "", nil)
@@ -755,7 +755,7 @@ func TestStoredFlow_SamplingReachesStageSpec(t *testing.T) {
 
 	// A later publish with a different temperature changes new calls, not the one already resolved.
 	v2 := strings.Replace(single, `"temperature":0.3`, `"temperature":1.5`, 1)
-	if _, err := s.flows.Update(t.Context(), created.ID, flow.UpdateRequest{Config: json.RawMessage(v2)}); err != nil {
+	if _, err := s.agents.Update(t.Context(), created.ID, agent.UpdateRequest{Config: json.RawMessage(v2)}); err != nil {
 		t.Fatal(err)
 	}
 	spec2, release2, err := s.resolveCall(t.Context(), created.ID, "samp-2", "", nil)
@@ -770,17 +770,17 @@ func TestStoredFlow_SamplingReachesStageSpec(t *testing.T) {
 
 	flat := `{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}}`
 	step := `{"llm":{"provider":"google","model":"m",` + samp + `,"fallbacks":[{"provider":"xai","model":"grok"}]},"tts":{"provider":"google"}}`
-	rs := &runtime.Session{Snapshot: flow.Snapshot{Version: flow.Version{Config: json.RawMessage(`{"start":"front","steps":[` +
+	rs := &runtime.Session{Snapshot: agent.Snapshot{Version: agent.Version{Config: json.RawMessage(`{"start":"front","steps":[` +
 		`{"id":"front","name":"Front","config":` + flat + `},{"id":"sales","name":"Sales","config":` + step + `}],` +
 		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"buy"}]}`)}}}
 	call, err := s.callSpec(t.Context(), rs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if call.LLM.Sampling != (flow.LLMSampling{}) {
+	if call.LLM.Sampling != (agent.LLMSampling{}) {
 		t.Fatalf("start step has no sampling: %+v", call.LLM.Sampling)
 	}
-	st, err := call.Flow.Resolve(t.Context(), "sales")
+	st, err := call.Agent.Resolve(t.Context(), "sales")
 	if err != nil {
 		t.Fatal(err)
 	}

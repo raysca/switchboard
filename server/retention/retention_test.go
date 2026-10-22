@@ -25,7 +25,7 @@ func newTestStore(t *testing.T) *storage.Store {
 	return s
 }
 
-func createTestFlowAndVersion(t *testing.T, s *storage.Store) (string, string, string) {
+func createTestAgentAndVersion(t *testing.T, s *storage.Store) (string, string, string) {
 	t.Helper()
 	ctx := context.Background()
 	agentID := storage.NewID()
@@ -205,7 +205,7 @@ func TestPolicyValidation(t *testing.T) {
 
 func TestContentPurge(t *testing.T) {
 	s := newTestStore(t)
-	agentID, versionID, configHash := createTestFlowAndVersion(t, s)
+	agentID, versionID, configHash := createTestAgentAndVersion(t, s)
 	ctx := context.Background()
 	now := time.Now().UTC()
 
@@ -289,7 +289,7 @@ func TestContentPurge(t *testing.T) {
 
 func TestMetadataPurgeAndInvariants(t *testing.T) {
 	s := newTestStore(t)
-	agentID, versionID, configHash := createTestFlowAndVersion(t, s)
+	agentID, versionID, configHash := createTestAgentAndVersion(t, s)
 	ctx := context.Background()
 	now := time.Now().UTC()
 
@@ -394,7 +394,7 @@ func TestMetadataPurgeAndInvariants(t *testing.T) {
 
 func TestBatchPurge(t *testing.T) {
 	s := newTestStore(t)
-	agentID, versionID, configHash := createTestFlowAndVersion(t, s)
+	agentID, versionID, configHash := createTestAgentAndVersion(t, s)
 	ctx := context.Background()
 	now := time.Now().UTC()
 
@@ -432,7 +432,7 @@ func TestBatchPurge(t *testing.T) {
 
 func TestConcurrentPurgeAndTraceInsertion(t *testing.T) {
 	s := newTestStore(t)
-	agentID, versionID, configHash := createTestFlowAndVersion(t, s)
+	agentID, versionID, configHash := createTestAgentAndVersion(t, s)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -535,7 +535,7 @@ func TestConcurrentPurgeAndTraceInsertion(t *testing.T) {
 // More content-bearing sessions than one batch: every one is purged, with no resume state between batches.
 func TestPurgeContent_PurgesEveryContentSessionAcrossBatches(t *testing.T) {
 	s := newTestStore(t)
-	agentID, versionID, configHash := createTestFlowAndVersion(t, s)
+	agentID, versionID, configHash := createTestAgentAndVersion(t, s)
 	ctx := context.Background()
 	now := time.Now().UTC()
 

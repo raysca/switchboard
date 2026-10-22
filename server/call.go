@@ -11,12 +11,12 @@ import (
 	"time"
 
 	"govoice/core"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/server/runtime"
 	"govoice/server/storage"
 )
 
-var errFlowsUnavailable = errors.New("flow storage is not enabled")
+var errAgentsUnavailable = errors.New("flow storage is not enabled")
 
 // releaseTimeout bounds ending a call's flow session (MCP drain + DB write).
 const releaseTimeout = 5 * time.Second
@@ -31,11 +31,11 @@ const resolveTimeout = 10 * time.Second
 // holds the token can find its session (the admin voice test links to it).
 // resolveCall pins the token's flow, records the session (caller is the token's principal) and returns the
 // call's spec and the function that ends it. ending is the call's end-reason holder: release records what it holds.
-func (s *Server) resolveCall(ctx context.Context, flowID, tokenID, caller string, ending *endReason) (CallSpec, func(), error) {
-	if s.flows == nil || s.mcpService == nil || s.resolver == nil || s.store == nil {
-		return CallSpec{}, nil, errFlowsUnavailable
+func (s *Server) resolveCall(ctx context.Context, agentID, tokenID, caller string, ending *endReason) (CallSpec, func(), error) {
+	if s.agents == nil || s.mcpService == nil || s.resolver == nil || s.store == nil {
+		return CallSpec{}, nil, errAgentsUnavailable
 	}
-	if flowID == "" {
+	if agentID == "" {
 		return CallSpec{}, nil, errors.New("token does not name a flow")
 	}
 	sessionID := tokenID
@@ -46,11 +46,11 @@ func (s *Server) resolveCall(ctx context.Context, flowID, tokenID, caller string
 	var err error
 	if draft, found := s.drafts.take(sessionID); found {
 		// The flow may have been archived, disabled or left unready since the token was issued.
-		if _, err = s.flows.ResolveCurrent(ctx, flowID); err == nil {
-			rs, err = runtime.StartSnapshotSession(ctx, s.flows, s.mcpService, draft.snapshot, sessionID, caller)
+		if _, err = s.agents.ResolveCurrent(ctx, agentID); err == nil {
+			rs, err = runtime.StartSnapshotSession(ctx, s.agents, s.mcpService, draft.snapshot, sessionID, caller)
 		}
 	} else {
-		rs, err = runtime.StartSession(ctx, s.flows, s.mcpService, flowID, sessionID, caller)
+		rs, err = runtime.StartSession(ctx, s.agents, s.mcpService, agentID, sessionID, caller)
 	}
 	if err != nil {
 		return CallSpec{}, nil, fmt.Errorf("start flow session: %w", err)
@@ -126,7 +126,7 @@ type turnRecorder struct {
 	rows     chan turnWrite
 	done     chan struct{}
 	lat      *turnLatencies
-	mcpTool  func(name string) (flow.MCPToolSnapshot, bool)
+	mcpTool  func(name string) (agent.MCPToolSnapshot, bool)
 }
 
 // pendingTool is an announced call waiting for its result.
@@ -160,7 +160,7 @@ func (s *Server) redactErr(err error) error {
 }
 
 func newTurnRecorder(addTurn func(context.Context, storage.TurnRecord) error, addToolCall func(context.Context, storage.ToolCallRecord) error,
-	mcpTool func(name string) (flow.MCPToolSnapshot, bool), sessionID string, logger *slog.Logger, lat *turnLatencies) *turnRecorder {
+	mcpTool func(name string) (agent.MCPToolSnapshot, bool), sessionID string, logger *slog.Logger, lat *turnLatencies) *turnRecorder {
 	r := &turnRecorder{lat: lat, mcpTool: mcpTool, users: map[string]*core.UserMessageFrame{}, calls: map[string]pendingTool{},
 		finished: map[string][]storage.ToolCallRecord{}, rowIDs: map[string]string{}, rows: make(chan turnWrite, 64), done: make(chan struct{})}
 	go func() {
@@ -350,7 +350,7 @@ func (r *turnRecorder) close(ctx context.Context) {
 }
 
 func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, error) {
-	g, err := flow.Decode(rs.Snapshot.Version.Config)
+	g, err := agent.Decode(rs.Snapshot.Version.Config)
 	if err != nil {
 		return CallSpec{}, err
 	}
@@ -367,13 +367,13 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 	maxParallel := s.maxParallel(cfg)
 	// A one-step flow is a plain flow: every captured tool, no routes.
 	tools, exec := rs.Definitions, rs.Executor
-	var graph *CallFlow
+	var graph *CallAgent
 	var ender *callEnder
 	if anyEndCall(g) {
 		ender = &callEnder{}
 	}
 	if len(g.Steps) > 1 {
-		graph = &CallFlow{Start: g.Start, Cue: g.RouteCue, Backgrounds: stepBackgrounds(g)}
+		graph = &CallAgent{Start: g.Start, Cue: g.RouteCue, Backgrounds: stepBackgrounds(g)}
 		graph.Resolve = func(ctx context.Context, id string) (StepSpec, error) {
 			return s.stepSpec(ctx, rs, g, graph, ender, id)
 		}
@@ -387,10 +387,10 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 		tools = append(tools[:len(tools):len(tools)], endCallDefinition())
 		exec = stepExecutor(rs.Executor, allowed, nil, nil, ender.hangUp(entry.ID))
 	}
-	fallbacks := s.resolveFallbacks(ctx, rs, "llm", cfg, &s.metrics.LLMFallbacksSkippedTotal, func(c flow.Candidate, secret []byte) StageSpec {
+	fallbacks := s.resolveFallbacks(ctx, rs, "llm", cfg, &s.metrics.LLMFallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
 		return StageSpec{Provider: c.Provider, Model: c.Model, SystemPrompt: cfg.LLM.SystemPrompt, Sampling: cfg.LLM.LLMSampling, Secret: secret, Tools: tools, ToolExecutor: exec, MaxParallel: maxParallel}
 	})
-	ttsFallbacks := s.resolveFallbacks(ctx, rs, "tts", cfg, &s.metrics.TTSFallbacksSkippedTotal, func(c flow.Candidate, secret []byte) StageSpec {
+	ttsFallbacks := s.resolveFallbacks(ctx, rs, "tts", cfg, &s.metrics.TTSFallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
 		return StageSpec{Provider: c.Provider, Voice: c.Voice, Secret: secret}
 	})
 	var disableTextCleaning bool
@@ -409,7 +409,7 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 		MaxTokens:           maxTokens,
 		Summary:             cfg.Context.Summarization,
 		Greeting:            cfg.GreetingText(),
-		FlowVersionID:       rs.Snapshot.Version.ID,
+		AgentVersionID:      rs.Snapshot.Version.ID,
 		StoredSessionID:     rs.Pin.ID,
 		Recording:           cfg.Recording.Active(),
 		VADStopMS:           cfg.VADStopMS,
@@ -417,19 +417,19 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 		Turn:                cfg.Turn,
 		Audio:               cfg.Audio,
 		STTP99MS:            cfg.STTP99MS,
-		Flow:                graph,
+		Agent:               graph,
 		Ender:               ender,
 		MaxCallDuration:     callLimit(s.cfg.Limits.MaxCallDuration, cfg.MaxCallDurationSeconds),
 	}, nil
 }
 
 // stepBackgrounds is the background each step of g names, by step id.
-func stepBackgrounds(g flow.Definition) map[string]*flow.BackgroundSettings {
-	var out map[string]*flow.BackgroundSettings
+func stepBackgrounds(g agent.Definition) map[string]*agent.BackgroundSettings {
+	var out map[string]*agent.BackgroundSettings
 	for _, n := range g.Steps {
 		if a := n.Config.Audio; a != nil && a.Background != nil {
 			if out == nil {
-				out = map[string]*flow.BackgroundSettings{}
+				out = map[string]*agent.BackgroundSettings{}
 			}
 			out[n.ID] = a.Background
 		}
@@ -437,7 +437,7 @@ func stepBackgrounds(g flow.Definition) map[string]*flow.BackgroundSettings {
 	return out
 }
 
-func (s *Server) maxParallel(cfg flow.Config) int {
+func (s *Server) maxParallel(cfg agent.Config) int {
 	if mp := cfg.LLM.MaxParallel; mp > 0 {
 		return mp
 	}
@@ -446,7 +446,7 @@ func (s *Server) maxParallel(cfg flow.Config) int {
 
 // resolveStageSecrets reads the secret of each named stage from the
 // environment, now. On error the secrets gathered so far are wiped.
-func (s *Server) resolveStageSecrets(ctx context.Context, cfg flow.Config, names ...string) (map[string][]byte, error) {
+func (s *Server) resolveStageSecrets(ctx context.Context, cfg agent.Config, names ...string) (map[string][]byte, error) {
 	secrets := map[string][]byte{}
 	ok := false
 	defer func() {
@@ -475,7 +475,7 @@ func (s *Server) resolveStageSecrets(ctx context.Context, cfg flow.Config, names
 
 // stepToolset is the tools and executor of one step: its listed MCP tools plus
 // a transfer tool per outgoing route.
-func (s *Server) stepToolset(rs *runtime.Session, g flow.Definition, n flow.Step, cg *CallFlow, ender *callEnder) ([]core.ToolDefinition, core.ToolExecutor) {
+func (s *Server) stepToolset(rs *runtime.Session, g agent.Definition, n agent.Step, cg *CallAgent, ender *callEnder) ([]core.ToolDefinition, core.ToolExecutor) {
 	mcp := stepDefinitions(rs.Definitions, n.Tools)
 	allowed := make(map[string]bool, len(mcp))
 	for _, d := range mcp {
@@ -494,7 +494,7 @@ func (s *Server) stepToolset(rs *runtime.Session, g flow.Definition, n flow.Step
 
 // stepSpec resolves a non-start step's LLM and TTS when the step is activated:
 // secrets are read from the environment now, not held for the whole call.
-func (s *Server) stepSpec(ctx context.Context, rs *runtime.Session, g flow.Definition, cg *CallFlow, ender *callEnder, id string) (StepSpec, error) {
+func (s *Server) stepSpec(ctx context.Context, rs *runtime.Session, g agent.Definition, cg *CallAgent, ender *callEnder, id string) (StepSpec, error) {
 	n, ok := g.Step(id)
 	if !ok {
 		return StepSpec{}, fmt.Errorf("unknown step %q", id)
@@ -510,11 +510,11 @@ func (s *Server) stepSpec(ctx context.Context, rs *runtime.Session, g flow.Defin
 		Name: n.Name, Greeting: cfg.GreetingText(),
 		LLM: StageSpec{Provider: cfg.LLM.Provider, Model: cfg.LLM.Model, SystemPrompt: cfg.LLM.SystemPrompt, Sampling: cfg.LLM.LLMSampling, Secret: secrets["llm"],
 			Tools: tools, ToolExecutor: exec, MaxParallel: maxParallel},
-		LLMFallbacks: s.resolveFallbacks(ctx, rs, "llm", cfg, &s.metrics.LLMFallbacksSkippedTotal, func(c flow.Candidate, secret []byte) StageSpec {
+		LLMFallbacks: s.resolveFallbacks(ctx, rs, "llm", cfg, &s.metrics.LLMFallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
 			return StageSpec{Provider: c.Provider, Model: c.Model, SystemPrompt: cfg.LLM.SystemPrompt, Sampling: cfg.LLM.LLMSampling, Secret: secret, Tools: tools, ToolExecutor: exec, MaxParallel: maxParallel}
 		}),
 		TTS: StageSpec{Provider: cfg.TTS.Provider, Voice: cfg.TTS.Voice, VoiceSettings: cfg.TTS.VoiceSettings, Secret: secrets["tts"]},
-		TTSFallbacks: s.resolveFallbacks(ctx, rs, "tts", cfg, &s.metrics.TTSFallbacksSkippedTotal, func(c flow.Candidate, secret []byte) StageSpec {
+		TTSFallbacks: s.resolveFallbacks(ctx, rs, "tts", cfg, &s.metrics.TTSFallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
 			return StageSpec{Provider: c.Provider, Voice: c.Voice, Secret: secret}
 		}),
 	}, nil
@@ -522,7 +522,7 @@ func (s *Server) stepSpec(ctx context.Context, rs *runtime.Session, g flow.Defin
 
 // resolveFallbacks resolves the chain after the primary for one stage. A
 // fallback that cannot be resolved now is skipped (logged and counted), not fatal.
-func (s *Server) resolveFallbacks(ctx context.Context, rs *runtime.Session, stage string, cfg flow.Config, skipped *atomic.Uint64, build func(flow.Candidate, []byte) StageSpec) []StageSpec {
+func (s *Server) resolveFallbacks(ctx context.Context, rs *runtime.Session, stage string, cfg agent.Config, skipped *atomic.Uint64, build func(agent.Candidate, []byte) StageSpec) []StageSpec {
 	var out []StageSpec
 	for _, cand := range cfg.Chain(stage)[1:] {
 		skip := func(why string) {
@@ -563,9 +563,9 @@ func (c *CallSpec) wipeSecrets() {
 }
 
 // callLimit is the shorter of the server's limit and the flow's (0 = the flow sets none).
-func callLimit(server time.Duration, flowSeconds int) time.Duration {
-	if flowSeconds > 0 {
-		return min(server, time.Duration(flowSeconds)*time.Second)
+func callLimit(server time.Duration, agentSeconds int) time.Duration {
+	if agentSeconds > 0 {
+		return min(server, time.Duration(agentSeconds)*time.Second)
 	}
 	return server
 }

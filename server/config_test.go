@@ -133,7 +133,7 @@ func TestConfig_ValidationFailures(t *testing.T) {
 
 // YAML pipelines and per-provider models/credentials were removed: loading a
 // config that still has them fails with an actionable message.
-func TestConfig_RejectsRemovedPipelineAndFlowKeys(t *testing.T) {
+func TestConfig_RejectsRemovedPipelineAndAgentKeys(t *testing.T) {
 	base, err := os.ReadFile("../config/development.yaml")
 	if err != nil {
 		t.Fatal(err)

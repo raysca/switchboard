@@ -1,4 +1,4 @@
-package flow
+package agent
 
 import (
 	"encoding/json"
@@ -14,7 +14,7 @@ func step(id, name string, extra string) string {
 	return `{"id":"` + id + `","name":"` + name + `","config":` + cfg + `}`
 }
 
-func TestDecodeFlowWrapsFlatConfig(t *testing.T) {
+func TestDecodeAgentWrapsFlatConfig(t *testing.T) {
 	g, err := Decode(json.RawMessage(flatCfg))
 	if err != nil {
 		t.Fatal(err)
@@ -27,7 +27,7 @@ func TestDecodeFlowWrapsFlatConfig(t *testing.T) {
 	}
 }
 
-func TestDecodeFlowTwoSteps(t *testing.T) {
+func TestDecodeAgentTwoSteps(t *testing.T) {
 	raw := `{"start":"front","steps":[` +
 		`{"id":"front","name":"Front desk","config":` + flatCfg + `},` +
 		step("sales", "Sales", "") + `],` +
@@ -57,7 +57,7 @@ func TestOldConfigKeysAreRejectedLikeAnyUnknownField(t *testing.T) {
 	}
 }
 
-func TestDecodeFlowRejects(t *testing.T) {
+func TestDecodeAgentRejects(t *testing.T) {
 	front := `{"id":"front","name":"Front","config":` + flatCfg + `}`
 	cases := map[string]string{
 		"no entry":                `{"steps":[` + front + `],"routes":[]}`,
@@ -80,7 +80,7 @@ func TestDecodeFlowRejects(t *testing.T) {
 	}
 }
 
-func TestDecodeFlowBounds(t *testing.T) {
+func TestDecodeAgentBounds(t *testing.T) {
 	var steps []string
 	for i := 0; i <= MaxSteps; i++ {
 		steps = append(steps, step("n"+strings.Repeat("x", i), "N"+strings.Repeat("x", i), ""))
@@ -100,7 +100,7 @@ func TestSummarizationNeedsEverySummarizingLLM(t *testing.T) {
 	}
 }
 
-func TestDecodeFlowRejectsUnsafeIDsAndCue(t *testing.T) {
+func TestDecodeAgentRejectsUnsafeIDsAndCue(t *testing.T) {
 	front := func(id string) string { return `{"id":"` + id + `","name":"Front","config":` + flatCfg + `}` }
 	graph := func(entry, step, extra string) string {
 		return `{"start":"` + entry + `","steps":[` + step + `],"routes":[]` + extra + `}`
@@ -143,7 +143,7 @@ func TestDecodeStepEndCall(t *testing.T) {
 	}
 }
 
-func TestDecodeAcceptsEndCallOnAOneStepFlow(t *testing.T) {
+func TestDecodeAcceptsEndCallOnAOneStepAgent(t *testing.T) {
 	front := `"config":{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}}`
 	g, err := Decode(json.RawMessage(`{"start":"a","steps":[{"id":"a","name":"A","end_call":true,` + front + `}],"routes":[]}`))
 	if err != nil {
@@ -172,7 +172,7 @@ func twoStepCfg(salesExtra string) string {
 }
 
 // K1: stored versions that carry a start-step-only setting on another step keep decoding.
-func TestStoredFlowWithCallWideSettingsOnAStepStillDecodes(t *testing.T) {
+func TestStoredAgentWithCallWideSettingsOnAStepStillDecodes(t *testing.T) {
 	for _, raw := range []string{
 		twoStepCfg(`,"clean_text":false`),
 		strings.Replace(twoStepCfg(""), `"tts":{"provider":"cartesia","voice":"v"}}}`, `"tts":{"provider":"cartesia","voice":"v"},"failover":{"on":["timeout"]}}}`, 1),
@@ -189,7 +189,7 @@ func withSalesAudio(audio string) json.RawMessage {
 	return json.RawMessage(strings.Replace(twoStepCfg(""), llm, llm+`,"audio":`+audio, 1))
 }
 
-func TestDecodeFlowSamplingIsPerStep(t *testing.T) {
+func TestDecodeAgentSamplingIsPerStep(t *testing.T) {
 	d, err := Decode(json.RawMessage(`{"start":"a","steps":[
 		{"id":"a","name":"A","config":{"llm":{"provider":"google","model":"m","temperature":0.3}}},
 		{"id":"b","name":"B","config":{"llm":{"provider":"google","model":"m","top_p":0.5}}}],

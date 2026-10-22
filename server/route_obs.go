@@ -90,7 +90,7 @@ func (s *Server) onEndCall(storedSessionID string) func(stepID string) {
 			return
 		}
 		ev := core.NewTraceEvent("call.end", time.Now(), core.SessionID(storedSessionID), "", 0, core.TracePolicy{},
-			map[string]any{"reason": EndReasonFlow, "from_step": stepID})
+			map[string]any{"reason": EndReasonAgent, "from_step": stepID})
 		core.StartSpanSafe(context.Background(), mgmt.traces, ev).End(nil)
 	}
 }

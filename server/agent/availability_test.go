@@ -1,4 +1,4 @@
-package flow
+package agent
 
 import (
 	"encoding/json"
@@ -72,8 +72,8 @@ func TestDecodeConfigRejectsCredentialID(t *testing.T) {
 	}
 }
 
-func TestFlowProblemsPrefixNonEntrySteps(t *testing.T) {
-	g, err := Decode(twoStepFlow("google"))
+func TestAgentProblemsPrefixNonEntrySteps(t *testing.T) {
+	g, err := Decode(twoStepAgent("google"))
 	if err != nil {
 		t.Fatal(err)
 	}

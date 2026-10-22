@@ -12,7 +12,7 @@ import (
 	"unicode/utf8"
 
 	"govoice/core"
-	"govoice/server/flow"
+	"govoice/server/agent"
 )
 
 // textCompleter is the provider capability the summarizer needs: one plain,
@@ -93,10 +93,10 @@ func clipUTF8(s string, n int) string {
 // summaryConfig turns the flow's options into the core config. Both triggers
 // sit below their limits so summarizing precedes budget eviction: short voice
 // turns usually hit max_messages long before max_tokens.
-func summaryConfig(o flow.SummarizationConfig, maxMessages, maxTokens int, c textCompleter, onResult func(string, time.Duration, int)) *core.SummaryConfig {
+func summaryConfig(o agent.SummarizationConfig, maxMessages, maxTokens int, c textCompleter, onResult func(string, time.Duration, int)) *core.SummaryConfig {
 	trigger := o.TriggerTokens
 	if trigger <= 0 || (maxTokens > 0 && trigger >= maxTokens) {
-		trigger = flow.DefaultSummaryTrigger(maxTokens)
+		trigger = agent.DefaultSummaryTrigger(maxTokens)
 	}
 	return &core.SummaryConfig{Summarizer: NewLLMSummarizer(c, o.Prompt), TriggerTokens: trigger,
 		TriggerMessages: maxMessages * 3 / 4, KeepTurns: o.KeepTurns, Timeout: summaryTimeout, OnResult: onResult}

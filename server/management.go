@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"govoice/core/record"
+	"govoice/server/agent"
 	"govoice/server/api"
-	"govoice/server/flow"
 	"govoice/server/mcp"
 	"govoice/server/retention"
 	"govoice/server/storage"
@@ -84,9 +84,9 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 
 	// The production provider check and the recording sink can still fail:
 	// both run before anything points at the store fail() closes.
-	flows := flow.NewService(store, s.availability)
-	flows.SetTokenEnv(func(n string) bool { _, ok := mcpTokens.Token(n); return ok })
-	if bad := s.unavailableFlowProviders(ctx, flows); len(bad) > 0 {
+	agents := agent.NewService(store, s.availability)
+	agents.SetTokenEnv(func(n string) bool { _, ok := mcpTokens.Token(n); return ok })
+	if bad := s.unavailableAgentProviders(ctx, agents); len(bad) > 0 {
 		for _, b := range bad {
 			s.logger.Error("flow references a provider this build cannot run", slog.String("problem", b))
 		}
@@ -105,8 +105,8 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	s.endOrphanedSessions(ctx, store)
 	s.mcpService = mcpService
 	s.setProviderManagementAPI(s.providersRoutes())
-	s.flows = flows
-	s.setFlowManagementAPI(api.NewFlowsHandler(s.flows))
+	s.agents = agents
+	s.setAgentManagementAPI(api.NewAgentsHandler(s.agents))
 	s.setMCPManagementAPI(mcp.Handler(mcpService))
 	s.setSessionManagementAPI(api.NewTracesHandler(store.Sessions(), store.Traces()))
 
@@ -140,10 +140,10 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 // unavailableFlowProviders lists "flow id stage provider" for every enabled,
 // non-archived stored flow whose stage (or fallback) has no factory in this
 // build, so a tagged-vs-untagged build mismatch fails startup, not calls.
-func (s *Server) unavailableFlowProviders(ctx context.Context, flows *flow.Service) []string {
+func (s *Server) unavailableAgentProviders(ctx context.Context, agents *agent.Service) []string {
 	var bad []string
 	for offset := 0; ; offset += 100 {
-		page, err := flows.List(ctx, 100, offset)
+		page, err := agents.List(ctx, 100, offset)
 		if err != nil {
 			s.logger.Warn("flow provider check skipped", slog.String("err", s.redactor.Redact(err.Error())))
 			return bad
@@ -152,7 +152,7 @@ func (s *Server) unavailableFlowProviders(ctx context.Context, flows *flow.Servi
 			if !a.Enabled || a.Archived || a.Version == nil {
 				continue
 			}
-			g, err := flow.Decode(a.Version.Config)
+			g, err := agent.Decode(a.Version.Config)
 			if err != nil {
 				continue
 			}

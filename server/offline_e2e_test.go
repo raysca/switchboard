@@ -20,7 +20,7 @@ import (
 	"github.com/coder/websocket"
 
 	"govoice/offline/adapter"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/transport/ws"
 	"govoice/vad"
 )
@@ -131,16 +131,16 @@ func fakeResponsesLLM(t *testing.T, reply []string) *httptest.Server {
 	return srv
 }
 
-func offlineFlow(t *testing.T, r *flowRigE2E, cfg string) string {
+func offlineAgent(t *testing.T, r *agentRigE2E, cfg string) string {
 	t.Helper()
-	f, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "offline", Config: []byte(cfg)})
-	if err != nil || f.Readiness.State != flow.ReadinessReady {
+	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "offline", Config: []byte(cfg)})
+	if err != nil || f.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("offline flow: %+v err=%v", f.Readiness, err)
 	}
 	return f.ID
 }
 
-const offlineFlowConfig = `{"stt":{"provider":"offline","model":"s"},"llm":{"provider":"offline","model":"govoice-test","system_prompt":"Be brief."},"tts":{"provider":"offline","voice":"eve"}}`
+const offlineAgentConfig = `{"stt":{"provider":"offline","model":"s"},"llm":{"provider":"offline","model":"govoice-test","system_prompt":"Be brief."},"tts":{"provider":"offline","voice":"eve"}}`
 
 func TestOfflineCallEndToEnd(t *testing.T) {
 	acfg, err := adapter.LoadConfig(func(k string) string {
@@ -153,13 +153,13 @@ func TestOfflineCallEndToEnd(t *testing.T) {
 	defer ad.Close()
 	llm := fakeResponsesLLM(t, []string{"Hello ", "from the offline stack."})
 
-	rig := newFlowRigE2E(t, newProbe(), func(c *Config) {
+	rig := newAgentRigE2E(t, newProbe(), func(c *Config) {
 		c.Providers.Offline.STTEndpoint = "ws" + strings.TrimPrefix(ad.URL, "http") + "/v1/stt"
 		c.Providers.Offline.TTSEndpoint = ad.URL + "/v1/tts"
 		c.Providers.Offline.LLMEndpoint = llm.URL + "/v1/responses"
 	})
 	realVAD(t, rig.s)
-	call := rig.dial(offlineFlow(t, rig, offlineFlowConfig))
+	call := rig.dial(offlineAgent(t, rig, offlineAgentConfig))
 
 	// A recorded clip, then a second of silence for the adapter to end the utterance.
 	call.sendAudio(callerSpeech(t))
@@ -173,14 +173,14 @@ func TestOfflineAdapterDownFailsTheStage(t *testing.T) {
 	url := down.URL
 	down.Close() // nothing listens here any more
 	llm := fakeResponsesLLM(t, []string{"never spoken"})
-	rig := newFlowRigE2E(t, newProbe(), func(c *Config) {
+	rig := newAgentRigE2E(t, newProbe(), func(c *Config) {
 		c.Providers.Offline.STTEndpoint = "ws" + strings.TrimPrefix(url, "http") + "/v1/stt"
 		c.Providers.Offline.TTSEndpoint = url + "/v1/tts"
 		c.Providers.Offline.LLMEndpoint = llm.URL + "/v1/responses"
 		c.Turn.NoTranscriptTimeout = time.Second // the hang-up counts failures a window apart
 	})
 	realVAD(t, rig.s)
-	call := rig.dial(offlineFlow(t, rig, offlineFlowConfig))
+	call := rig.dial(offlineAgent(t, rig, offlineAgentConfig))
 	// The first failing turn is reported but the call stays up; the second ends it.
 	timelineErrors := func() (n int) {
 		for _, e := range rig.timeline() {

@@ -853,7 +853,7 @@ func TestSecurity_ClientIPSpoofing_RightToLeftTraversal(t *testing.T) {
 
 // The agent a call runs comes only from the signed token; query parameters
 // (including the removed `pipeline`) cannot redirect a call.
-func TestFlowID_ComesOnlyFromToken(t *testing.T) {
+func TestAgentID_ComesOnlyFromToken(t *testing.T) {
 	now := time.Now()
 	val, err := token.NewValidator(token.DefaultConfig(testIssuer, testAudience, []byte(testSecret)), now.Add(-time.Minute))
 	if err != nil {
@@ -862,7 +862,7 @@ func TestFlowID_ComesOnlyFromToken(t *testing.T) {
 	srv := ws.NewServer(ws.DefaultServerConfig(val))
 	got := make(chan string, 1)
 	srv.OnSessionReady = func(conn *ws.Connection) (*core.Session, error) {
-		got <- conn.FlowID()
+		got <- conn.AgentID()
 		pipe, _ := core.NewPipeline(&coretest.PassthroughProcessor{})
 		return core.NewSession(1, pipe, core.DefaultResourceBudget())
 	}
@@ -875,7 +875,7 @@ func TestFlowID_ComesOnlyFromToken(t *testing.T) {
 			IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(time.Minute)),
 		},
 		Principal: "user-1",
-		FlowID:    "agent-from-token",
+		AgentID:   "agent-from-token",
 	}
 	tokStr, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(testSecret))
 

@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"strings"
 
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/server/mcp"
 	"govoice/server/mcp/dentalmcp"
 	"govoice/server/storage"
@@ -18,7 +18,7 @@ import (
 
 const (
 	ServerName = "Smile Dental scheduling"
-	FlowName   = "Smile Dental front desk"
+	AgentName  = "Smile Dental front desk"
 	// AuthEnv is the env var holding the MCP server's bearer token (never stored).
 	AuthEnv = "MCP_TOKEN_DENTAL"
 )
@@ -31,22 +31,22 @@ type Servers interface {
 	Refresh(ctx context.Context, id string) (storage.MCPDiscovery, error)
 }
 
-type Flows interface {
-	List(ctx context.Context, limit, offset int) ([]flow.Flow, error)
-	Create(ctx context.Context, req flow.CreateRequest) (flow.Flow, error)
+type Agents interface {
+	List(ctx context.Context, limit, offset int) ([]agent.Agent, error)
+	Create(ctx context.Context, req agent.CreateRequest) (agent.Agent, error)
 	Archive(ctx context.Context, id string) error
 }
 
 type Result struct {
-	MCPServerID string `json:"mcp_server_id"`
-	MCPCreated  bool   `json:"mcp_created"`
-	Tools       int    `json:"tools"`
-	FlowID      string `json:"flow_id"`
-	FlowCreated bool   `json:"flow_created"`
+	MCPServerID  string `json:"mcp_server_id"`
+	MCPCreated   bool   `json:"mcp_created"`
+	Tools        int    `json:"tools"`
+	AgentID      string `json:"flow_id"`
+	AgentCreated bool   `json:"flow_created"`
 }
 
 // InstallDental adds the MCP server (endpoint is its /mcp URL) and the flow unless they exist.
-func InstallDental(ctx context.Context, servers Servers, flows Flows, endpoint string) (Result, error) {
+func InstallDental(ctx context.Context, servers Servers, agents Agents, endpoint string) (Result, error) {
 	var res Result
 	endpoint, err := normaliseEndpoint(endpoint)
 	if err != nil {
@@ -87,57 +87,57 @@ func InstallDental(ctx context.Context, servers Servers, flows Flows, endpoint s
 	for _, t := range disc.Tools {
 		have[t.RemoteName] = t
 	}
-	selections := make([]flow.ToolSelection, 0, len(dentalmcp.ToolNames))
+	selections := make([]agent.ToolSelection, 0, len(dentalmcp.ToolNames))
 	for _, name := range dentalmcp.ToolNames {
 		t, ok := have[name]
 		if !ok {
 			return res, fmt.Errorf("MCP server %q does not offer the %s tool", ServerName, name)
 		}
-		selections = append(selections, flow.ToolSelection{ServerID: res.MCPServerID, RemoteName: name, SchemaHash: t.SchemaHash, Required: true})
+		selections = append(selections, agent.ToolSelection{ServerID: res.MCPServerID, RemoteName: name, SchemaHash: t.SchemaHash, Required: true})
 	}
 	res.Tools = len(selections)
 
-	f, err := FindFlow(ctx, flows)
+	f, err := FindAgent(ctx, agents)
 	if err != nil {
 		return res, err
 	}
 	if f.ID != "" && !pointsAt(f, res.MCPServerID) {
-		if err := flows.Archive(ctx, f.ID); err != nil { // a stale flow could never run its tools
+		if err := agents.Archive(ctx, f.ID); err != nil { // a stale flow could never run its tools
 			return res, fmt.Errorf("archive stale flow: %w", err)
 		}
-		f = flow.Flow{}
+		f = agent.Agent{}
 	}
 	if f.ID != "" {
-		res.FlowID = f.ID
+		res.AgentID = f.ID
 		return res, nil
 	}
 	cfg, err := dentalConfig(res.MCPServerID)
 	if err != nil {
 		return res, err
 	}
-	created, err := flows.Create(ctx, flow.CreateRequest{Name: FlowName, Description: "Front desk takes the name, then hands new and returning patients to the right agent.", Config: cfg, MCPTools: selections})
+	created, err := agents.Create(ctx, agent.CreateRequest{Name: AgentName, Description: "Front desk takes the name, then hands new and returning patients to the right agent.", Config: cfg, MCPTools: selections})
 	if err != nil {
 		return res, fmt.Errorf("create flow: %w", err)
 	}
-	res.FlowID, res.FlowCreated = created.ID, true
+	res.AgentID, res.AgentCreated = created.ID, true
 	return res, nil
 }
 
 // FindFlow returns the live dental flow, or the zero Flow when it is not installed.
-func FindFlow(ctx context.Context, flows Flows) (flow.Flow, error) {
+func FindAgent(ctx context.Context, agents Agents) (agent.Agent, error) {
 	const page = 100 // the store's maximum page size
 	for offset := 0; ; offset += page {
-		batch, err := flows.List(ctx, page, offset)
+		batch, err := agents.List(ctx, page, offset)
 		if err != nil {
-			return flow.Flow{}, fmt.Errorf("list flows: %w", err)
+			return agent.Agent{}, fmt.Errorf("list flows: %w", err)
 		}
 		for _, f := range batch {
-			if f.Name == FlowName && !f.Archived {
+			if f.Name == AgentName && !f.Archived {
 				return f, nil
 			}
 		}
 		if len(batch) < page {
-			return flow.Flow{}, nil
+			return agent.Agent{}, nil
 		}
 	}
 }
@@ -155,7 +155,7 @@ func normaliseEndpoint(raw string) (string, error) {
 // pointsAt reports whether the flow selects any tool of serverID. Extra tools an admin
 // added from other servers do not make it stale. A flow without version detail cannot be
 // judged and is left alone.
-func pointsAt(f flow.Flow, serverID string) bool {
+func pointsAt(f agent.Agent, serverID string) bool {
 	if f.Version == nil {
 		return true
 	}
@@ -206,7 +206,7 @@ func dentalConfig(serverID string) (json.RawMessage, error) {
 			step("new", "New patient", true, refs(serverID, "register_patient", "find_slots", "book_appointment"), newPatient, 320),
 			step("returning", "Returning patient", true, refs(serverID, "find_patient", "list_appointments", "find_slots", "reschedule_appointment", "cancel_appointment"), returning, 320),
 		},
-		"routes": []flow.Route{
+		"routes": []agent.Route{
 			{ID: "to-new", From: "front", To: "new", Condition: "The caller has never been a patient at Smile Dental and wants to register or book their first appointment."},
 			{ID: "to-returning", From: "front", To: "returning", Condition: "The caller is already a patient and wants to change, move or cancel an appointment."},
 		},

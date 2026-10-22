@@ -136,12 +136,12 @@ func TestSQLite_VacuumIntoBackupAndRestore(t *testing.T) {
 	}
 
 	// Verify agent exists
-	restoredFlow, err := backupStore.Agents().Current(ctx, fl.ID)
+	restoredAgent, err := backupStore.Agents().Current(ctx, fl.ID)
 	if err != nil {
 		t.Fatalf("fetch agent in restored store: %v", err)
 	}
-	if restoredFlow.Name != fl.Name {
-		t.Fatalf("restored agent name mismatch: got %s, want %s", restoredFlow.Name, fl.Name)
+	if restoredAgent.Name != fl.Name {
+		t.Fatalf("restored agent name mismatch: got %s, want %s", restoredAgent.Name, fl.Name)
 	}
 
 	// Verify integrity check (PRAGMA foreign_key_check and quick_check)

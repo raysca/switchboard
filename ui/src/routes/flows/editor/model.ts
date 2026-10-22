@@ -1,17 +1,17 @@
 // Pure flow-editing rules for the flow designer. They mirror the server's
-// validation (server/flow/definition.go): the server stays the authority, this
+// validation (server/agent/definition.go): the server stays the authority, this
 // keeps the canvas from offering what it would reject.
 
 import type { ToolSelection } from "../../../api/client";
 
 export const MAX_STEPS = 8;
 const MAX_ROUTES = 32;
-/** The server counts a greeting in bytes (server/flow/config.go). */
+/** The server counts a greeting in bytes (server/agent/config.go). */
 export const MAX_GREETING_BYTES = 500;
 export const MAX_SUMMARY_PROMPT_BYTES = 2048;
 export const STT_P99_RANGE = [100, 10000] as const;
 const DEFAULT_MAX_TOKENS = 4000;
-/** The server's limits for a flow's quiet-caller and audio settings (server/flow/call_behavior.go). */
+/** The server's limits for a flow's quiet-caller and audio settings (server/agent/call_behavior.go). */
 export const IDLE_RANGE = { timeoutMs: [1000, 300000], prompts: [1, 10], textBytes: 200 } as const;
 export const TURN_RANGE = { minWords: [1, 10], maxMuteS: [1, 60], speechTimeoutMs: [200, 3000], smartHoldMs: [500, 5000] } as const;
 /** `max_call_duration_seconds`: 0 or unset is the server's limit. */
@@ -107,7 +107,7 @@ export function stepIssues(g: FlowDraft, id: string): StepIssue[] {
   for (const [cap, what] of [["llm", "model"], ["tts", "voice"], ["stt", "listening"]] as const) {
     const stage = asRecord(n.config[cap]);
     const fallbacks = Array.isArray(stage.fallbacks) ? stage.fallbacks.map(asRecord) : [];
-    // The server allows a chain of 3 (the primary and 2 fallbacks) with no repeated entry (server/flow/fallback.go).
+    // The server allows a chain of 3 (the primary and 2 fallbacks) with no repeated entry (server/agent/fallback.go).
     if (fallbacks.length > MAX_FALLBACKS) issues.push({ tab: "advanced", message: `Use at most ${MAX_FALLBACKS} ${what} fallbacks.` });
     const key = (c: Record<string, unknown>) => ["provider", "model", "voice", "language"].map((k) => String(c[k] ?? "")).join("\u0000");
     const keys = [stage, ...fallbacks].map(key);
@@ -123,7 +123,7 @@ export function stepIssues(g: FlowDraft, id: string): StepIssue[] {
 /** The server's chain limit, primary excluded. */
 export const MAX_FALLBACKS = 2;
 
-/** The error classes server/flow/fallback.go lets a stage fail over on; the first three apply when none is set. */
+/** The error classes server/agent/fallback.go lets a stage fail over on; the first three apply when none is set. */
 export const FAILOVER_CLASSES = [
   { id: "timeout", label: "Timeouts" },
   { id: "server_error", label: "Server errors and dropped connections" },
@@ -145,7 +145,7 @@ export function flowIssues(g: FlowDraft, limits?: ServerLimits): string[] {
   if (blank(asRecord(start.config.stt).provider)) out.push("Choose speech-to-text in Flow settings.");
   const rec = asRecord(start.config.recording);
   if (rec.enabled === true && rec.disclosure_confirmed !== true) out.push("Confirm that callers are told the call is recorded.");
-  // Ranges from server/flow/config.go: 0 or unset means the server default.
+  // Ranges from server/agent/config.go: 0 or unset means the server default.
   const vad = start.config.vad_stop_ms;
   if (typeof vad === "number" && vad !== 0 && (vad < 200 || vad > 2000)) out.push("Wait after the caller stops must be 200 to 2000 ms.");
   const ctx = asRecord(start.config.context);
@@ -421,7 +421,7 @@ export function validate(g: FlowDraft, limits?: ServerLimits): string[] {
     for (const i of stepIssues(g, n.id)) if (i.tab === "advanced") errors.push(`${nameIn(g, n.id)}: ${i.message}`);
   for (const e of g.routes) {
     if (blank(e.condition)) errors.push(`The route from ${nameIn(g, e.from)} to ${nameIn(g, e.to)} needs a condition.`);
-    // The server counts bytes (server/flow/definition.go), not characters.
+    // The server counts bytes (server/agent/definition.go), not characters.
     else if (new TextEncoder().encode(e.condition).length > MAX_CONDITION)
       errors.push(`The route from ${nameIn(g, e.from)} to ${nameIn(g, e.to)} has a condition longer than ${MAX_CONDITION} bytes.`);
   }

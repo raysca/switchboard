@@ -10,7 +10,7 @@ import (
 
 	"govoice/core"
 	"govoice/core/coretest"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/server/storage"
 )
 
@@ -18,7 +18,7 @@ func TestTurnRecorderStoresToolCallsWithTheirTurn(t *testing.T) {
 	var mu sync.Mutex
 	var turns []storage.TurnRecord
 	var calls []storage.ToolCallRecord
-	snap := flow.MCPToolSnapshot{ServerID: "srv-1", RemoteName: "lookup_order", SchemaHash: "hash-1"}
+	snap := agent.MCPToolSnapshot{ServerID: "srv-1", RemoteName: "lookup_order", SchemaHash: "hash-1"}
 	r := newTurnRecorder(func(_ context.Context, row storage.TurnRecord) error {
 		mu.Lock()
 		defer mu.Unlock()
@@ -29,7 +29,7 @@ func TestTurnRecorderStoresToolCallsWithTheirTurn(t *testing.T) {
 		defer mu.Unlock()
 		calls = append(calls, tc)
 		return nil
-	}, func(name string) (flow.MCPToolSnapshot, bool) { return snap, name == "mcp__lookup" }, "sess", slog.New(slog.NewTextHandler(io.Discard, nil)), newTurnLatencies())
+	}, func(name string) (agent.MCPToolSnapshot, bool) { return snap, name == "mcp__lookup" }, "sess", slog.New(slog.NewTextHandler(io.Discard, nil)), newTurnLatencies())
 	tail := &coretest.PassthroughProcessor{}
 	pipe, _ := core.NewPipeline(r, tail)
 	session, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
@@ -106,7 +106,7 @@ func TestTurnRecorderKeepsADefinedToolNameWhoseExecutorSaysUnknownTool(t *testin
 				defer mu.Unlock()
 				calls = append(calls, rec)
 				return nil
-			}, func(string) (flow.MCPToolSnapshot, bool) { return flow.MCPToolSnapshot{}, false }, "sess", slog.New(slog.NewTextHandler(io.Discard, nil)), newTurnLatencies())
+			}, func(string) (agent.MCPToolSnapshot, bool) { return agent.MCPToolSnapshot{}, false }, "sess", slog.New(slog.NewTextHandler(io.Discard, nil)), newTurnLatencies())
 			tail := &coretest.PassthroughProcessor{}
 			pipe, _ := core.NewPipeline(r, tail)
 			session, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
@@ -137,7 +137,7 @@ func TestTurnRecorderKeepsADefinedToolNameWhoseExecutorSaysUnknownTool(t *testin
 // Audio passes at 50 frames/s per call: the recorder must not take its lock for it.
 func TestTurnRecorderPassesAudioWithoutItsLock(t *testing.T) {
 	r := newTurnRecorder(func(context.Context, storage.TurnRecord) error { return nil }, func(context.Context, storage.ToolCallRecord) error { return nil },
-		func(string) (flow.MCPToolSnapshot, bool) { return flow.MCPToolSnapshot{}, false }, "sess", slog.New(slog.NewTextHandler(io.Discard, nil)), newTurnLatencies())
+		func(string) (agent.MCPToolSnapshot, bool) { return agent.MCPToolSnapshot{}, false }, "sess", slog.New(slog.NewTextHandler(io.Discard, nil)), newTurnLatencies())
 	tail := &coretest.PassthroughProcessor{}
 	pipe, _ := core.NewPipeline(r, tail)
 	session, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())

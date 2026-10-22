@@ -11,9 +11,9 @@ import (
 // Operator control through a real call (onSessionReady wiring): a note with run starts a reply
 // on the start step, still works after the call routes to the next step, and the call is gone
 // (404) once it ends.
-func TestContextInjectionFlowE2E(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe())
-	c := r.dial(r.createRoutedFlow("salesvoice"))
+func TestContextInjectionAgentE2E(t *testing.T) {
+	r := newAgentRigE2E(t, newProbe())
+	c := r.dial(r.createRoutedAgent("salesvoice"))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 	post := func(path, body string) int {
 		return apiRequest(r.s, http.MethodPost, "/api/v1/sessions/"+c.sessionID+path, e2eMgmtKey, body).Code

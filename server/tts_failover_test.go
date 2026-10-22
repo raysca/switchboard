@@ -15,7 +15,7 @@ import (
 	"govoice/providers/elevenlabs"
 	"govoice/providers/google"
 	"govoice/providers/xai"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/vad"
 )
 
@@ -27,19 +27,19 @@ func TestTTSClassifyEveryProvider(t *testing.T) {
 		err  error
 		want string
 	}{
-		{"circuit raw", resilience.ErrCircuitOpen, flow.ClassCircuit},
-		{"circuit google", google.MapError("tts", resilience.ErrCircuitOpen), flow.ClassCircuit},
-		{"circuit xai", xai.MapError("tts", resilience.ErrCircuitOpen), flow.ClassCircuit},
-		{"circuit cartesia", cartesia.MapError("tts", resilience.ErrCircuitOpen, nil), flow.ClassCircuit},
-		{"circuit elevenlabs", elevenlabs.MapError("tts", resilience.ErrCircuitOpen, nil), flow.ClassCircuit},
-		{"timeout cartesia", cartesia.MapError("tts", resilience.ErrTimeout, nil), flow.ClassTimeout},
-		{"timeout elevenlabs", elevenlabs.MapError("tts", fmt.Errorf("x: %w", resilience.ErrTimeout), nil), flow.ClassTimeout},
-		{"timeout google", google.MapError("tts", resilience.ErrTimeout), flow.ClassTimeout},
-		{"failover watchdog", fmt.Errorf("core: tts a stalled on unit 1: %w", resilience.ErrTimeout), flow.ClassTimeout},
-		{"client cartesia", &cartesia.ProviderError{Capability: "tts", ClientError: true}, flow.ClassClient},
-		{"client elevenlabs", &elevenlabs.ProviderError{Capability: "tts", ClientError: true}, flow.ClassClient},
-		{"server cartesia", &cartesia.ProviderError{Capability: "tts", Retryable: true}, flow.ClassServer},
-		{"server elevenlabs", &elevenlabs.ProviderError{Capability: "tts"}, flow.ClassServer},
+		{"circuit raw", resilience.ErrCircuitOpen, agent.ClassCircuit},
+		{"circuit google", google.MapError("tts", resilience.ErrCircuitOpen), agent.ClassCircuit},
+		{"circuit xai", xai.MapError("tts", resilience.ErrCircuitOpen), agent.ClassCircuit},
+		{"circuit cartesia", cartesia.MapError("tts", resilience.ErrCircuitOpen, nil), agent.ClassCircuit},
+		{"circuit elevenlabs", elevenlabs.MapError("tts", resilience.ErrCircuitOpen, nil), agent.ClassCircuit},
+		{"timeout cartesia", cartesia.MapError("tts", resilience.ErrTimeout, nil), agent.ClassTimeout},
+		{"timeout elevenlabs", elevenlabs.MapError("tts", fmt.Errorf("x: %w", resilience.ErrTimeout), nil), agent.ClassTimeout},
+		{"timeout google", google.MapError("tts", resilience.ErrTimeout), agent.ClassTimeout},
+		{"failover watchdog", fmt.Errorf("core: tts a stalled on unit 1: %w", resilience.ErrTimeout), agent.ClassTimeout},
+		{"client cartesia", &cartesia.ProviderError{Capability: "tts", ClientError: true}, agent.ClassClient},
+		{"client elevenlabs", &elevenlabs.ProviderError{Capability: "tts", ClientError: true}, agent.ClassClient},
+		{"server cartesia", &cartesia.ProviderError{Capability: "tts", Retryable: true}, agent.ClassServer},
+		{"server elevenlabs", &elevenlabs.ProviderError{Capability: "tts"}, agent.ClassServer},
 	} {
 		if got := ttsClassify(tc.err); got != tc.want {
 			t.Errorf("%s: class %q, want %q", tc.name, got, tc.want)
@@ -50,7 +50,7 @@ func TestTTSClassifyEveryProvider(t *testing.T) {
 			t.Errorf("the session's own task budget classed %q, want none", got)
 		}
 	}
-	if ttsClassify(errors.New("context canceled")) != flow.ClassServer || ttsClassify(nil) != "" {
+	if ttsClassify(errors.New("context canceled")) != agent.ClassServer || ttsClassify(nil) != "" {
 		t.Error("plain errors are server_error, nil is none")
 	}
 }

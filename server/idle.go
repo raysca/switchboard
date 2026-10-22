@@ -7,7 +7,7 @@ import (
 
 	"govoice/core"
 	coreturn "govoice/core/turn"
-	"govoice/server/flow"
+	"govoice/server/agent"
 )
 
 // IdleConfig enables the user-idle prompt/hang-up and the bot-idle (stuck
@@ -51,7 +51,7 @@ const (
 // forCall is the idle config one call runs: the server's, unless its flow sets idle. A flow's idle
 // replaces the user-idle members as one unit (members it leaves out take the built-in defaults, so what
 // the editor shows is what the call does); the bot-idle watchdog always stays the server's.
-func (c IdleConfig) forCall(f *flow.IdleSettings) IdleConfig {
+func (c IdleConfig) forCall(f *agent.IdleSettings) IdleConfig {
 	if f == nil {
 		return c
 	}

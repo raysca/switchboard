@@ -23,7 +23,7 @@ func newTestStore(t *testing.T) *storage.Store {
 	return s
 }
 
-func createTestFlowAndVersion(t *testing.T, s *storage.Store) (string, string, string) {
+func createTestAgentAndVersion(t *testing.T, s *storage.Store) (string, string, string) {
 	t.Helper()
 	ctx := context.Background()
 	agentID := storage.NewID()
@@ -42,8 +42,8 @@ func TestSessionRepositoryPaginationAndFilters(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	flow1, v1, hash1 := createTestFlowAndVersion(t, s)
-	flow2, v2, hash2 := createTestFlowAndVersion(t, s)
+	agent1, v1, hash1 := createTestAgentAndVersion(t, s)
+	agent2, v2, hash2 := createTestAgentAndVersion(t, s)
 
 	baseTime := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
 
@@ -55,7 +55,7 @@ func TestSessionRepositoryPaginationAndFilters(t *testing.T) {
 		}
 		sess := storage.SessionRecord{
 			ID:                  storage.NewID(),
-			AgentID:             flow1,
+			AgentID:             agent1,
 			AgentVersionID:      v1,
 			ConfigHash:          hash1,
 			Status:              status,
@@ -74,7 +74,7 @@ func TestSessionRepositoryPaginationAndFilters(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		sess := storage.SessionRecord{
 			ID:                  storage.NewID(),
-			AgentID:             flow2,
+			AgentID:             agent2,
 			AgentVersionID:      v2,
 			ConfigHash:          hash2,
 			Status:              "ended",
@@ -115,12 +115,12 @@ func TestSessionRepositoryPaginationAndFilters(t *testing.T) {
 	}
 
 	// Test 2: Filter by AgentID
-	flow1Sessions, err := s.Sessions().List(ctx, storage.SessionFilter{AgentID: flow1, Limit: 50})
+	agent1Sessions, err := s.Sessions().List(ctx, storage.SessionFilter{AgentID: agent1, Limit: 50})
 	if err != nil {
 		t.Fatalf("list flow1: %v", err)
 	}
-	if len(flow1Sessions) != 3 {
-		t.Fatalf("expected 3 sessions for flow1, got %d", len(flow1Sessions))
+	if len(agent1Sessions) != 3 {
+		t.Fatalf("expected 3 sessions for flow1, got %d", len(agent1Sessions))
 	}
 
 	// Test 3: Filter by Status
@@ -133,12 +133,12 @@ func TestSessionRepositoryPaginationAndFilters(t *testing.T) {
 	}
 
 	// Test 4: Filter by AgentID AND Status
-	flow1Active, err := s.Sessions().List(ctx, storage.SessionFilter{AgentID: flow1, Status: "active", Limit: 50})
+	agent1Active, err := s.Sessions().List(ctx, storage.SessionFilter{AgentID: agent1, Status: "active", Limit: 50})
 	if err != nil {
 		t.Fatalf("list flow1 active: %v", err)
 	}
-	if len(flow1Active) != 2 {
-		t.Fatalf("expected 2 active sessions for flow1, got %d", len(flow1Active))
+	if len(agent1Active) != 2 {
+		t.Fatalf("expected 2 active sessions for flow1, got %d", len(agent1Active))
 	}
 }
 
@@ -146,7 +146,7 @@ func TestSessionRepositoryGetDetailAndTurns(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	agentID, vID, hash := createTestFlowAndVersion(t, s)
+	agentID, vID, hash := createTestAgentAndVersion(t, s)
 	sessID := storage.NewID()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
@@ -230,7 +230,7 @@ func TestTraceRepositorySpansEventsAndToolCalls(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	agentID, vID, hash := createTestFlowAndVersion(t, s)
+	agentID, vID, hash := createTestAgentAndVersion(t, s)
 	sessID := storage.NewID()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 

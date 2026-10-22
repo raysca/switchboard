@@ -10,8 +10,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"govoice/server/agent"
 	"govoice/server/api"
-	"govoice/server/flow"
 	"govoice/server/storage"
 	"govoice/transport/token"
 )
@@ -52,7 +52,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			VoiceTokenMaxLifetimeSeconds: int(s.effectiveVoiceTokenLifetime().Seconds()),
 			MCPSyncIntervalSeconds:       int(s.cfg.MCP.SyncInterval.Seconds()),
 			ClientIP:                     s.clientIP(r), Secure: s.secure(r),
-			Audio: api.ServerAudio{Backgrounds: append([]string{}, policyFrom(s.cfg).sounds...), Cues: append([]string{}, policyFrom(s.cfg).cues...), AllowFlowBackground: s.cfg.Audio.AllowFlowBackground, BackgroundDefault: s.cfg.Audio.BackgroundDefault},
+			Audio: api.ServerAudio{Backgrounds: append([]string{}, policyFrom(s.cfg).sounds...), Cues: append([]string{}, policyFrom(s.cfg).cues...), AllowAgentBackground: s.cfg.Audio.AllowAgentBackground, BackgroundDefault: s.cfg.Audio.BackgroundDefault},
 			Idle:  api.ServerIdle{UserTimeoutMS: int(s.cfg.Idle.UserTimeout.Milliseconds()), MaxPrompts: s.cfg.Idle.MaxPrompts, PromptMode: cmp.Or(s.cfg.Idle.PromptMode, "llm")},
 			Turn: api.ServerTurn{Manager: s.cfg.Turn.Manager, MinWords: s.cfg.Turn.MinWords, Mute: append([]string{}, s.cfg.Turn.Mute...),
 				MaxMuteMS: int(s.cfg.Turn.effectiveMaxMute().Milliseconds()), SpeechTimeoutMS: int(s.cfg.Turn.effectiveSpeechTimeout().Milliseconds()),
@@ -77,15 +77,15 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			api.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error(), requestID)
 			return
 		}
-		if input.Principal == "" || len(input.Principal) > 128 || input.FlowID == "" || len(input.FlowID) > 128 {
+		if input.Principal == "" || len(input.Principal) > 128 || input.AgentID == "" || len(input.AgentID) > 128 {
 			api.WriteError(w, http.StatusBadRequest, "invalid_request", "principal and flow_id must be 1 to 128 characters", requestID)
 			return
 		}
-		if s.flows == nil {
+		if s.agents == nil {
 			api.WriteError(w, http.StatusServiceUnavailable, "flow_management_unavailable", "flow storage is unavailable", requestID)
 			return
 		}
-		target, err := s.flows.Get(r.Context(), input.FlowID)
+		target, err := s.agents.Get(r.Context(), input.AgentID)
 		if errors.Is(err, sql.ErrNoRows) {
 			api.WriteError(w, http.StatusNotFound, "not_found", "flow not found", requestID)
 			return
@@ -94,7 +94,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			api.WriteError(w, http.StatusInternalServerError, "internal_error", "flow could not be loaded", requestID)
 			return
 		}
-		if !flowCallable(target.Readiness.State) {
+		if !agentCallable(target.Readiness.State) {
 			api.WriteJSON(w, http.StatusConflict, api.ErrorResponse{Error: api.Error{Code: "flow_not_ready", Message: "flow is not ready to take calls", RequestID: requestID, Details: target.Readiness}})
 			return
 		}
@@ -102,12 +102,12 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		lifetime := s.effectiveVoiceTokenLifetime()
 		tokenID := storage.NewID() // becomes the session id
 		if input.Draft != nil {
-			snapshot, readiness, err := s.flows.ResolveDraft(r.Context(), target.ID, input.Draft.Config, input.Draft.MCPTools)
+			snapshot, readiness, err := s.agents.ResolveDraft(r.Context(), target.ID, input.Draft.Config, input.Draft.MCPTools)
 			if err != nil {
 				s.writeDraftError(w, err, requestID)
 				return
 			}
-			if !flowCallable(readiness.State) {
+			if !agentCallable(readiness.State) {
 				api.WriteJSON(w, http.StatusConflict, api.ErrorResponse{Error: api.Error{Code: "flow_not_ready", Message: "the draft is not ready to take calls", RequestID: requestID, Details: readiness}})
 				return
 			}
@@ -120,7 +120,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			Issuer: s.cfg.Token.Issuer, Audience: jwt.ClaimStrings{s.cfg.Token.Audience},
 			Subject: input.Principal, ID: tokenID,
 			IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(lifetime)),
-		}, Principal: input.Principal, FlowID: target.ID, Scope: "voice:connect", IssuerEpoch: s.voiceEpoch}
+		}, Principal: input.Principal, AgentID: target.ID, Scope: "voice:connect", IssuerEpoch: s.voiceEpoch}
 		jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 		if s.voiceKeyID != "" {
 			jwtToken.Header["kid"] = s.voiceKeyID
@@ -148,7 +148,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			prefix, code, message string
 			handler               http.Handler
 		}{
-			{"/api/v1/flows", "flow_management_unavailable", "flow management storage is unavailable", s.flowManagementAPI},
+			{"/api/v1/flows", "flow_management_unavailable", "flow management storage is unavailable", s.agentManagementAPI},
 			{"/api/v1/providers", "provider_management_unavailable", "provider management storage is unavailable", s.providerManagementAPI},
 			{"/api/v1/mcp-servers", "mcp_management_unavailable", "MCP management storage is unavailable", s.mcpManagementAPI},
 			{"/api/v1/sessions", "session_management_unavailable", "session management storage is unavailable", s.sessionManagementAPI},
@@ -185,8 +185,8 @@ func voiceTokenLifetime(cfg *Config) time.Duration {
 }
 
 // flowCallable reports whether a flow in this readiness state may run calls.
-func flowCallable(state string) bool {
-	return state == flow.ReadinessReady || state == flow.ReadinessWithToolWarning
+func agentCallable(state string) bool {
+	return state == agent.ReadinessReady || state == agent.ReadinessWithToolWarning
 }
 
 // writeDraftError maps a draft's validation failure the way a publish maps its own.
@@ -194,9 +194,9 @@ func (s *Server) writeDraftError(w http.ResponseWriter, err error, requestID str
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		api.WriteError(w, http.StatusNotFound, "not_found", "flow not found", requestID)
-	case errors.Is(err, flow.ErrNotAttached):
+	case errors.Is(err, agent.ErrNotAttached):
 		api.WriteError(w, http.StatusBadRequest, "flow_not_attached", err.Error(), requestID)
-	case errors.Is(err, flow.ErrInvalidConfig), errors.Is(err, storage.ErrInvalidToolSelection):
+	case errors.Is(err, agent.ErrInvalidConfig), errors.Is(err, storage.ErrInvalidToolSelection):
 		api.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error(), requestID)
 	default:
 		api.WriteError(w, http.StatusInternalServerError, "internal_error", "the draft could not be checked", requestID)

@@ -47,7 +47,7 @@ var errDemoShuttingDown = errors.New("demo install refused: the server is shutti
 // cancels (stopDemoLocked) and then waits for (waitDemo, through demoWG) before
 // it closes the store (the flight has its own 30 s bound, so a startup install can outlive
 // autoInstallDemo's 60 s context; still bounded, and Shutdown cancels it). Each caller waits for the result or for its own ctx.
-func (s *Server) installDental(ctx context.Context, servers demo.Servers, flows demo.Flows, endpoint string) (demo.Result, error) {
+func (s *Server) installDental(ctx context.Context, servers demo.Servers, agents demo.Agents, endpoint string) (demo.Result, error) {
 	ch := s.demoSF.DoChan("dental", func() (res any, err error) {
 		// DoChan runs this on its own goroutine: neither net/http's per-request recover nor
 		// autoInstallDemo's covers it, and a panic here would end the process.
@@ -73,7 +73,7 @@ func (s *Server) installDental(ctx context.Context, servers demo.Servers, flows 
 			s.stopFlight = nil
 			s.mu.Unlock()
 		}()
-		return demo.InstallDental(fctx, servers, flows, endpoint)
+		return demo.InstallDental(fctx, servers, agents, endpoint)
 	})
 	select {
 	case r := <-ch:
@@ -96,15 +96,15 @@ func (s *Server) stopDemoLocked() {
 }
 
 // demoStatus reports the demo's state; a failed lookup is an error, not "not installed".
-func demoStatus(ctx context.Context, flows demo.Flows, endpoint string) (demoStatusResp, error) {
+func demoStatus(ctx context.Context, agents demo.Agents, endpoint string) (demoStatusResp, error) {
 	var st demoStatusResp
 	st.Dental.Available = endpoint != ""
-	f, err := demo.FindFlow(ctx, flows)
+	f, err := demo.FindAgent(ctx, agents)
 	if err != nil {
 		return st, err
 	}
 	if f.ID != "" {
-		st.Dental.Installed, st.Dental.FlowID = true, f.ID
+		st.Dental.Installed, st.Dental.AgentID = true, f.ID
 	}
 	return st, nil
 }
@@ -113,19 +113,19 @@ type demoStatusResp struct {
 	Dental struct {
 		Available bool   `json:"available"`
 		Installed bool   `json:"installed"`
-		FlowID    string `json:"flow_id,omitempty"`
+		AgentID   string `json:"flow_id,omitempty"`
 	} `json:"dental"`
 }
 
 func (s *Server) handleDemo(w http.ResponseWriter, r *http.Request, requestID string) {
 	mgmt := s.mgmt.Load()
-	if mgmt == nil || s.flows == nil || s.mcpService == nil {
+	if mgmt == nil || s.agents == nil || s.mcpService == nil {
 		api.WriteError(w, http.StatusServiceUnavailable, "management_unavailable", "management storage is unavailable", requestID)
 		return
 	}
 	switch {
 	case r.URL.Path == "/api/v1/demo" && r.Method == http.MethodGet:
-		st, err := demoStatus(r.Context(), s.flows, s.dentalEndpoint())
+		st, err := demoStatus(r.Context(), s.agents, s.dentalEndpoint())
 		if err != nil {
 			s.logger.Warn("demo status failed", "err", s.redactor.Redact(err.Error()))
 			api.WriteError(w, http.StatusInternalServerError, "internal_error", "the demo status could not be read", requestID)
@@ -137,7 +137,7 @@ func (s *Server) handleDemo(w http.ResponseWriter, r *http.Request, requestID st
 			api.WriteError(w, http.StatusConflict, "demo_unavailable", "DENTAL_MCP_URL is not set on this server", requestID)
 			return
 		}
-		res, err := s.installDental(r.Context(), demoServers{svc: s.mcpService, store: mgmt.store}, s.flows, s.dentalEndpoint())
+		res, err := s.installDental(r.Context(), demoServers{svc: s.mcpService, store: mgmt.store}, s.agents, s.dentalEndpoint())
 		if err != nil {
 			s.logger.Warn("demo install failed", "err", s.redactor.Redact(err.Error()))
 			api.WriteError(w, http.StatusBadGateway, "demo_install_failed", "the demo could not be installed; check the server log", requestID)
@@ -166,8 +166,8 @@ func (s *Server) waitDemo(ctx context.Context) bool {
 // never stops the server: the admin UI button can retry.
 func (s *Server) autoInstallDemo() {
 	// Capture the services now: management teardown can nil s.mgmt while the goroutine runs.
-	m, flows, svc := s.mgmt.Load(), s.flows, s.mcpService
-	if m == nil || flows == nil || svc == nil {
+	m, agents, svc := s.mgmt.Load(), s.agents, s.mcpService
+	if m == nil || agents == nil || svc == nil {
 		s.logger.Error("demo.auto_install is dental but management storage is disabled")
 		return
 	}
@@ -198,14 +198,14 @@ func (s *Server) autoInstallDemo() {
 		// The MCP service may still be cold-starting (Cloud Run scales it to zero): retry until the 60s end.
 		var res demo.Result
 		err := retryUntil(ctx, demoRetryEvery, func(ctx context.Context) (err error) {
-			res, err = s.installDental(ctx, demoServers{svc: svc, store: m.store}, flows, endpoint)
+			res, err = s.installDental(ctx, demoServers{svc: svc, store: m.store}, agents, endpoint)
 			return err
 		}, func(err error) { s.logger.Warn("demo auto-install will retry", "err", s.redactor.Redact(err.Error())) })
 		if err != nil {
 			s.logger.Error("demo auto-install failed", "err", s.redactor.Redact(err.Error()))
 			return
 		}
-		s.logger.Info("demo installed", "flow", res.FlowID, "flow_created", res.FlowCreated, "mcp_created", res.MCPCreated)
+		s.logger.Info("demo installed", "flow", res.AgentID, "flow_created", res.AgentCreated, "mcp_created", res.MCPCreated)
 	}()
 }
 

@@ -24,7 +24,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"govoice/core"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/transport/ws"
 )
 
@@ -153,15 +153,15 @@ func newProbe() *stageProbe {
 	return &stageProbe{built: map[string]int{}, closed: map[string]int{}, units: map[string]int{}, said: map[string][]string{}, tools: map[string][]string{}, gate: make(chan struct{}), entered: make(chan struct{})}
 }
 
-type flowRigE2E struct {
-	t      *testing.T
-	s      *Server
-	ts     *httptest.Server
-	probe  *stageProbe
-	flowID string
+type agentRigE2E struct {
+	t       *testing.T
+	s       *Server
+	ts      *httptest.Server
+	probe   *stageProbe
+	agentID string
 }
 
-func flowConfigJSON(salesPrompt, salesVoice string, cue ...string) json.RawMessage {
+func agentConfigJSON(salesPrompt, salesVoice string, cue ...string) json.RawMessage {
 	tail := ""
 	if len(cue) > 0 {
 		tail = `,"route_cue":` + cue[0]
@@ -173,7 +173,7 @@ func flowConfigJSON(salesPrompt, salesVoice string, cue ...string) json.RawMessa
 		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."}]` + tail + `}`)
 }
 
-func newFlowRigE2E(t *testing.T, probe *stageProbe, mods ...func(*Config)) *flowRigE2E {
+func newAgentRigE2E(t *testing.T, probe *stageProbe, mods ...func(*Config)) *agentRigE2E {
 	t.Helper()
 	t.Setenv("GOVOICE_MANAGEMENT_API_KEY", e2eMgmtKey)
 	cfg := DefaultConfig(ProfileDevelopment)
@@ -199,15 +199,15 @@ func newFlowRigE2E(t *testing.T, probe *stageProbe, mods ...func(*Config)) *flow
 		defer cancel()
 		_ = s.Shutdown(ctx)
 	})
-	return &flowRigE2E{t: t, s: s, ts: ts, probe: probe}
+	return &agentRigE2E{t: t, s: s, ts: ts, probe: probe}
 }
 
-func (r *flowRigE2E) createRoutedFlow(salesVoice string, cue ...string) string {
-	a, err := r.s.flows.Create(r.t.Context(), flow.CreateRequest{Name: "Dealership", Config: flowConfigJSON("SALES", salesVoice, cue...)})
-	if err != nil || a.Readiness.State != flow.ReadinessReady {
+func (r *agentRigE2E) createRoutedAgent(salesVoice string, cue ...string) string {
+	a, err := r.s.agents.Create(r.t.Context(), agent.CreateRequest{Name: "Dealership", Config: agentConfigJSON("SALES", salesVoice, cue...)})
+	if err != nil || a.Readiness.State != agent.ReadinessReady {
 		r.t.Fatalf("graph flow: %+v err=%v", a.Readiness, err)
 	}
-	r.flowID = a.ID
+	r.agentID = a.ID
 	return a.ID
 }
 
@@ -248,15 +248,15 @@ type audioArrival struct {
 	dur  time.Duration
 }
 
-func (r *flowRigE2E) dial(flowID string) *e2eCall {
+func (r *agentRigE2E) dial(agentID string) *e2eCall {
 	r.t.Helper()
-	return r.dialToken(r.voiceToken(flowID))
+	return r.dialToken(r.voiceToken(agentID))
 }
 
 // voiceToken issues a voice token for flowID, as an integration's backend does.
-func (r *flowRigE2E) voiceToken(flowID string) string {
+func (r *agentRigE2E) voiceToken(agentID string) string {
 	r.t.Helper()
-	w := apiRequest(r.s, http.MethodPost, "/api/v1/voice-tokens", e2eMgmtKey, `{"principal":"alice","flow_id":"`+flowID+`"}`)
+	w := apiRequest(r.s, http.MethodPost, "/api/v1/voice-tokens", e2eMgmtKey, `{"principal":"alice","flow_id":"`+agentID+`"}`)
 	var resp struct {
 		Data struct{ Token string } `json:"data"`
 	}
@@ -265,7 +265,7 @@ func (r *flowRigE2E) voiceToken(flowID string) string {
 }
 
 // dialToken connects with an already issued voice token (a draft token, for one).
-func (r *flowRigE2E) dialToken(token string) *e2eCall {
+func (r *agentRigE2E) dialToken(token string) *e2eCall {
 	r.t.Helper()
 	claims := jwt.MapClaims{}
 	if _, _, err := jwt.NewParser().ParseUnverified(token, claims); err != nil {
@@ -396,9 +396,9 @@ func eventually(t *testing.T, what string, ok func() bool) {
 	}
 }
 
-func (r *flowRigE2E) timeline() []TimelineEvent { return r.s.timelines.GetOrCreate(1).Events() }
+func (r *agentRigE2E) timeline() []TimelineEvent { return r.s.timelines.GetOrCreate(1).Events() }
 
-func (r *flowRigE2E) has(typ TimelineEventType, details string) bool {
+func (r *agentRigE2E) has(typ TimelineEventType, details string) bool {
 	for _, e := range r.timeline() {
 		if e.Type == typ && (details == "" || e.Details == details) {
 			return true
@@ -407,7 +407,7 @@ func (r *flowRigE2E) has(typ TimelineEventType, details string) bool {
 	return false
 }
 
-func (r *flowRigE2E) spanNames(sessionID string) map[string]bool {
+func (r *agentRigE2E) spanNames(sessionID string) map[string]bool {
 	spans, err := r.s.mgmt.Load().store.Traces().Spans(r.t.Context(), sessionID, "")
 	if err != nil {
 		r.t.Fatal(err)
@@ -425,7 +425,7 @@ func (r *flowRigE2E) spanNames(sessionID string) map[string]bool {
 }
 
 // spanAttributes is the stored attributes JSON of the first span called name ("" when none).
-func (r *flowRigE2E) spanAttributes(sessionID, name string) string {
+func (r *agentRigE2E) spanAttributes(sessionID, name string) string {
 	spans, err := r.s.mgmt.Load().store.Traces().Spans(r.t.Context(), sessionID, "")
 	if err != nil {
 		r.t.Fatal(err)
@@ -438,13 +438,13 @@ func (r *flowRigE2E) spanAttributes(sessionID, name string) string {
 	return ""
 }
 
-func (r *flowRigE2E) activeSessions() int { return activeSessionCount(r.t, r.s, r.flowID) }
+func (r *agentRigE2E) activeSessions() int { return activeSessionCount(r.t, r.s, r.agentID) }
 
 // The whole path with a healthy second step.
-func TestFlowE2ERouteMovesTheCallAndClosesTheLeftStep(t *testing.T) {
+func TestAgentE2ERouteMovesTheCallAndClosesTheLeftStep(t *testing.T) {
 	probe := newProbe()
-	r := newFlowRigE2E(t, probe)
-	c := r.dial(r.createRoutedFlow("salesvoice"))
+	r := newAgentRigE2E(t, probe)
+	c := r.dial(r.createRoutedAgent("salesvoice"))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 	c.say("hello")
@@ -493,11 +493,11 @@ func TestFlowE2ERouteMovesTheCallAndClosesTheLeftStep(t *testing.T) {
 }
 
 // The second step cannot be built: the caller stays with the first.
-func TestFlowE2EFailedStepBuildKeepsTheCallGoing(t *testing.T) {
+func TestAgentE2EFailedStepBuildKeepsTheCallGoing(t *testing.T) {
 	probe := newProbe()
 	probe.failTTS = "brokenvoice"
-	r := newFlowRigE2E(t, probe)
-	c := r.dial(r.createRoutedFlow("brokenvoice"))
+	r := newAgentRigE2E(t, probe)
+	c := r.dial(r.createRoutedAgent("brokenvoice"))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 	c.say("transfer to sales")
@@ -527,11 +527,11 @@ func TestFlowE2EFailedStepBuildKeepsTheCallGoing(t *testing.T) {
 
 // The caller talks while the second step is still being built: the first step
 // answers, then the call moves over and the new step greets.
-func TestFlowE2ECallerSpeaksWhileTheStepIsBeingPrepared(t *testing.T) {
+func TestAgentE2ECallerSpeaksWhileTheStepIsBeingPrepared(t *testing.T) {
 	probe := newProbe()
 	probe.holdTTS = "slowvoice"
-	r := newFlowRigE2E(t, probe)
-	c := r.dial(r.createRoutedFlow("slowvoice"))
+	r := newAgentRigE2E(t, probe)
+	c := r.dial(r.createRoutedAgent("slowvoice"))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 	c.say("transfer to sales")
@@ -556,12 +556,12 @@ func TestFlowE2ECallerSpeaksWhileTheStepIsBeingPrepared(t *testing.T) {
 
 // The caller hangs up while the next step is being built: when the build
 // finishes, its stages are closed and nothing keeps running.
-func TestFlowE2EHangUpWhilePreparingClosesTheLateStep(t *testing.T) {
+func TestAgentE2EHangUpWhilePreparingClosesTheLateStep(t *testing.T) {
 	probe := newProbe()
 	probe.holdTTS = "slowvoice"
-	r := newFlowRigE2E(t, probe)
+	r := newAgentRigE2E(t, probe)
 	baseline := runtime.NumGoroutine()
-	c := r.dial(r.createRoutedFlow("slowvoice"))
+	c := r.dial(r.createRoutedAgent("slowvoice"))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 	c.say("transfer to sales")
@@ -577,16 +577,16 @@ func TestFlowE2EHangUpWhilePreparingClosesTheLateStep(t *testing.T) {
 }
 
 // Republishing the flow mid-call does not change the call in progress.
-func TestFlowE2ERepublishMidCallKeepsTheCallsFlow(t *testing.T) {
+func TestAgentE2ERepublishMidCallKeepsTheCallsAgent(t *testing.T) {
 	probe := newProbe()
-	r := newFlowRigE2E(t, probe)
-	c := r.dial(r.createRoutedFlow("salesvoice"))
+	r := newAgentRigE2E(t, probe)
+	c := r.dial(r.createRoutedAgent("salesvoice"))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 	c.say("hello")
 	c.waitReplies("[FRONT", 1)
 
-	v2 := flowConfigJSON("SALESV2", "salesvoice")
-	if _, err := r.s.flows.Update(t.Context(), r.flowID, flow.UpdateRequest{Config: v2}); err != nil {
+	v2 := agentConfigJSON("SALESV2", "salesvoice")
+	if _, err := r.s.agents.Update(t.Context(), r.agentID, agent.UpdateRequest{Config: v2}); err != nil {
 		t.Fatal(err)
 	}
 	c.say("transfer to sales")
@@ -596,21 +596,21 @@ func TestFlowE2ERepublishMidCallKeepsTheCallsFlow(t *testing.T) {
 	}
 
 	// A new call picks up the new version.
-	c2 := r.dial(r.flowID)
+	c2 := r.dial(r.agentID)
 	c2.say("transfer to sales")
 	c2.waitReplies("[SALESV2", 1)
 }
 
 // A plain (flat) flow goes through the same server unchanged.
-func TestFlowE2EFlatFlowHasNoRoutes(t *testing.T) {
+func TestAgentE2EFlatAgentHasNoRoutes(t *testing.T) {
 	probe := newProbe()
-	r := newFlowRigE2E(t, probe)
-	a, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "Flat", Config: json.RawMessage(
+	r := newAgentRigE2E(t, probe)
+	a, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Flat", Config: json.RawMessage(
 		`{"stt":{"provider":"echo"},"llm":{"provider":"echo","model":"m","system_prompt":"FLAT"},"tts":{"provider":"echo"}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.flowID = a.ID
+	r.agentID = a.ID
 	c := r.dial(a.ID)
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 	c.say("transfer to sales")
@@ -671,7 +671,7 @@ func withCue(t *testing.T) func(*Config) {
 	}
 }
 
-func (r *flowRigE2E) cueStopReason() string {
+func (r *agentRigE2E) cueStopReason() string {
 	for _, e := range r.timeline() {
 		if e.Type == EventCueStop {
 			return e.Details
@@ -682,11 +682,11 @@ func (r *flowRigE2E) cueStopReason() string {
 
 // The cue fills the gap while the next step is being built, then stops with a
 // short fade when the new step speaks.
-func TestFlowE2ECuePlaysInTheRouteGapAndStopsWhenSalesSpeaks(t *testing.T) {
+func TestAgentE2ECuePlaysInTheRouteGapAndStopsWhenSalesSpeaks(t *testing.T) {
 	probe := newProbe()
 	probe.holdTTS = "slowvoice" // the sales build takes as long as the test wants
-	r := newFlowRigE2E(t, probe, withCue(t))
-	c := r.dial(r.createRoutedFlow("slowvoice", `{"name":"chime","after_ms":50}`))
+	r := newAgentRigE2E(t, probe, withCue(t))
+	c := r.dial(r.createRoutedAgent("slowvoice", `{"name":"chime","after_ms":50}`))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 	c.say("hello")
@@ -740,10 +740,10 @@ func TestFlowE2ECuePlaysInTheRouteGapAndStopsWhenSalesSpeaks(t *testing.T) {
 }
 
 // A route quicker than after_ms stays silent: nothing on the wire, no cue event.
-func TestFlowE2EQuickRoutePlaysNoCue(t *testing.T) {
+func TestAgentE2EQuickRoutePlaysNoCue(t *testing.T) {
 	probe := newProbe()
-	r := newFlowRigE2E(t, probe, withCue(t))
-	c := r.dial(r.createRoutedFlow("salesvoice", `{"name":"chime","after_ms":8000}`))
+	r := newAgentRigE2E(t, probe, withCue(t))
+	c := r.dial(r.createRoutedAgent("salesvoice", `{"name":"chime","after_ms":8000}`))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 	c.say("transfer to sales")
@@ -756,11 +756,11 @@ func TestFlowE2EQuickRoutePlaysNoCue(t *testing.T) {
 
 // The next step cannot be built while the cue plays: the cue ends, the caller
 // keeps the first step, and no sound is left behind.
-func TestFlowE2ECueStopsWhenTheRouteFails(t *testing.T) {
+func TestAgentE2ECueStopsWhenTheRouteFails(t *testing.T) {
 	probe := newProbe()
 	probe.holdTTS, probe.failAfterHold = "slowvoice", true
-	r := newFlowRigE2E(t, probe, withCue(t))
-	c := r.dial(r.createRoutedFlow("slowvoice", `{"name":"chime","after_ms":50}`))
+	r := newAgentRigE2E(t, probe, withCue(t))
+	c := r.dial(r.createRoutedAgent("slowvoice", `{"name":"chime","after_ms":50}`))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 	c.say("transfer to sales")
@@ -784,12 +784,12 @@ func TestFlowE2ECueStopsWhenTheRouteFails(t *testing.T) {
 
 // A flow published with a sound the server had, on a server whose sounds changed since (a restart with a
 // smaller catalogue), still hands off, silently: publish refuses an unknown name, a running call never does.
-func TestFlowE2EUnknownCueNameStillHandsOff(t *testing.T) {
+func TestAgentE2EUnknownCueNameStillHandsOff(t *testing.T) {
 	probe := newProbe()
-	r := newFlowRigE2E(t, probe, withCue(t))
-	flowID := r.createRoutedFlow("salesvoice", `{"name":"chime","after_ms":50}`)
+	r := newAgentRigE2E(t, probe, withCue(t))
+	agentID := r.createRoutedAgent("salesvoice", `{"name":"chime","after_ms":50}`)
 	delete(r.s.cues, "chime")
-	c := r.dial(flowID)
+	c := r.dial(agentID)
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 	c.say("transfer to sales")
 	c.waitReplies("[SALES", 1)
@@ -799,9 +799,9 @@ func TestFlowE2EUnknownCueNameStillHandsOff(t *testing.T) {
 }
 
 // send_dtmf is a call tool: after a route the new step can still press keys.
-func TestFlowE2ESendDTMFWorksAfterARoute(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe(), func(cfg *Config) { cfg.DTMF.SendTool = true })
-	c := r.dial(r.createRoutedFlow("salesvoice"))
+func TestAgentE2ESendDTMFWorksAfterARoute(t *testing.T) {
+	r := newAgentRigE2E(t, newProbe(), func(cfg *Config) { cfg.DTMF.SendTool = true })
+	c := r.dial(r.createRoutedAgent("salesvoice"))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 	c.say("please transfer to sales")
 	c.waitReplies("[SALES", 1)
@@ -813,7 +813,7 @@ func TestFlowE2ESendDTMFWorksAfterARoute(t *testing.T) {
 }
 
 // endCallFlowJSON is a front -> sales flow; frontEnds and salesEnds give that step the end_call tool.
-func endCallFlowJSON(frontEnds, salesEnds bool) json.RawMessage {
+func endCallAgentJSON(frontEnds, salesEnds bool) json.RawMessage {
 	stt := `"stt":{"provider":"echo","model":"s"}`
 	return json.RawMessage(`{"start":"front","steps":[` +
 		`{"id":"front","name":"Front desk","end_call":` + strconv.FormatBool(frontEnds) + `,"config":{` + stt + `,"llm":{"provider":"echo","model":"m","system_prompt":"FRONT"},"tts":{"provider":"echo","voice":"frontvoice"}}},` +
@@ -821,13 +821,13 @@ func endCallFlowJSON(frontEnds, salesEnds bool) json.RawMessage {
 		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."}]}`)
 }
 
-func TestFlowE2EEndCallEndsTheCallAfterTheGoodbye(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe())
-	a, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "Closer", Config: endCallFlowJSON(true, false)})
-	if err != nil || a.Readiness.State != flow.ReadinessReady {
+func TestAgentE2EEndCallEndsTheCallAfterTheGoodbye(t *testing.T) {
+	r := newAgentRigE2E(t, newProbe())
+	a, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Closer", Config: endCallAgentJSON(true, false)})
+	if err != nil || a.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("flow: %+v err=%v", a.Readiness, err)
 	}
-	r.flowID = a.ID
+	r.agentID = a.ID
 	c := r.dial(a.ID)
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
@@ -839,12 +839,12 @@ func TestFlowE2EEndCallEndsTheCallAfterTheGoodbye(t *testing.T) {
 	before := c.replyCount()
 	c.say("please end the call")
 	eventually(t, "the goodbye after end_call", func() bool { return c.replies("Connecting you.") >= 1 && c.replyCount() > before })
-	eventually(t, "the call ended by the flow", func() bool { return r.has(EventDisconnect, "terminated: "+EndReasonFlow) })
+	eventually(t, "the call ended by the flow", func() bool { return r.has(EventDisconnect, "terminated: "+EndReasonAgent) })
 	eventually(t, "session closed", func() bool { return r.activeSessions() == 0 })
 	eventually(t, "call.end span", func() bool { return r.spanNames(c.sessionID)["call.end"] })
 	// The trace says why and from which step, not just that the call ended.
 	attrs := r.spanAttributes(c.sessionID, "call.end")
-	if !strings.Contains(attrs, `"reason":"`+EndReasonFlow+`"`) || !strings.Contains(attrs, `"from_step":"front"`) {
+	if !strings.Contains(attrs, `"reason":"`+EndReasonAgent+`"`) || !strings.Contains(attrs, `"from_step":"front"`) {
 		t.Fatalf("call.end attributes = %s", attrs)
 	}
 }
@@ -855,13 +855,13 @@ func oneStepEndCallJSON(ends bool) json.RawMessage {
 		`"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"MAIN"},"tts":{"provider":"echo","voice":"v"}}}],"routes":[]}`)
 }
 
-func TestFlowE2EAOneStepFlowCanEndTheCall(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe())
-	a, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "OneStepCloser", Config: oneStepEndCallJSON(true)})
-	if err != nil || a.Readiness.State != flow.ReadinessReady {
+func TestAgentE2EAOneStepAgentCanEndTheCall(t *testing.T) {
+	r := newAgentRigE2E(t, newProbe())
+	a, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "OneStepCloser", Config: oneStepEndCallJSON(true)})
+	if err != nil || a.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("flow: %+v err=%v", a.Readiness, err)
 	}
-	r.flowID = a.ID
+	r.agentID = a.ID
 	c := r.dial(a.ID)
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 	c.say("hello")
@@ -872,15 +872,15 @@ func TestFlowE2EAOneStepFlowCanEndTheCall(t *testing.T) {
 	before := c.replyCount()
 	c.say("please end the call")
 	eventually(t, "the goodbye after end_call", func() bool { return c.replyCount() > before })
-	eventually(t, "the call ended by the flow", func() bool { return r.has(EventDisconnect, "terminated: "+EndReasonFlow) })
+	eventually(t, "the call ended by the flow", func() bool { return r.has(EventDisconnect, "terminated: "+EndReasonAgent) })
 	eventually(t, "session closed", func() bool { return r.activeSessions() == 0 })
 
 	// The same one-step flow without the flag has no end_call tool: the phrase is just echoed and the call stays.
-	b, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "OneStepStays", Config: oneStepEndCallJSON(false)})
-	if err != nil || b.Readiness.State != flow.ReadinessReady {
+	b, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "OneStepStays", Config: oneStepEndCallJSON(false)})
+	if err != nil || b.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("flow: %+v err=%v", b.Readiness, err)
 	}
-	r.flowID = b.ID
+	r.agentID = b.ID
 	d := r.dial(b.ID)
 	eventually(t, "second session", func() bool { return r.activeSessions() == 1 })
 	d.say("please end the call")
@@ -893,28 +893,28 @@ func TestFlowE2EAOneStepFlowCanEndTheCall(t *testing.T) {
 }
 
 // end_call must hang up even when the server's own quiet-caller handling is off (the idle controller is forced on).
-func TestFlowE2EOneStepEndCallWithIdleOff(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe(), serverIdle(0, ""))
-	a, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "OneStepIdleOff", Config: oneStepEndCallJSON(true)})
-	if err != nil || a.Readiness.State != flow.ReadinessReady {
+func TestAgentE2EOneStepEndCallWithIdleOff(t *testing.T) {
+	r := newAgentRigE2E(t, newProbe(), serverIdle(0, ""))
+	a, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "OneStepIdleOff", Config: oneStepEndCallJSON(true)})
+	if err != nil || a.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("flow: %+v err=%v", a.Readiness, err)
 	}
-	r.flowID = a.ID
+	r.agentID = a.ID
 	c := r.dial(a.ID)
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 	c.say("please end the call")
-	eventually(t, "the call ended by the flow", func() bool { return r.has(EventDisconnect, "terminated: "+EndReasonFlow) })
+	eventually(t, "the call ended by the flow", func() bool { return r.has(EventDisconnect, "terminated: "+EndReasonAgent) })
 	eventually(t, "session closed", func() bool { return r.activeSessions() == 0 })
 }
 
 // Only sales has end_call; the caller is on front, which lacks the tool, so the phrase is just echoed.
-func TestFlowE2EStepWithoutEndCallKeepsTheCall(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe())
-	a, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "SalesCloses", Config: endCallFlowJSON(false, true)})
-	if err != nil || a.Readiness.State != flow.ReadinessReady {
+func TestAgentE2EStepWithoutEndCallKeepsTheCall(t *testing.T) {
+	r := newAgentRigE2E(t, newProbe())
+	a, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "SalesCloses", Config: endCallAgentJSON(false, true)})
+	if err != nil || a.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("flow: %+v err=%v", a.Readiness, err)
 	}
-	r.flowID = a.ID
+	r.agentID = a.ID
 	c := r.dial(a.ID)
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 	c.say("please end the call")
@@ -922,16 +922,16 @@ func TestFlowE2EStepWithoutEndCallKeepsTheCall(t *testing.T) {
 	// The call still answers a second turn, so the first did not hang it up.
 	c.say("are you there")
 	c.waitReplies("[FRONT", 2)
-	if r.activeSessions() != 1 || r.has(EventDisconnect, "terminated: "+EndReasonFlow) {
+	if r.activeSessions() != 1 || r.has(EventDisconnect, "terminated: "+EndReasonAgent) {
 		t.Fatal("a step without end_call must not hang up")
 	}
 }
 
 // A token minted with a configured token.max_lifetime carries that lifetime and is honoured by the live /ws
 // path (the call connects and talks); a lifetime above the 5m ceiling is refused when the server is built.
-func TestFlowE2EConfiguredTokenLifetimeIsHonouredByTheLiveConnect(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe(), func(c *Config) { c.Token.MaxLifetime = 3 * time.Minute })
-	tok := r.voiceToken(r.createRoutedFlow("salesvoice"))
+func TestAgentE2EConfiguredTokenLifetimeIsHonouredByTheLiveConnect(t *testing.T) {
+	r := newAgentRigE2E(t, newProbe(), func(c *Config) { c.Token.MaxLifetime = 3 * time.Minute })
+	tok := r.voiceToken(r.createRoutedAgent("salesvoice"))
 	claims := jwt.MapClaims{}
 	if _, _, err := jwt.NewParser().ParseUnverified(tok, claims); err != nil {
 		t.Fatal(err)
@@ -955,7 +955,7 @@ func TestFlowE2EConfiguredTokenLifetimeIsHonouredByTheLiveConnect(t *testing.T) 
 
 // routedBackgroundFlow is front -> sales -> support (and sales -> front when back is set); the given
 // audio object, if any, goes on each step by id.
-func (r *flowRigE2E) routedBackgroundFlow(audio map[string]string, back bool) string {
+func (r *agentRigE2E) routedBackgroundAgent(audio map[string]string, back bool) string {
 	r.t.Helper()
 	stage := func(prompt, voice, extra string) string {
 		return `"llm":{"provider":"echo","model":"m","system_prompt":"` + prompt + `"},"tts":{"provider":"echo","voice":"` + voice + `"}` + extra
@@ -977,22 +977,22 @@ func (r *flowRigE2E) routedBackgroundFlow(audio map[string]string, back bool) st
 	}
 	cfg := `{"start":"front","steps":[` + step("front", "Front desk", "FRONT", true) + `,` + step("sales", "Sales", "SALES", false) + `,` +
 		step("support", "Support", "SUPPORT", false) + `],"routes":[` + routes + `]}`
-	a, err := r.s.flows.Create(r.t.Context(), flow.CreateRequest{Name: "Beds", Config: json.RawMessage(cfg)})
-	if err != nil || a.Readiness.State != flow.ReadinessReady {
+	a, err := r.s.agents.Create(r.t.Context(), agent.CreateRequest{Name: "Beds", Config: json.RawMessage(cfg)})
+	if err != nil || a.Readiness.State != agent.ReadinessReady {
 		r.t.Fatalf("background flow: %+v err=%v", a.Readiness, err)
 	}
-	r.flowID = a.ID
+	r.agentID = a.ID
 	return a.ID
 }
 
 // R5a: a step's background starts when the route to it arrives, and a step that names none keeps the
 // sound that is playing.
-func TestFlowE2EAStepsBackgroundStartsWhenTheRouteArrives(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe(), func(c *Config) {
+func TestAgentE2EAStepsBackgroundStartsWhenTheRouteArrives(t *testing.T) {
+	r := newAgentRigE2E(t, newProbe(), func(c *Config) {
 		c.Audio.Backgrounds = map[string]CueConfig{"office": {File: constWAV(t, "office", 20000), GainDB: ptrF(0)}}
-		c.Audio.AllowFlowBackground = true
+		c.Audio.AllowAgentBackground = true
 	})
-	c := r.dial(r.routedBackgroundFlow(map[string]string{"sales": `{"background":{"name":"office"}}`}, false))
+	c := r.dial(r.routedBackgroundAgent(map[string]string{"sales": `{"background":{"name":"office"}}`}, false))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 	c.say("hello")
@@ -1016,13 +1016,13 @@ func TestFlowE2EAStepsBackgroundStartsWhenTheRouteArrives(t *testing.T) {
 }
 
 // K7: a route back to the start step restores the bed the call began with, the server default included.
-func TestFlowE2EAStepsBackgroundIsRestoredWhenARouteReturnsToTheStart(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe(), func(c *Config) {
+func TestAgentE2EAStepsBackgroundIsRestoredWhenARouteReturnsToTheStart(t *testing.T) {
+	r := newAgentRigE2E(t, newProbe(), func(c *Config) {
 		c.Audio.Backgrounds = map[string]CueConfig{"soft": {File: constWAV(t, "soft", 6000), GainDB: ptrF(0)}}
 		c.Audio.BackgroundDefault = "soft"
-		c.Audio.AllowFlowBackground = true
+		c.Audio.AllowAgentBackground = true
 	})
-	c := r.dial(r.routedBackgroundFlow(map[string]string{"sales": `{"background":{"name":""}}`}, true))
+	c := r.dial(r.routedBackgroundAgent(map[string]string{"sales": `{"background":{"name":""}}`}, true))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 	eventually(t, "the server default plays on the start step", func() bool { return c.cueFrames() >= 5 })
 

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"govoice/server/flow"
+	"govoice/server/agent"
 )
 
 func TestDraftRegistryIsBoundedSingleUseAndKeepsAGraceAfterExpiry(t *testing.T) {
@@ -52,25 +52,25 @@ const (
 	draftPrompt     = "DRAFT"
 )
 
-func echoFlowConfig(prompt string) string {
+func echoAgentConfig(prompt string) string {
 	return `{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"` + prompt + `"},"tts":{"provider":"echo","voice":"v"}}`
 }
 
 // draftRig is a server with one published echo flow whose prompt is PUBLISHED.
-func draftRig(t *testing.T) (*flowRigE2E, string) {
+func draftRig(t *testing.T) (*agentRigE2E, string) {
 	t.Helper()
-	r := newFlowRigE2E(t, newProbe())
-	f, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "Support", Config: json.RawMessage(echoFlowConfig(publishedPrompt))})
-	if err != nil || f.Readiness.State != flow.ReadinessReady {
+	r := newAgentRigE2E(t, newProbe())
+	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Support", Config: json.RawMessage(echoAgentConfig(publishedPrompt))})
+	if err != nil || f.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("flow: %+v err %v", f.Readiness, err)
 	}
-	r.flowID = f.ID
+	r.agentID = f.ID
 	return r, f.ID
 }
 
 // issueDraftToken asks for a token carrying a draft; it returns the response.
-func issueDraftToken(r *flowRigE2E, flowID, config string) (code int, token string, body string) {
-	payload, _ := json.Marshal(map[string]any{"principal": "alice", "flow_id": flowID, "draft": map[string]any{"config": json.RawMessage(config)}})
+func issueDraftToken(r *agentRigE2E, agentID, config string) (code int, token string, body string) {
+	payload, _ := json.Marshal(map[string]any{"principal": "alice", "flow_id": agentID, "draft": map[string]any{"config": json.RawMessage(config)}})
 	w := apiRequest(r.s, http.MethodPost, "/api/v1/voice-tokens", e2eMgmtKey, string(payload))
 	var resp struct {
 		Data struct{ Token string } `json:"data"`
@@ -82,16 +82,16 @@ func issueDraftToken(r *flowRigE2E, flowID, config string) (code int, token stri
 func TestVoiceTokenWithADraftIsValidatedLikeAPublish(t *testing.T) {
 	r, id := draftRig(t)
 	for name, tc := range map[string]struct {
-		flow, config string
-		code         int
+		agent, config string
+		code          int
 	}{
 		"not an object": {id, `[1]`, http.StatusBadRequest},
 		"unattached":    {id, `{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo"},"tts":{"provider":"echo","voice":"v"}}`, http.StatusBadRequest},
-		"foreign tool":  {id, `{"start":"a","steps":[{"id":"a","name":"A","tools":["srv/lookup"],"config":` + echoFlowConfig("D") + `}],"routes":[]}`, http.StatusBadRequest},
-		"unknown flow":  {"0194c5f8-0000-7000-8000-000000000000", echoFlowConfig("D"), http.StatusNotFound},
-		"a valid draft": {id, echoFlowConfig(draftPrompt), http.StatusCreated},
+		"foreign tool":  {id, `{"start":"a","steps":[{"id":"a","name":"A","tools":["srv/lookup"],"config":` + echoAgentConfig("D") + `}],"routes":[]}`, http.StatusBadRequest},
+		"unknown flow":  {"0194c5f8-0000-7000-8000-000000000000", echoAgentConfig("D"), http.StatusNotFound},
+		"a valid draft": {id, echoAgentConfig(draftPrompt), http.StatusCreated},
 	} {
-		code, token, body := issueDraftToken(r, tc.flow, tc.config)
+		code, token, body := issueDraftToken(r, tc.agent, tc.config)
 		if code != tc.code {
 			t.Errorf("%s: status %d, want %d: %s", name, code, tc.code, body)
 		}
@@ -99,7 +99,7 @@ func TestVoiceTokenWithADraftIsValidatedLikeAPublish(t *testing.T) {
 			t.Errorf("%s: token %q for status %d", name, token, code)
 		}
 	}
-	f, err := r.s.flows.Get(t.Context(), id)
+	f, err := r.s.agents.Get(t.Context(), id)
 	if err != nil || f.Version.Number != 1 {
 		t.Fatalf("a draft request must never publish: %+v err %v", f.Version, err)
 	}
@@ -114,7 +114,7 @@ func TestVoiceTokenWithoutADraftIsUnchanged(t *testing.T) {
 
 func TestDraftCallRunsTheDraftNotThePublishedVersion(t *testing.T) {
 	r, id := draftRig(t)
-	code, token, body := issueDraftToken(r, id, echoFlowConfig(draftPrompt))
+	code, token, body := issueDraftToken(r, id, echoAgentConfig(draftPrompt))
 	if code != http.StatusCreated {
 		t.Fatalf("%d %s", code, body)
 	}
@@ -135,11 +135,11 @@ func TestDraftCallRunsTheDraftNotThePublishedVersion(t *testing.T) {
 
 func TestDraftCallIsRecordedAsADraftOnTheCurrentVersion(t *testing.T) {
 	r, id := draftRig(t)
-	_, token, _ := issueDraftToken(r, id, echoFlowConfig(draftPrompt))
+	_, token, _ := issueDraftToken(r, id, echoAgentConfig(draftPrompt))
 	c := r.dialToken(token)
 	c.say("hello")
 	c.waitReplies("["+draftPrompt, 1)
-	f, _ := r.s.flows.Get(t.Context(), id)
+	f, _ := r.s.agents.Get(t.Context(), id)
 	var sessionHash string
 	eventually(t, "the draft session row", func() bool {
 		rec, err := r.s.store.Sessions().Get(t.Context(), c.sessionID)
@@ -160,11 +160,11 @@ func TestDraftCallIsRecordedAsADraftOnTheCurrentVersion(t *testing.T) {
 
 func TestDraftSurvivesAPublishDuringTheCall(t *testing.T) {
 	r, id := draftRig(t)
-	_, token, _ := issueDraftToken(r, id, echoFlowConfig(draftPrompt))
+	_, token, _ := issueDraftToken(r, id, echoAgentConfig(draftPrompt))
 	c := r.dialToken(token)
 	c.say("one")
 	c.waitReplies("["+draftPrompt, 1)
-	if _, err := r.s.flows.Update(t.Context(), id, flow.UpdateRequest{Config: json.RawMessage(echoFlowConfig("PUBLISHED2"))}); err != nil {
+	if _, err := r.s.agents.Update(t.Context(), id, agent.UpdateRequest{Config: json.RawMessage(echoAgentConfig("PUBLISHED2"))}); err != nil {
 		t.Fatal(err)
 	}
 	c.say("two")
@@ -176,7 +176,7 @@ func TestDraftSurvivesAPublishDuringTheCall(t *testing.T) {
 
 func TestADraftTokenIsSingleUse(t *testing.T) {
 	r, id := draftRig(t)
-	_, token, _ := issueDraftToken(r, id, echoFlowConfig(draftPrompt))
+	_, token, _ := issueDraftToken(r, id, echoAgentConfig(draftPrompt))
 	c := r.dialToken(token)
 	c.say("hello")
 	c.waitReplies("["+draftPrompt, 1)
@@ -189,10 +189,10 @@ func TestADraftTokenIsSingleUse(t *testing.T) {
 	}
 }
 
-func TestADraftCallIsRefusedOnceItsFlowIsArchived(t *testing.T) {
+func TestADraftCallIsRefusedOnceItsAgentIsArchived(t *testing.T) {
 	r, id := draftRig(t)
-	_, token, _ := issueDraftToken(r, id, echoFlowConfig(draftPrompt))
-	if err := r.s.flows.Archive(t.Context(), id); err != nil {
+	_, token, _ := issueDraftToken(r, id, echoAgentConfig(draftPrompt))
+	if err := r.s.agents.Archive(t.Context(), id); err != nil {
 		t.Fatal(err)
 	}
 	c := r.dialToken(token)

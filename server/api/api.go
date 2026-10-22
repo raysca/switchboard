@@ -6,7 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"io"
 	"net/http"
 	"strconv"
@@ -64,7 +64,7 @@ type Pagination struct {
 
 type VoiceTokenRequest struct {
 	Principal string `json:"principal"`
-	FlowID    string `json:"flow_id"`
+	AgentID   string `json:"flow_id"`
 	// Draft, when set, makes a token for a call that runs this config instead of
 	// the flow's published version (a test call). It is validated like a publish.
 	Draft *DraftRequest `json:"draft,omitempty"`
@@ -74,7 +74,7 @@ type VoiceTokenRequest struct {
 type DraftRequest struct {
 	Config json.RawMessage `json:"config"`
 	// MCPTools is the draft's own tool selection; absent, the flow's current selection applies.
-	MCPTools *[]flow.ToolSelection `json:"mcp_tools,omitempty"`
+	MCPTools *[]agent.ToolSelection `json:"mcp_tools,omitempty"`
 }
 type VoiceTokenResponse struct {
 	Token     string    `json:"token"`
@@ -112,9 +112,9 @@ type ServerTurn struct {
 }
 
 type ServerAudio struct {
-	Backgrounds         []string `json:"backgrounds"`
-	Cues                []string `json:"cues"` // sound names a flow's route_cue may use
-	AllowFlowBackground bool     `json:"allow_flow_background"`
+	Backgrounds          []string `json:"backgrounds"`
+	Cues                 []string `json:"cues"` // sound names a flow's route_cue may use
+	AllowAgentBackground bool     `json:"allow_flow_background"`
 	// BackgroundDefault is the sound every call plays unless its flow picks another or none ("" = none).
 	BackgroundDefault string `json:"background_default"`
 }

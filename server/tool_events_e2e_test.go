@@ -114,7 +114,7 @@ func bargeIn(t *testing.T, sess *core.Session) {
 func TestMCPCallToolEventsOnTheWire(t *testing.T) {
 	r := newMCPCallRig(t)
 	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
-	c := r.dial(r.flowWith(id, hashes, true, nil, "lookup_order").ID)
+	c := r.dial(r.agentWith(id, hashes, true, nil, "lookup_order").ID)
 	c.say(`call tool lookup_order {"order_id":"42"}`)
 	c.waitReplies("shipped", 1)
 	want := []string{`started{}`, `in-progress{"tool_call_id":"#1"}`, `stopped{"cancelled":false,"tool_call_id":"#1"}`}
@@ -124,7 +124,7 @@ func TestMCPCallToolEventsOnTheWire(t *testing.T) {
 func TestMCPCallFailedToolStopsUncancelled(t *testing.T) {
 	r := newMCPCallRig(t)
 	id, hashes := r.server("fail", r.ts.URL+"/fail/tools", "")
-	c := r.dial(r.flowWith(id, hashes, false, nil, "tool_error").ID)
+	c := r.dial(r.agentWith(id, hashes, false, nil, "tool_error").ID)
 	c.say("call tool tool_error")
 	c.waitReplies("Tool tool_error failed", 1)
 	want := []string{`started{}`, `in-progress{"tool_call_id":"#1"}`, `stopped{"cancelled":false,"tool_call_id":"#1"}`}
@@ -134,7 +134,7 @@ func TestMCPCallFailedToolStopsUncancelled(t *testing.T) {
 func TestMCPCallParallelToolsEachGetTheirEvents(t *testing.T) {
 	r := newMCPCallRig(t, func(c *Config) { c.Tools.MaxParallel = 4 })
 	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
-	c := r.dial(r.flowWith(id, hashes, true, nil, "lookup_order", "echo").ID)
+	c := r.dial(r.agentWith(id, hashes, true, nil, "lookup_order", "echo").ID)
 	c.say(`call tool lookup_order {"order_id":"42"} then call tool echo {"text":"hi"}`)
 	c.waitReplies("Tool echo returned", 1)
 	want := []string{
@@ -152,7 +152,7 @@ func TestMCPCallBargeInSettlesTheAnnouncedCallAndNothingElse(t *testing.T) {
 	r := newMCPCallRig(t, func(c *Config) { c.MCP.Timeout = 10 * time.Second })
 	session := r.liveSession()
 	id, hashes := r.server("slow", r.ts.URL+"/slow", "")
-	c := r.dial(r.flowWith(id, hashes, false, nil, "slow_lookup").ID)
+	c := r.dial(r.agentWith(id, hashes, false, nil, "slow_lookup").ID)
 	c.say(`call tool slow_lookup {"delay_ms":4000}`)
 	waitFnEvents(t, c, 2) // announced: started, in-progress
 	// in-progress precedes the executor's MCP request: barge in only once the server has the call.
@@ -166,7 +166,7 @@ func TestMCPCallBargeInSettlesTheAnnouncedCallAndNothingElse(t *testing.T) {
 func TestMCPCallAsyncToolStopsWhenItsBackgroundRunEnds(t *testing.T) {
 	r := newMCPCallRig(t)
 	id, hashes := r.server("slow", r.ts.URL+"/slow", "")
-	c := r.dial(r.flowWith(id, hashes, false, []string{id + "/slow_lookup"}, "slow_lookup").ID)
+	c := r.dial(r.agentWith(id, hashes, false, []string{id + "/slow_lookup"}, "slow_lookup").ID)
 	c.say(`call tool slow_lookup {"delay_ms":1000}`)
 	c.waitReplies("running", 1) // the acknowledgement is answered at once
 	want := []string{`started{}`, `in-progress{"tool_call_id":"#1"}`, `stopped{"cancelled":false,"tool_call_id":"#1"}`}
@@ -179,7 +179,7 @@ func TestMCPCallAsyncToolStopsWhenItsBackgroundRunEnds(t *testing.T) {
 func TestMCPCallToolEventsCarryNoToolContent(t *testing.T) {
 	r := newMCPCallRig(t, func(c *Config) { c.Privacy.Redaction.Enabled = true })
 	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
-	c := r.dial(r.flowWith(id, hashes, true, nil, "lookup_order").ID)
+	c := r.dial(r.agentWith(id, hashes, true, nil, "lookup_order").ID)
 	c.say(`call tool lookup_order {"order_id":"4111 1111 1111 1111"}`)
 	c.waitReplies("shipped", 1)
 	waitFnEvents(t, c, 3)

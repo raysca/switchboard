@@ -82,13 +82,13 @@ func callerTurns(t *testing.T, base string, speech []byte) []string {
 	rec := &callerTurnLog{}
 	llm := httptest.NewServer(http.HandlerFunc(rec.handler))
 	defer llm.Close()
-	rig := newFlowRigE2E(t, newProbe(), func(c *Config) {
+	rig := newAgentRigE2E(t, newProbe(), func(c *Config) {
 		c.Providers.Offline.STTEndpoint = "ws" + strings.TrimPrefix(base, "http") + "/v1/stt"
 		c.Providers.Offline.TTSEndpoint = base + "/v1/tts"
 		c.Providers.Offline.LLMEndpoint = llm.URL + "/v1/responses"
 	})
 	realVAD(t, rig.s)
-	call := rig.dial(offlineFlow(t, rig, offlineFlowConfig))
+	call := rig.dial(offlineAgent(t, rig, offlineAgentConfig))
 	call.realtimeAudio(append(speech, make([]byte, 2*16000*3)...))
 	for end := time.Now().Add(60 * time.Second); len(rec.snapshot()) == 0 || call.replyCount() == 0; time.Sleep(200 * time.Millisecond) {
 		if time.Now().After(end) {

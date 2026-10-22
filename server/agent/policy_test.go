@@ -1,4 +1,4 @@
-package flow
+package agent
 
 import (
 	"context"
@@ -23,7 +23,7 @@ type fakePolicy struct {
 }
 
 func (p *fakePolicy) Backgrounds() []string          { return p.sounds }
-func (p *fakePolicy) AllowFlowBackground() bool      { return p.allow }
+func (p *fakePolicy) AllowAgentBackground() bool     { return p.allow }
 func (p *fakePolicy) MinUserTimeout() time.Duration  { return p.minTimer }
 func (p *fakePolicy) Cues() []string                 { return p.cues }
 func (p *fakePolicy) TurnManager() bool              { return p.manager }
@@ -35,7 +35,7 @@ func withExtra(extra string) json.RawMessage {
 	return json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"},` + extra + `}`)
 }
 
-func TestPublishRefusesFlowSettingsTheServerDoesNotAllow(t *testing.T) {
+func TestPublishRefusesAgentSettingsTheServerDoesNotAllow(t *testing.T) {
 	p := &fakePolicy{sounds: []string{"cafe", "office"}, allow: true, minTimer: 2 * time.Second}
 	svc := testServiceWith(t, p)
 	cases := []struct{ name, extra, want string }{
@@ -59,7 +59,7 @@ func TestPublishRefusesFlowSettingsTheServerDoesNotAllow(t *testing.T) {
 	}
 }
 
-func TestACeilingOffRefusesAnyFlowBackgroundButNotOtherAudioSettings(t *testing.T) {
+func TestACeilingOffRefusesAnyAgentBackgroundButNotOtherAudioSettings(t *testing.T) {
 	p := &fakePolicy{sounds: []string{"office"}, allow: false}
 	svc := testServiceWith(t, p)
 	_, err := svc.Create(context.Background(), CreateRequest{Name: "bg", Config: withExtra(`"audio":{"background":{"name":"office"}}`)})
@@ -87,7 +87,7 @@ func TestADraftIsCheckedLikeAPublishAndWithoutAPolicyNothingExtraIsChecked(t *te
 	}
 }
 
-func TestASoundTheServerNoLongerOffersDoesNotTakeTheFlowOffline(t *testing.T) {
+func TestASoundTheServerNoLongerOffersDoesNotTakeTheAgentOffline(t *testing.T) {
 	p := &fakePolicy{sounds: []string{"office"}, allow: true}
 	svc := testServiceWith(t, p)
 	f, err := svc.Create(context.Background(), CreateRequest{Name: "bg", Config: withExtra(`"audio":{"background":{"name":"office"}}`)})
@@ -110,7 +110,7 @@ func TestAnExplicitNoBackgroundNeedsNeitherACatalogueEntryNorTheCeiling(t *testi
 	}
 }
 
-func TestAWaitUnderTheDTMFFloorTakesTheFlowOfflineWhenTheFloorRisesLater(t *testing.T) {
+func TestAWaitUnderTheDTMFFloorTakesTheAgentOfflineWhenTheFloorRisesLater(t *testing.T) {
 	p := &fakePolicy{allow: true}
 	svc := testServiceWith(t, p)
 	f, err := svc.Create(context.Background(), CreateRequest{Name: "wait", Config: withExtra(`"idle":{"user_timeout_ms":3000}`)})

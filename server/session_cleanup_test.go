@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"govoice/server/flow"
+	"govoice/server/agent"
 )
 
 // A call that fails to set up after its pipeline is built must close every
@@ -21,12 +21,12 @@ func TestSetupFailureClosesProviders(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			probe := newProbe()
-			r := newFlowRigE2E(t, probe)
+			r := newAgentRigE2E(t, probe)
 			r.s.sessionBudget.MaxAsyncTasks = tc.async
-			id := r.createRoutedFlow("salesvoice")
+			id := r.createRoutedAgent("salesvoice")
 			if tc.greeting {
-				raw := strings.Replace(string(flowConfigJSON("SALES", "salesvoice")), `"config":{`, `"config":{"greeting":"hello there",`, 1)
-				a, err := r.s.flows.Create(r.t.Context(), flow.CreateRequest{Name: "Greeter", Config: json.RawMessage(raw)})
+				raw := strings.Replace(string(agentConfigJSON("SALES", "salesvoice")), `"config":{`, `"config":{"greeting":"hello there",`, 1)
+				a, err := r.s.agents.Create(r.t.Context(), agent.CreateRequest{Name: "Greeter", Config: json.RawMessage(raw)})
 				if err != nil {
 					t.Fatal(err)
 				}

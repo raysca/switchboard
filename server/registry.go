@@ -23,7 +23,7 @@ import (
 	"govoice/providers/google"
 	"govoice/providers/openai"
 	"govoice/providers/xai"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/smartturn"
 	"govoice/vad"
 )
@@ -38,10 +38,10 @@ type StageSpec struct {
 	Language string
 	Voice    string
 	// VoiceSettings (ElevenLabs TTS only; nil = provider defaults).
-	VoiceSettings *flow.ElevenLabsVoiceSettings
+	VoiceSettings *agent.ElevenLabsVoiceSettings
 	SystemPrompt  string
 	// Sampling (LLM only; zero = provider defaults). Copied to LLM fallbacks.
-	Sampling flow.LLMSampling
+	Sampling agent.LLMSampling
 	Secret   []byte
 
 	// LLM stage only: the flow's captured MCP tools and the call history
@@ -68,7 +68,7 @@ type StageSpec struct {
 }
 
 // sampling unpacks the flow's sampling into the provider configs' shape
-// (providers cannot import server/flow): nil / 0 mean "provider default".
+// (providers cannot import server/agent): nil / 0 mean "provider default".
 func (s StageSpec) sampling() (temperature, topP *float64, maxOutputTokens int) {
 	if n := s.Sampling.MaxOutputTokens; n != nil {
 		maxOutputTokens = *n
@@ -89,7 +89,7 @@ type CallSpec struct {
 	STT, LLM, TTS StageSpec
 	MaxMessages   int
 	// FlowVersionID is the pinned flow version (trace attribute only).
-	FlowVersionID string
+	AgentVersionID string
 	// StoredSessionID is the persisted session row (trace spans attach to it).
 	StoredSessionID string
 	// TurnLatencies collects the call's per-turn stage latencies for its turn rows.
@@ -100,7 +100,7 @@ type CallSpec struct {
 	Ender *callEnder
 	// Flow is set for flows with more than one step: the call starts on the
 	// start step and moves between steps by route.
-	Flow *CallFlow
+	Agent *CallAgent
 	// OnRoute, if set, receives the route lifecycle (timeline, traces, metrics).
 	OnRoute func(core.RouteEvent)
 	// OnEndCall receives the step whose end_call ended the call (trace).
@@ -120,7 +120,7 @@ type CallSpec struct {
 	OnGreetFail func(error)
 	MaxTokens   int
 	// Summary: summarize older turns with the primary LLM (off unless Enabled).
-	Summary flow.SummarizationConfig
+	Summary agent.SummarizationConfig
 	// History, when set, sees every frame just before the transport (turn rows).
 	History core.Processor
 	// Recording: the flow opted in (and confirmed disclosure).
@@ -130,7 +130,7 @@ type CallSpec struct {
 	LLMFallbacks []StageSpec
 	// STTFallbacks are the STT chain after the primary (credentials resolved).
 	STTFallbacks []StageSpec
-	Failover     flow.FailoverPolicy
+	Failover     agent.FailoverPolicy
 	// TTSFallbacks are the TTS chain after the primary (credentials resolved,
 	// voice from each fallback's own spec).
 	TTSFallbacks []StageSpec
@@ -141,11 +141,11 @@ type CallSpec struct {
 	// STTP99MS overrides the STT p99 for this call if > 0.
 	STTP99MS int
 	// Idle, Audio and Turn are the flow's quiet-caller, audio and interruption settings (nil: the server's).
-	Idle  *flow.IdleSettings
-	Audio *flow.AudioSettings
+	Idle  *agent.IdleSettings
+	Audio *agent.AudioSettings
 	// toolHold plays the flow's hold sound while a slow synchronous tool runs (nil: none).
 	toolHold *holdCue
-	Turn     *flow.TurnSettings
+	Turn     *agent.TurnSettings
 	// PushToTalk: the client opted in at client-ready. Turns start and end
 	// only on its push-to-talk messages (ExternalStart/ExternalStop).
 	PushToTalk bool
@@ -642,8 +642,8 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	tc := cfg.Turn.forCall(call.Turn)
 	if call.Turn != nil && !tc.Manager {
 		// Once per flow version (a handful of short strings at most), not on every call.
-		if _, seen := r.turnWarned.LoadOrStore(call.FlowVersionID, struct{}{}); !seen {
-			slog.Warn("the flow sets turn settings but turn.manager is off on this server: ignored, except the mute list and the longest mute for push-to-talk calls", slog.String("flow_version", call.FlowVersionID))
+		if _, seen := r.turnWarned.LoadOrStore(call.AgentVersionID, struct{}{}); !seen {
+			slog.Warn("the flow sets turn settings but turn.manager is off on this server: ignored, except the mute list and the longest mute for push-to-talk calls", slog.String("flow_version", call.AgentVersionID))
 		}
 	}
 	idleCfg := cfg.Idle.forCall(call.Idle)
@@ -729,12 +729,12 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	}
 	built = append(built, ttsProc)
 	var speak func(string) // says a fixed line as the assistant; set once the assistant processor exists, before the session starts
-	if call.Flow != nil {
+	if call.Agent != nil {
 		// The start step is live; every other step is built when the call moves
 		// to it and closed when it leaves. The swaps are the pipeline stages.
 		var lastStep, lastGreeting atomic.Pointer[string]
 		buildStep := func(ctx context.Context, id string) (core.StepStages, error) {
-			ns, err := call.Flow.Resolve(ctx, id)
+			ns, err := call.Agent.Resolve(ctx, id)
 			if err != nil {
 				return core.StepStages{}, fmt.Errorf("resolve step %q: %w", id, err)
 			}
@@ -756,11 +756,11 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 			}
 			lastStep.Store(&ns.Name)
 			lastGreeting.Store(&ns.Greeting)
-			return core.StepStages{LLM: llm, TTS: tts, Speaks: saysOwnGreeting(id, call.Flow.Start, ns.Greeting)}, nil
+			return core.StepStages{LLM: llm, TTS: tts, Speaks: saysOwnGreeting(id, call.Agent.Start, ns.Greeting)}, nil
 		}
 		llmSwap, ttsSwap := core.NewStageSwap(llmProc), core.NewStageSwap(ttsProc)
 		router, err := core.NewRouter(core.RouterConfig{
-			Entry: call.Flow.Start, LLM: llmSwap, TTS: ttsSwap, Trigger: asyncTrigger,
+			Entry: call.Agent.Start, LLM: llmSwap, TTS: ttsSwap, Trigger: asyncTrigger,
 			Build:   buildStep,
 			OnEvent: call.OnRoute,
 			Greet: func(stepID string) error {
@@ -771,13 +771,13 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 				if g := lastGreeting.Load(); g != nil {
 					greeting = *g
 				}
-				return call.Flow.greetStep(stepID, name, greeting, ctxPool.AddMessage, func(text string) { speak(text) })
+				return call.Agent.greetStep(stepID, name, greeting, ctxPool.AddMessage, func(text string) { speak(text) })
 			},
 		})
 		if err != nil {
 			return fail(fmt.Errorf("create router: %w", err))
 		}
-		call.Flow.Commit = router.Commit
+		call.Agent.Commit = router.Commit
 		llmProc, ttsProc = llmSwap, ttsSwap
 	}
 
@@ -885,7 +885,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	}
 	if call.Ender != nil && idleProc != nil {
 		call.Ender.End = func(stepID string) error {
-			if !idleProc.RequestEnd(EndReasonFlow, endCallWait) {
+			if !idleProc.RequestEnd(EndReasonAgent, endCallWait) {
 				return errCallEnding
 			}
 			if call.OnEndCall != nil {
