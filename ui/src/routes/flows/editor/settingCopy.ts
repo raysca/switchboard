@@ -237,7 +237,7 @@ const COPY = {
     what: "The most the model may write in one reply. A reply that reaches the cap is cut off, and the caller hears it cut.",
     when: "To keep spoken answers short.",
     defaults: "1 to 8192. Empty: the model's own default. Applies to model fallbacks too. Not the history budget in Flow settings.",
-    careful: "On Gemini 2.5 the cap also counts the model's thinking, so a low cap can leave a short or empty reply. Use at least 256.",
+    careful: "Reasoning models (Gemini 2.5, GPT-OSS on NVIDIA, Grok reasoning models) count their thinking toward this cap, so a low cap can leave an empty reply. Leave it empty on these models, or use 1024 or more.",
   },
   "tts.clean_text": {
     label: "Text cleaning",

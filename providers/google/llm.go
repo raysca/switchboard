@@ -637,7 +637,10 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 			// it so failover and metrics see it, instead of ending the turn in silence.
 			p.Errors.Add(1)
 			cause := ErrEmptyReply
-			if finishReason != "" && finishReason != "STOP" && finishReason != "FINISH_REASON_UNSPECIFIED" {
+			if finishReason == "MAX_TOKENS" {
+				// Not a block: the cap was spent (on thinking) before any text.
+				cause = fmt.Errorf("%w: max_output_tokens reached before any text (thinking counts toward the cap)", ErrEmptyReply)
+			} else if finishReason != "" && finishReason != "STOP" && finishReason != "FINISH_REASON_UNSPECIFIED" {
 				cause = fmt.Errorf("%w (finish reason %s)", ErrBlockedReply, finishReason)
 			}
 			_ = p.session.Reenter(&core.ErrorFrame{Err: cause, Fatal: false, Turn: core.TurnID(turn), Gen: core.Generation(gen)}, core.Downstream, p.index+1, gen)

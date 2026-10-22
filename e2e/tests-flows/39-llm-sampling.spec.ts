@@ -26,7 +26,7 @@ test("sampling reaches the model on a test call, is published, read back and sho
   await openAdvanced(page);
   for (const [label, value] of Object.entries(FIELDS)) await page.getByLabel(label, { exact: true }).fill(value);
   await page.getByRole("button", { name: "Explain Max output tokens" }).click();
-  await expect(page.getByRole("region", { name: "Explain Max output tokens" })).toContainText("at least 256");
+  await expect(page.getByRole("region", { name: "Explain Max output tokens" })).toContainText("1024 or more");
   await step(page, "llm sampling settings");
   await page.getByRole("button", { name: "Done" }).click();
 

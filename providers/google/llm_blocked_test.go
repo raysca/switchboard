@@ -3,6 +3,7 @@ package google
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -80,6 +81,18 @@ func TestGeminiBlockedReplySurfacesError(t *testing.T) {
 func TestGeminiEmptyStopSurfacesError(t *testing.T) {
 	if err := lastError(runGeminiTurn(t, LLMStreamChunk{FinishReason: "STOP"})); !errors.Is(err, ErrEmptyReply) {
 		t.Fatalf("err = %v, want ErrEmptyReply", err)
+	}
+}
+
+// An empty reply cut by the max_output_tokens cap (thinking tokens count toward it)
+// is an empty reply with a cause, not a safety block.
+func TestGeminiMaxTokensEmptyIsEmptyReplyNotBlocked(t *testing.T) {
+	err := lastError(runGeminiTurn(t, LLMStreamChunk{FinishReason: "MAX_TOKENS"}))
+	if !errors.Is(err, ErrEmptyReply) || errors.Is(err, ErrBlockedReply) {
+		t.Fatalf("err = %v, want ErrEmptyReply and not ErrBlockedReply", err)
+	}
+	if !strings.Contains(err.Error(), "max_output_tokens") {
+		t.Fatalf("err = %v, want it to name max_output_tokens", err)
 	}
 }
 
