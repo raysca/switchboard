@@ -24,6 +24,11 @@ describe("describeChanges", () => {
     expect(describeChanges(base, g)).toEqual(["Flow settings: silent-caller behavior changed", "Flow settings: audio changed"]);
   });
 
+  it("names a changed sampling setting as an advanced change", () => {
+    const g = updateStep(base, "b", { config: { ...ready, llm: { ...ready.llm, temperature: 0.3 } } });
+    expect(describeChanges(base, g)).toEqual(["Billing: advanced settings changed"]);
+  });
+
   it("names step, model, voice, instruction and route changes", () => {
     let g = updateStep(base, "b", { name: "Accounts", config: { ...ready, llm: { ...ready.llm, model: "flash", system_prompt: "Bills." }, tts: { provider: "google", voice: "puck" } } });
     g = updateRoute(g, "e1", "asks about a bill");

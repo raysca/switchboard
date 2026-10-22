@@ -23,6 +23,14 @@ const VOICE_SETTINGS = [
 ] as const;
 type VoiceKey = (typeof VOICE_SETTINGS)[number]["key"];
 
+const SAMPLING = [
+  { key: "temperature", label: "Temperature", min: 0, max: 2, by: 0.1, whole: false },
+  { key: "top_p", label: "Top P", min: 0, max: 1, by: 0.05, whole: false },
+  { key: "max_output_tokens", label: "Max output tokens", min: 1, max: 8192, by: 1, whole: true },
+] as const;
+type SamplingKey = (typeof SAMPLING)[number]["key"];
+const clampTo = (n: number, min: number, max: number, whole: boolean) => Math.min(max, Math.max(min, whole ? Math.round(n) : n));
+
 type Props = { graph: FlowDraft; step: DraftStep; providers: ProviderStatus[]; serverConfig?: ServerConfigDTO; onChange: (g: FlowDraft) => void };
 
 /** Optional depth for one step: fallbacks and tuning. Nothing here is needed to take calls. */
@@ -33,6 +41,7 @@ export function StepAdvanced({ graph, step, providers, serverConfig, onChange }:
   const setFallbacks = (cap: "llm" | "tts", stage: Stage, items: Fallback[]) =>
     setStage(cap, items.length ? { ...stage, fallbacks: items } : without(stage, "fallbacks"));
   const parallel = Number(llm.max_parallel) || 1;
+  const sampling = llm as Partial<Record<SamplingKey, number>>;
   const voiceSettings = rec(tts.voice_settings) as Partial<Record<VoiceKey, number>>;
 
   // The start step's sound is set in Flow settings > Audio; a later step may switch it (K7).
@@ -93,6 +102,32 @@ export function StepAdvanced({ graph, step, providers, serverConfig, onChange }:
           1 to 16. Higher is faster when one turn needs several lookups.
         </p>
         <SettingHelp id="llm.max_parallel" />
+        <p className="subtext">Leave a field empty to keep the model's default.</p>
+        {SAMPLING.map(({ key, label, min, max, by, whole }) => (
+          <label key={key} className="form-field" htmlFor={`step-${step.id}-${key}`}>
+            <span>{label}</span>
+            <input
+              id={`step-${step.id}-${key}`}
+              type="number"
+              min={min}
+              max={max}
+              step={by}
+              defaultValue={sampling[key] ?? ""}
+              onChange={(e) => {
+                if (e.target.value.trim() === "" || !Number.isFinite(Number(e.target.value))) setStage("llm", without(llm, key));
+                else setStage("llm", { ...llm, [key]: clampTo(Number(e.target.value), min, max, whole) });
+              }}
+              onBlur={(e) => {
+                // The input is uncontrolled: show the clamped value that was stored.
+                const n = Number(e.target.value);
+                if (e.target.value.trim() !== "" && Number.isFinite(n)) e.target.value = String(clampTo(n, min, max, whole));
+              }}
+            />
+          </label>
+        ))}
+        <SettingHelp id="llm.temperature" />
+        <SettingHelp id="llm.top_p" />
+        <SettingHelp id="llm.max_output_tokens" />
       </fieldset>
       {tts.provider === "elevenlabs" && (
         <fieldset className="stage-box">
