@@ -495,13 +495,13 @@ func TestPublishRefusesCallWideSettingsOnANonStartStep(t *testing.T) {
 func TestDuplicateCopiesALegacyStoredVersion(t *testing.T) {
 	svc := testServiceWith(t, &fakePolicy{cues: []string{"chime"}})
 	ctx := context.Background()
-	routed := json.RawMessage(strings.Replace(twoStepCfg(""), `"routes":`, `"route_cue":{"name":"chime"},"routes":`, 1))
-	src, err := svc.Create(ctx, CreateRequest{Name: "src", Config: routed})
+	handoff := json.RawMessage(strings.Replace(twoStepCfg(""), `"routes":`, `"route_cue":{"name":"chime"},"routes":`, 1))
+	src, err := svc.Create(ctx, CreateRequest{Name: "src", Config: handoff})
 	if err != nil {
 		t.Fatal(err)
 	}
-	i := strings.LastIndex(string(routed), `"tts":{"provider":"cartesia","voice":"v"}}}`) // the sales step, the last one
-	legacy := string(routed)[:i] + `"tts":{"provider":"cartesia","voice":"v","clean_text":false},"failover":{"on":["timeout"]}}}` + string(routed)[i+len(`"tts":{"provider":"cartesia","voice":"v"}}}`):]
+	i := strings.LastIndex(string(handoff), `"tts":{"provider":"cartesia","voice":"v"}}}`) // the sales step, the last one
+	legacy := string(handoff)[:i] + `"tts":{"provider":"cartesia","voice":"v","clean_text":false},"failover":{"on":["timeout"]}}}` + string(handoff)[i+len(`"tts":{"provider":"cartesia","voice":"v"}}}`):]
 	legacy = strings.Replace(legacy, `"chime"`, `"gone"`, 1)
 	if _, err := svc.store.DB().Exec(`DROP TRIGGER agent_versions_immutable_update`); err != nil { // the test's own database: stands in for a version stored by an older binary
 		t.Fatal(err)
@@ -524,8 +524,8 @@ func TestDuplicateCopiesALegacyStoredVersion(t *testing.T) {
 	if sales.Config.TTS.CleanText != nil || len(sales.Config.Failover.On) != 0 {
 		t.Fatalf("dead step settings were copied: %+v", sales.Config)
 	}
-	if g.RouteCue == nil || g.RouteCue.Name != "gone" {
-		t.Fatalf("route cue = %+v, want the stored name", g.RouteCue)
+	if g.HandoffCue == nil || g.HandoffCue.Name != "gone" {
+		t.Fatalf("route cue = %+v, want the stored name", g.HandoffCue)
 	}
 	// new edits are still checked
 	if _, err := svc.Create(ctx, CreateRequest{Name: "new", Config: json.RawMessage(legacy)}); !errors.Is(err, ErrInvalidConfig) {

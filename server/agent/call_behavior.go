@@ -53,7 +53,7 @@ type AudioSettings struct {
 	Background *BackgroundSettings `json:"background,omitempty"`
 	// ToolCue plays a server cue (audio.cues) while a slow synchronous tool runs: once the tool has run
 	// after_ms (0: 1000 ms) with the call quiet.
-	ToolCue *RouteCue `json:"tool_cue,omitempty"`
+	ToolCue *HandoffCue `json:"tool_cue,omitempty"`
 }
 
 type DenoiseSettings struct {

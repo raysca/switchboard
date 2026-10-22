@@ -41,7 +41,7 @@ func waitSetupReleased(t *testing.T, r *agentRigE2E, c *e2eCall, baseline int) {
 func TestSetupPanicReleasesAdmissionAndRow(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe())
 	r.s.registry.Register("echo.tts", func(cfg *Config, spec StageSpec) (core.Processor, error) { panic("tts ctor bug") })
-	waitSetupReleased(t, r, r.dial(r.createRoutedAgent("salesvoice")), 0)
+	waitSetupReleased(t, r, r.dial(r.createHandoffAgent("salesvoice")), 0)
 }
 
 // A panic after the flow is resolved but before the build's fail path exists (here a nil step background
@@ -51,14 +51,14 @@ func TestSetupPanicAfterResolveEndsRow(t *testing.T) {
 	r.s.adjustCall = func(call *CallSpec) {
 		call.Agent = &CallAgent{Start: "start", Backgrounds: map[string]*agent.BackgroundSettings{"other": nil}}
 	}
-	waitSetupReleased(t, r, r.dial(r.createRoutedAgent("salesvoice")), 0)
+	waitSetupReleased(t, r, r.dial(r.createHandoffAgent("salesvoice")), 0)
 }
 
 // A panic while the resolved call is being finished (after the row and pins exist) ends the row.
 func TestResolveCallPanicEndsRow(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe())
 	r.s.adjustCall = func(*CallSpec) { panic("adjust bug") }
-	waitSetupReleased(t, r, r.dial(r.createRoutedAgent("salesvoice")), 0)
+	waitSetupReleased(t, r, r.dial(r.createHandoffAgent("salesvoice")), 0)
 }
 
 // A panic inside the fail path, after it released the slot, must not release it a second time when the
@@ -70,7 +70,7 @@ func TestFailPathPanicReleasesAdmissionOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.s.logger = slog.New(panicOnSetupFailure{slog.NewTextHandler(io.Discard, nil)}) // fail's last step panics
-	waitSetupReleased(t, r, r.dial(r.createRoutedAgent("salesvoice")), 1)
+	waitSetupReleased(t, r, r.dial(r.createHandoffAgent("salesvoice")), 1)
 }
 
 // panicOnSetupFailure panics when the call-setup failure is logged, the last step of the fail path.

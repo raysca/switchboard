@@ -88,12 +88,12 @@ func (c *cueController) userSpeech(speaking bool) {
 	}
 }
 
-func (c *cueController) onRoute(e core.RouteEvent) {
+func (c *cueController) onHandoff(e core.HandoffEvent) {
 	if c == nil {
 		return
 	}
 	switch e.Kind {
-	case core.RoutePreparing:
+	case core.HandoffPreparing:
 		c.mu.Lock()
 		c.began = time.Now()
 		c.activated.Store(false)
@@ -101,9 +101,9 @@ func (c *cueController) onRoute(e core.RouteEvent) {
 		c.stamp()
 		c.armLocked(c.after)
 		c.mu.Unlock()
-	case core.RouteActive:
+	case core.HandoffActive:
 		c.activated.Store(true)
-	case core.RouteFailed:
+	case core.HandoffFailed:
 		c.finish("failed", true)
 	}
 }
@@ -223,11 +223,11 @@ type holdCue struct {
 	blocked func() bool // the route cue is waiting
 	record  func(TimelineEventType, string)
 
-	running  atomic.Int32 // tools executing now
-	playing  atomic.Bool  // written under mu; read lock-free on the audio path
-	speaking atomic.Bool  // the caller is speaking
-	routing  atomic.Bool  // a route is preparing
-	activity atomic.Int64 // last bot audio or caller speech, monotonic offset from cueBase
+	running    atomic.Int32 // tools executing now
+	playing    atomic.Bool  // written under mu; read lock-free on the audio path
+	speaking   atomic.Bool  // the caller is speaking
+	handingOff atomic.Bool  // a route is preparing
+	activity   atomic.Int64 // last bot audio or caller speech, monotonic offset from cueBase
 
 	mu     sync.Mutex
 	capped bool // the cap fired during this busy period: no restart until every tool has returned
@@ -298,19 +298,19 @@ func (h *holdCue) userSpeech(speaking bool) {
 	}
 }
 
-func (h *holdCue) onRoute(e core.RouteEvent) {
+func (h *holdCue) onHandoff(e core.HandoffEvent) {
 	if h == nil {
 		return
 	}
 	switch e.Kind {
-	case core.RoutePreparing:
-		h.routing.Store(true)
+	case core.HandoffPreparing:
+		h.handingOff.Store(true)
 		h.mu.Lock()
 		h.disarmLocked()
 		h.pauseLocked("route")
 		h.mu.Unlock()
-	case core.RouteActive, core.RouteFailed:
-		h.routing.Store(false)
+	case core.HandoffActive, core.HandoffFailed:
+		h.handingOff.Store(false)
 		if h.running.Load() > 0 {
 			h.mu.Lock()
 			h.armLocked(h.after)
@@ -351,7 +351,7 @@ func (h *holdCue) check() {
 	}
 	quiet := time.Duration(int64(time.Since(cueBase)) + 1 - h.activity.Load())
 	ran := time.Since(h.began)
-	if h.routing.Load() || h.blocked() || h.speaking.Load() {
+	if h.handingOff.Load() || h.blocked() || h.speaking.Load() {
 		h.armLocked(h.after)
 		return
 	}
@@ -422,7 +422,7 @@ func holdTools(next core.ToolExecutor, defs []core.ToolDefinition, h *holdCue) c
 
 // newCallHold returns the call's hold sound controller: nil when the flow has no tool cue, the transport has no cue output, or the named
 // sound is not configured (logged; the call runs without it).
-func (s *Server) newCallHold(a *agent.AudioSettings, player cuePlayer, tl *SessionTimeline, route *cueController) *holdCue {
+func (s *Server) newCallHold(a *agent.AudioSettings, player cuePlayer, tl *SessionTimeline, handoff *cueController) *holdCue {
 	if a == nil || a.ToolCue == nil || a.ToolCue.Name == "" {
 		return nil
 	}
@@ -434,7 +434,7 @@ func (s *Server) newCallHold(a *agent.AudioSettings, player cuePlayer, tl *Sessi
 		s.logger.Warn("tool cue is not configured; the call runs without it", "cue", a.ToolCue.Name)
 		return nil
 	}
-	return newHoldCue(player, sound, time.Duration(a.ToolCue.AfterMS)*time.Millisecond, route.waitingNow, func(t TimelineEventType, d string) {
+	return newHoldCue(player, sound, time.Duration(a.ToolCue.AfterMS)*time.Millisecond, handoff.waitingNow, func(t TimelineEventType, d string) {
 		tl.Record(TimelineEvent{Type: t, Details: d})
 	})
 }

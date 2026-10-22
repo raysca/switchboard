@@ -19,7 +19,7 @@ func TestDecodeAgentWrapsFlatConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(g.Steps) != 1 || g.Start != g.Steps[0].ID || len(g.Routes) != 0 {
+	if len(g.Steps) != 1 || g.Start != g.Steps[0].ID || len(g.Handoffs) != 0 {
 		t.Fatalf("flat config must become a one-node graph, got %+v", g)
 	}
 	if g.StartStep().Config.LLM.Model != "m" {
@@ -39,7 +39,7 @@ func TestDecodeAgentTwoSteps(t *testing.T) {
 	if got := TransferToolName("Sales Team"); got != "transfer_to_sales_team" {
 		t.Fatalf("tool name = %q", got)
 	}
-	if len(g.RoutesFrom("front")) != 1 || len(g.RoutesFrom("sales")) != 0 {
+	if len(g.HandoffsFrom("front")) != 1 || len(g.HandoffsFrom("sales")) != 0 {
 		t.Fatal("RoutesFrom wrong")
 	}
 }

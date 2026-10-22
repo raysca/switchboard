@@ -206,7 +206,7 @@ func dentalConfig(serverID string) (json.RawMessage, error) {
 			step("new", "New patient", true, refs(serverID, "register_patient", "find_slots", "book_appointment"), newPatient, 320),
 			step("returning", "Returning patient", true, refs(serverID, "find_patient", "list_appointments", "find_slots", "reschedule_appointment", "cancel_appointment"), returning, 320),
 		},
-		"routes": []agent.Route{
+		"routes": []agent.Handoff{
 			{ID: "to-new", From: "front", To: "new", Condition: "The caller has never been a patient at Smile Dental and wants to register or book their first appointment."},
 			{ID: "to-returning", From: "front", To: "returning", Condition: "The caller is already a patient and wants to change, move or cancel an appointment."},
 		},

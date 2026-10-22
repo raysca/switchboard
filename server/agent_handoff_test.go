@@ -84,7 +84,7 @@ type agentRig struct {
 	llmClosed, ttsClose map[string]*atomic.Int32 // by prompt / voice
 	mu                  sync.Mutex
 	voices              []string
-	events              []core.RouteEvent
+	events              []core.HandoffEvent
 }
 
 func (r *agentRig) closedLLM(prompt string) int32 { return r.llmClosed[prompt].Load() }
@@ -144,7 +144,7 @@ func newAgentRig(t *testing.T) *agentRig {
 		STT: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google", Voice: "front-voice"},
 		LLM:         StageSpec{Provider: "google", SystemPrompt: "FRONT", Tools: transferTools(g, "front"), ToolExecutor: exec},
 		MaxMessages: 20, MaxTokens: 4000, Agent: graph,
-		OnRoute: func(e core.RouteEvent) { r.mu.Lock(); r.events = append(r.events, e); r.mu.Unlock() },
+		OnHandoff: func(e core.HandoffEvent) { r.mu.Lock(); r.events = append(r.events, e); r.mu.Unlock() },
 	}
 	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
 	pipe, err := reg.BuildCallPipeline(DefaultConfig(ProfileDevelopment), call, vadProc, coretest.NewTransportOutput(coretest.TransportConfig{}))
@@ -177,7 +177,7 @@ func newAgentRig(t *testing.T) *agentRig {
 	return r
 }
 
-func TestAgentRouteMovesTheCallToTheSalesStep(t *testing.T) {
+func TestAgentHandoffMovesTheCallToTheSalesStep(t *testing.T) {
 	r := newAgentRig(t)
 	if r.llmBuilt.Load() != 1 || r.ttsBuilt.Load() != 1 {
 		t.Fatalf("only the entry step may be built at start: llm=%d tts=%d", r.llmBuilt.Load(), r.ttsBuilt.Load())
@@ -209,11 +209,11 @@ func TestAgentRouteMovesTheCallToTheSalesStep(t *testing.T) {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	kinds := map[core.RouteEventKind]bool{}
+	kinds := map[core.HandoffEventKind]bool{}
 	for _, e := range r.events {
 		kinds[e.Kind] = true
 	}
-	for _, k := range []core.RouteEventKind{core.RouteCommitted, core.RoutePreparing, core.RouteActive} {
+	for _, k := range []core.HandoffEventKind{core.HandoffCommitted, core.HandoffPreparing, core.HandoffActive} {
 		if !kinds[k] {
 			t.Fatalf("missing route event %q in %+v", k, r.events)
 		}

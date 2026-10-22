@@ -40,9 +40,9 @@ type routerEnv struct {
 	trig                           *AsyncTrigger
 	sess                           *routerSession
 	greeted                        atomic.Int64
-	events                         chan RouteEvent
+	events                         chan HandoffEvent
 	mu                             sync.Mutex
-	seen                           []RouteEvent
+	seen                           []HandoffEvent
 }
 
 func newTrigger() *AsyncTrigger {
@@ -61,7 +61,7 @@ func newRouterEnv(t *testing.T, mod func(*RouterConfig)) (*Router, *routerEnv) {
 	t.Cleanup(cancel)
 	env := &routerEnv{
 		oldLLM: &probeStage{}, oldTTS: &probeStage{}, newLLM: &probeStage{}, newTTS: &probeStage{},
-		sess: &routerSession{ctx: ctx}, events: make(chan RouteEvent, 32),
+		sess: &routerSession{ctx: ctx}, events: make(chan HandoffEvent, 32),
 	}
 	env.llm, env.tts = NewStageSwap(env.oldLLM), NewStageSwap(env.oldTTS)
 	cfg := RouterConfig{
@@ -70,7 +70,7 @@ func newRouterEnv(t *testing.T, mod func(*RouterConfig)) (*Router, *routerEnv) {
 			return StepStages{LLM: env.newLLM, TTS: env.newTTS}, nil
 		},
 		Greet: func(string) error { env.greeted.Add(1); return nil },
-		OnEvent: func(e RouteEvent) {
+		OnEvent: func(e HandoffEvent) {
 			env.mu.Lock()
 			env.seen = append(env.seen, e)
 			env.mu.Unlock()
@@ -109,7 +109,7 @@ func eventually(t *testing.T, what string, ok func() bool) {
 	}
 }
 
-func (e *routerEnv) waitEvent(t *testing.T, kind RouteEventKind) {
+func (e *routerEnv) waitEvent(t *testing.T, kind HandoffEventKind) {
 	t.Helper()
 	eventually(t, "event "+string(kind), func() bool {
 		e.mu.Lock()
@@ -189,7 +189,7 @@ func TestRouterBuildFailureKeepsOldStep(t *testing.T) {
 		c.Build = func(context.Context, string) (StepStages, error) { return StepStages{}, errors.New("provider down") }
 	})
 	_ = h.Commit("sales")
-	env.waitEvent(t, RouteFailed)
+	env.waitEvent(t, HandoffFailed)
 	if activeStep(h) != "front" || env.oldLLM.closed.Load() != 0 || env.oldTTS.closed.Load() != 0 {
 		t.Fatal("a failed build must leave the old step active and open")
 	}
@@ -201,12 +201,12 @@ func TestRouterBuildFailureKeepsOldStep(t *testing.T) {
 func TestRouterPendingAndLimit(t *testing.T) {
 	h, env := newRouterEnv(t, func(c *RouterConfig) { c.Max = 1; c.Trigger = busy(newTrigger()) })
 	_ = h.Commit("sales")
-	if err := h.Commit("support"); !errors.Is(err, ErrRoutePending) {
-		t.Fatalf("want ErrRoutePending, got %v", err)
+	if err := h.Commit("support"); !errors.Is(err, ErrHandoffPending) {
+		t.Fatalf("want ErrHandoffPending, got %v", err)
 	}
 	env.waitReady(t, h)
 	_ = env.llm.ProcessFrame(context.Background(), &UserMessageFrame{Turn: "t1"}, Downstream, nopEmitter{})
-	if err := h.Commit("front"); !errors.Is(err, ErrRouteLimit) {
+	if err := h.Commit("front"); !errors.Is(err, ErrHandoffLimit) {
 		t.Fatalf("limit not enforced: %v", err)
 	}
 }
@@ -221,7 +221,7 @@ func TestRouterBuildTimeout(t *testing.T) {
 	})
 	before := runtime.NumGoroutine()
 	_ = h.Commit("sales")
-	env.waitEvent(t, RouteFailed)
+	env.waitEvent(t, HandoffFailed)
 	time.Sleep(50 * time.Millisecond)
 	if activeStep(h) != "front" || runtime.NumGoroutine() > before+1 {
 		t.Fatalf("active=%s goroutines before=%d after=%d", activeStep(h), before, runtime.NumGoroutine())
@@ -245,7 +245,7 @@ func TestRouterPartialFlipStillClosesReplacedTTS(t *testing.T) {
 		}
 	})
 	_ = h.Commit("sales")
-	env.waitEvent(t, RouteFailed)
+	env.waitEvent(t, HandoffFailed)
 	eventually(t, "replaced tts closed", func() bool { return env.oldTTS.closed.Load() == 1 })
 	if activeStep(h) != "front" || env.oldLLM.closed.Load() != 0 {
 		t.Fatalf("the old model stays active and open: active=%s llmClosed=%d", activeStep(h), env.oldLLM.closed.Load())
@@ -291,7 +291,7 @@ func TestRouterFailedFlipClosesEveryStageItDidNotInstall(t *testing.T) {
 		c.Build = func(context.Context, string) (StepStages, error) { return StepStages{LLM: llm, TTS: tts}, nil }
 	})
 	_ = h.Commit("sales")
-	env.waitEvent(t, RouteFailed)
+	env.waitEvent(t, HandoffFailed)
 	eventually(t, "uninstalled llm closed", func() bool { return llm.closed.Load() == 1 })
 	if tts.closed.Load() != 0 {
 		t.Fatal("the TTS that was installed is in use and must stay open")
@@ -303,7 +303,7 @@ func TestRouterFailedFlipClosesEveryStageItDidNotInstall(t *testing.T) {
 		c.Build = func(context.Context, string) (StepStages, error) { return StepStages{LLM: llm2, TTS: tts2}, nil }
 	})
 	_ = h2.Commit("sales")
-	env2.waitEvent(t, RouteFailed)
+	env2.waitEvent(t, HandoffFailed)
 	eventually(t, "both uninstalled stages closed", func() bool { return llm2.closed.Load() == 1 && tts2.closed.Load() == 1 })
 }
 
@@ -341,7 +341,7 @@ func TestRouterSpeakingStepFlipsAndGreetsWithoutStartingAModelTurn(t *testing.T)
 	}
 }
 
-// activeStep is the step holding the call; tests read it, the server learns it from the RouteActive events.
+// activeStep is the step holding the call; tests read it, the server learns it from the HandoffActive events.
 func activeStep(r *Router) string {
 	r.mu.Lock()
 	defer r.mu.Unlock()

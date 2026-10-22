@@ -75,11 +75,11 @@ func (s *Server) stepBackgroundUsable(b *agent.BackgroundSettings) bool {
 	return true
 }
 
-// routeBackground returns the OnRoute hook that switches the bed when a route makes a step active, or nil
+// handoffBackground returns the OnHandoff hook that switches the bed when a route makes a step active, or nil
 // when no step names a background (nothing would ever change). A step that names none keeps the playing
 // sound; the start step always has an entry, its resolved bed (server default included), so a return to it
 // restores what the call began with. A switch to the bed already playing is skipped: set restarts a sound.
-func (s *Server) routeBackground(g *CallAgent, startAudio *agent.AudioSettings, set func(ws.Underlay)) func(core.RouteEvent) {
+func (s *Server) handoffBackground(g *CallAgent, startAudio *agent.AudioSettings, set func(ws.Underlay)) func(core.HandoffEvent) {
 	if g == nil || len(g.Backgrounds) == 0 {
 		return nil
 	}
@@ -99,8 +99,8 @@ func (s *Server) routeBackground(g *CallAgent, startAudio *agent.AudioSettings, 
 	choices[g.Start] = choice{start, on}
 	var mu sync.Mutex
 	playing := choices[g.Start]
-	return func(ev core.RouteEvent) {
-		if ev.Kind != core.RouteActive {
+	return func(ev core.HandoffEvent) {
+		if ev.Kind != core.HandoffActive {
 			return
 		}
 		next, ok := choices[ev.To]

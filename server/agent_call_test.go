@@ -32,7 +32,7 @@ func twoStepAgent(t *testing.T) agent.Definition {
 	return g
 }
 
-func TestTransferToolsFromRoutes(t *testing.T) {
+func TestTransferToolsFromHandoffs(t *testing.T) {
 	g := twoStepAgent(t)
 	defs := transferTools(g, "front")
 	if len(defs) != 1 || defs[0].Name != "transfer_to_sales" || !strings.Contains(defs[0].Description, "wants to buy") {
@@ -70,7 +70,7 @@ func TestStepExecutorTransferCommits(t *testing.T) {
 }
 
 func TestStepExecutorTransferRefused(t *testing.T) {
-	ex := stepExecutor(nil, nil, map[string]string{"transfer_to_sales": "sales"}, func(string, string) error { return core.ErrRoutePending }, nil)
+	ex := stepExecutor(nil, nil, map[string]string{"transfer_to_sales": "sales"}, func(string, string) error { return core.ErrHandoffPending }, nil)
 	res, _ := ex.Execute(context.Background(), core.ToolCall{ID: "1", Name: "transfer_to_sales"})
 	if res.Status != core.ToolFailed {
 		t.Fatalf("a refused transfer must tell the model it failed, got %s", res.Status)

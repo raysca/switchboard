@@ -13,7 +13,7 @@ import (
 // (404) once it ends.
 func TestContextInjectionAgentE2E(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe())
-	c := r.dial(r.createRoutedAgent("salesvoice"))
+	c := r.dial(r.createHandoffAgent("salesvoice"))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 	post := func(path, body string) int {
 		return apiRequest(r.s, http.MethodPost, "/api/v1/sessions/"+c.sessionID+path, e2eMgmtKey, body).Code

@@ -54,7 +54,7 @@ func (g Definition) policyProblems(p Policy) []policyProblem {
 			}
 		}
 	}
-	if rc := g.RouteCue; rc != nil && rc.Name != "" && !slices.Contains(p.Cues(), rc.Name) {
+	if rc := g.HandoffCue; rc != nil && rc.Name != "" && !slices.Contains(p.Cues(), rc.Name) {
 		out = append(out, policyProblem{message: unknownCue("route_cue.name", rc.Name, p), storedOK: true})
 	}
 	if tc := c.Audio; tc != nil && tc.ToolCue != nil && !slices.Contains(p.Cues(), tc.ToolCue.Name) {

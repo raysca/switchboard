@@ -808,14 +808,14 @@ func s14(x *sctx, r *Result) {
 		r.m("route_ms", msv(time.Since(mark)))
 	}
 	c.wait(25*time.Second, func() bool { return c.has(mark, "bot-stopped-speaking") })
-	routes := 0
+	handoffs := 0
 	for _, e := range x.srv.timelineEvents(c.n) {
 		if e.Type == "route" {
-			routes++
+			handoffs++
 			r.m("route", e.Details)
 		}
 	}
-	r.check("server recorded the route", routes == 1, fmt.Sprint(routes))
+	r.check("server recorded the route", handoffs == 1, fmt.Sprint(handoffs))
 
 	c.quiet(600 * time.Millisecond)
 	mark = time.Now()

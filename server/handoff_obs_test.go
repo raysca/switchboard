@@ -26,11 +26,11 @@ func TestTimelineStampsActiveStep(t *testing.T) {
 	}
 }
 
-func TestRouteMetricsCountAndTime(t *testing.T) {
-	var m routeMetrics
-	m.observe(core.RouteEvent{Kind: core.RouteActive, Elapsed: 400 * time.Millisecond})
-	m.observe(core.RouteEvent{Kind: core.RouteFailed, Err: errors.New("x")})
-	m.observe(core.RouteEvent{Kind: core.RoutePreparing}) // not counted
+func TestHandoffMetricsCountAndTime(t *testing.T) {
+	var m handoffMetrics
+	m.observe(core.HandoffEvent{Kind: core.HandoffActive, Elapsed: 400 * time.Millisecond})
+	m.observe(core.HandoffEvent{Kind: core.HandoffFailed, Err: errors.New("x")})
+	m.observe(core.HandoffEvent{Kind: core.HandoffPreparing}) // not counted
 	var b bytes.Buffer
 	m.write(&b)
 	out := b.String()
@@ -41,7 +41,7 @@ func TestRouteMetricsCountAndTime(t *testing.T) {
 	}
 }
 
-func TestOnRouteRecordsTimelineAndTraceSpans(t *testing.T) {
+func TestOnHandoffRecordsTimelineAndTraceSpans(t *testing.T) {
 	s := apiTestServer(t)
 	enableTestManagement(t, s)
 	agentID := readyTestAgent(t, s)
@@ -50,19 +50,19 @@ func TestOnRouteRecordsTimelineAndTraceSpans(t *testing.T) {
 		t.Fatal(err)
 	}
 	tl := NewSessionTimeline(5, 50, time.Minute)
-	on := s.onRoute(tl, pin.ID)
-	on(core.RouteEvent{Kind: core.RoutePreparing, From: "front", To: "sales"})
-	on(core.RouteEvent{Kind: core.RouteActive, From: "front", To: "sales", Elapsed: 300 * time.Millisecond})
-	on(core.RouteEvent{Kind: core.RouteFailed, From: "sales", To: "front", Err: errors.New("provider down")})
+	on := s.onHandoff(tl, pin.ID)
+	on(core.HandoffEvent{Kind: core.HandoffPreparing, From: "front", To: "sales"})
+	on(core.HandoffEvent{Kind: core.HandoffActive, From: "front", To: "sales", Elapsed: 300 * time.Millisecond})
+	on(core.HandoffEvent{Kind: core.HandoffFailed, From: "sales", To: "front", Err: errors.New("provider down")})
 
 	got := map[TimelineEventType]TimelineEvent{}
 	for _, e := range tl.Events() {
 		got[e.Type] = e
 	}
-	if got[EventStepPreparing].Details != "sales" || got[EventRoute].Details != "front->sales" || got[EventStepActive].Step != "sales" {
+	if got[EventStepPreparing].Details != "sales" || got[EventHandoff].Details != "front->sales" || got[EventStepActive].Step != "sales" {
 		t.Fatalf("timeline = %+v", got)
 	}
-	if got[EventRouteFailed].Error == "" {
+	if got[EventHandoffFailed].Error == "" {
 		t.Fatal("a failed route must carry its error")
 	}
 	names := map[string]bool{}
@@ -91,19 +91,19 @@ func TestOnRouteRecordsTimelineAndTraceSpans(t *testing.T) {
 
 // A route event can arrive after the server closes management (a retired step reports that it closed): the
 // observer must not read the server's management field then.
-func TestRouteEventsAfterManagementClosesDoNotRace(t *testing.T) {
+func TestHandoffEventsAfterManagementClosesDoNotRace(t *testing.T) {
 	s := apiTestServer(t)
 	t.Setenv("GOVOICE_DATABASE_DSN", filepath.Join(t.TempDir(), "mgmt.db"))
 	s.cfg.Storage.Dialect = "sqlite"
 	if err := s.EnableManagement(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	observe := s.onRoute(NewSessionTimeline(1, 10, time.Minute), storage.NewID())
+	observe := s.onHandoff(NewSessionTimeline(1, 10, time.Minute), storage.NewID())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		for i := 0; i < 300; i++ {
-			observe(core.RouteEvent{Kind: core.RouteFailed, From: "a", To: "b", Err: errors.New("x")})
+			observe(core.HandoffEvent{Kind: core.HandoffFailed, From: "a", To: "b", Err: errors.New("x")})
 		}
 	}()
 	s.closeManagement()
@@ -123,7 +123,7 @@ func TestManagementFieldReadersRaceCloseManagement(t *testing.T) {
 	go func() {
 		defer close(done)
 		for i := 0; i < 200; i++ {
-			s.onRoute(NewSessionTimeline(1, 10, time.Minute), "")
+			s.onHandoff(NewSessionTimeline(1, 10, time.Minute), "")
 			s.onEndCall("")
 			s.handleDemo(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/demo", nil), "r")
 		}

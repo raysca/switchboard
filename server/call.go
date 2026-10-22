@@ -373,7 +373,7 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 		ender = &callEnder{}
 	}
 	if len(g.Steps) > 1 {
-		graph = &CallAgent{Start: g.Start, Cue: g.RouteCue, Backgrounds: stepBackgrounds(g)}
+		graph = &CallAgent{Start: g.Start, Cue: g.HandoffCue, Backgrounds: stepBackgrounds(g)}
 		graph.Resolve = func(ctx context.Context, id string) (StepSpec, error) {
 			return s.stepSpec(ctx, rs, g, graph, ender, id)
 		}

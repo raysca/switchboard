@@ -101,8 +101,8 @@ type CallSpec struct {
 	// Flow is set for flows with more than one step: the call starts on the
 	// start step and moves between steps by route.
 	Agent *CallAgent
-	// OnRoute, if set, receives the route lifecycle (timeline, traces, metrics).
-	OnRoute func(core.RouteEvent)
+	// OnHandoff, if set, receives the route lifecycle (timeline, traces, metrics).
+	OnHandoff func(core.HandoffEvent)
 	// OnEndCall receives the step whose end_call ended the call (trace).
 	OnEndCall func(stepID string)
 
@@ -762,7 +762,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 		router, err := core.NewRouter(core.RouterConfig{
 			Entry: call.Agent.Start, LLM: llmSwap, TTS: ttsSwap, Trigger: asyncTrigger,
 			Build:   buildStep,
-			OnEvent: call.OnRoute,
+			OnEvent: call.OnHandoff,
 			Greet: func(stepID string) error {
 				name, greeting := "another agent", ""
 				if n := lastStep.Load(); n != nil {

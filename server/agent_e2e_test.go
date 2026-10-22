@@ -202,7 +202,7 @@ func newAgentRigE2E(t *testing.T, probe *stageProbe, mods ...func(*Config)) *age
 	return &agentRigE2E{t: t, s: s, ts: ts, probe: probe}
 }
 
-func (r *agentRigE2E) createRoutedAgent(salesVoice string, cue ...string) string {
+func (r *agentRigE2E) createHandoffAgent(salesVoice string, cue ...string) string {
 	a, err := r.s.agents.Create(r.t.Context(), agent.CreateRequest{Name: "Dealership", Config: agentConfigJSON("SALES", salesVoice, cue...)})
 	if err != nil || a.Readiness.State != agent.ReadinessReady {
 		r.t.Fatalf("graph flow: %+v err=%v", a.Readiness, err)
@@ -441,10 +441,10 @@ func (r *agentRigE2E) spanAttributes(sessionID, name string) string {
 func (r *agentRigE2E) activeSessions() int { return activeSessionCount(r.t, r.s, r.agentID) }
 
 // The whole path with a healthy second step.
-func TestAgentE2ERouteMovesTheCallAndClosesTheLeftStep(t *testing.T) {
+func TestAgentE2EHandoffMovesTheCallAndClosesTheLeftStep(t *testing.T) {
 	probe := newProbe()
 	r := newAgentRigE2E(t, probe)
-	c := r.dial(r.createRoutedAgent("salesvoice"))
+	c := r.dial(r.createHandoffAgent("salesvoice"))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 	c.say("hello")
@@ -471,17 +471,17 @@ func TestAgentE2ERouteMovesTheCallAndClosesTheLeftStep(t *testing.T) {
 		t.Fatal("the front step answered after the route")
 	}
 
-	if !r.has(EventRoute, "front->sales") || !r.has(EventStepActive, "sales") || !r.has(EventStepClosed, "front") {
+	if !r.has(EventHandoff, "front->sales") || !r.has(EventStepActive, "sales") || !r.has(EventStepClosed, "front") {
 		t.Fatalf("timeline = %+v", r.timeline())
 	}
 	steps := map[string]bool{}
 	for _, e := range r.timeline() {
-		if e.Type == EventStepActive || e.Type == EventRoute {
+		if e.Type == EventStepActive || e.Type == EventHandoff {
 			steps[e.Step] = true
 		}
 	}
-	if r.s.metrics.route.total.Load() != 1 || r.s.metrics.route.failures.Load() != 0 {
-		t.Fatalf("metrics: routes=%d failures=%d", r.s.metrics.route.total.Load(), r.s.metrics.route.failures.Load())
+	if r.s.metrics.handoff.total.Load() != 1 || r.s.metrics.handoff.failures.Load() != 0 {
+		t.Fatalf("metrics: routes=%d failures=%d", r.s.metrics.handoff.total.Load(), r.s.metrics.handoff.failures.Load())
 	}
 	eventually(t, "route trace spans", func() bool {
 		n := r.spanNames(c.sessionID)
@@ -497,17 +497,17 @@ func TestAgentE2EFailedStepBuildKeepsTheCallGoing(t *testing.T) {
 	probe := newProbe()
 	probe.failTTS = "brokenvoice"
 	r := newAgentRigE2E(t, probe)
-	c := r.dial(r.createRoutedAgent("brokenvoice"))
+	c := r.dial(r.createHandoffAgent("brokenvoice"))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 	c.say("transfer to sales")
 	c.waitReplies("Connecting you.", 1)
-	eventually(t, "route_failed", func() bool { return r.has(EventRouteFailed, "sales") })
-	if r.s.metrics.route.failures.Load() != 1 || r.s.metrics.route.total.Load() != 0 {
-		t.Fatalf("metrics: routes=%d failures=%d", r.s.metrics.route.total.Load(), r.s.metrics.route.failures.Load())
+	eventually(t, "route_failed", func() bool { return r.has(EventHandoffFailed, "sales") })
+	if r.s.metrics.handoff.failures.Load() != 1 || r.s.metrics.handoff.total.Load() != 0 {
+		t.Fatalf("metrics: routes=%d failures=%d", r.s.metrics.handoff.total.Load(), r.s.metrics.handoff.failures.Load())
 	}
 	for _, e := range r.timeline() {
-		if e.Type == EventRouteFailed && e.Error == "" {
+		if e.Type == EventHandoffFailed && e.Error == "" {
 			t.Fatal("the failure must say why")
 		}
 	}
@@ -531,7 +531,7 @@ func TestAgentE2ECallerSpeaksWhileTheStepIsBeingPrepared(t *testing.T) {
 	probe := newProbe()
 	probe.holdTTS = "slowvoice"
 	r := newAgentRigE2E(t, probe)
-	c := r.dial(r.createRoutedAgent("slowvoice"))
+	c := r.dial(r.createHandoffAgent("slowvoice"))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 	c.say("transfer to sales")
@@ -549,7 +549,7 @@ func TestAgentE2ECallerSpeaksWhileTheStepIsBeingPrepared(t *testing.T) {
 	close(probe.gate)
 	c.waitReplies("[SALES", 1)
 	eventually(t, "front closed after the flip", func() bool { return probe.closes("FRONT") == 1 })
-	if r.s.metrics.route.total.Load() != 1 {
+	if r.s.metrics.handoff.total.Load() != 1 {
 		t.Fatal("exactly one route")
 	}
 }
@@ -561,7 +561,7 @@ func TestAgentE2EHangUpWhilePreparingClosesTheLateStep(t *testing.T) {
 	probe.holdTTS = "slowvoice"
 	r := newAgentRigE2E(t, probe)
 	baseline := runtime.NumGoroutine()
-	c := r.dial(r.createRoutedAgent("slowvoice"))
+	c := r.dial(r.createHandoffAgent("slowvoice"))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 	c.say("transfer to sales")
@@ -580,7 +580,7 @@ func TestAgentE2EHangUpWhilePreparingClosesTheLateStep(t *testing.T) {
 func TestAgentE2ERepublishMidCallKeepsTheCallsAgent(t *testing.T) {
 	probe := newProbe()
 	r := newAgentRigE2E(t, probe)
-	c := r.dial(r.createRoutedAgent("salesvoice"))
+	c := r.dial(r.createHandoffAgent("salesvoice"))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 	c.say("hello")
 	c.waitReplies("[FRONT", 1)
@@ -602,7 +602,7 @@ func TestAgentE2ERepublishMidCallKeepsTheCallsAgent(t *testing.T) {
 }
 
 // A plain (flat) flow goes through the same server unchanged.
-func TestAgentE2EFlatAgentHasNoRoutes(t *testing.T) {
+func TestAgentE2EFlatAgentHasNoHandoffs(t *testing.T) {
 	probe := newProbe()
 	r := newAgentRigE2E(t, probe)
 	a, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Flat", Config: json.RawMessage(
@@ -620,11 +620,11 @@ func TestAgentE2EFlatAgentHasNoRoutes(t *testing.T) {
 	}
 	for _, e := range r.timeline() {
 		switch e.Type {
-		case EventRoute, EventStepActive, EventStepPreparing, EventRouteFailed:
+		case EventHandoff, EventStepActive, EventStepPreparing, EventHandoffFailed:
 			t.Fatalf("a flat flow produced a route event: %+v", e)
 		}
 	}
-	if r.s.metrics.route.total.Load() != 0 {
+	if r.s.metrics.handoff.total.Load() != 0 {
 		t.Fatal("no route metrics for a flat flow")
 	}
 }
@@ -682,11 +682,11 @@ func (r *agentRigE2E) cueStopReason() string {
 
 // The cue fills the gap while the next step is being built, then stops with a
 // short fade when the new step speaks.
-func TestAgentE2ECuePlaysInTheRouteGapAndStopsWhenSalesSpeaks(t *testing.T) {
+func TestAgentE2ECuePlaysInTheHandoffGapAndStopsWhenSalesSpeaks(t *testing.T) {
 	probe := newProbe()
 	probe.holdTTS = "slowvoice" // the sales build takes as long as the test wants
 	r := newAgentRigE2E(t, probe, withCue(t))
-	c := r.dial(r.createRoutedAgent("slowvoice", `{"name":"chime","after_ms":50}`))
+	c := r.dial(r.createHandoffAgent("slowvoice", `{"name":"chime","after_ms":50}`))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 	c.say("hello")
@@ -740,10 +740,10 @@ func TestAgentE2ECuePlaysInTheRouteGapAndStopsWhenSalesSpeaks(t *testing.T) {
 }
 
 // A route quicker than after_ms stays silent: nothing on the wire, no cue event.
-func TestAgentE2EQuickRoutePlaysNoCue(t *testing.T) {
+func TestAgentE2EQuickHandoffPlaysNoCue(t *testing.T) {
 	probe := newProbe()
 	r := newAgentRigE2E(t, probe, withCue(t))
-	c := r.dial(r.createRoutedAgent("salesvoice", `{"name":"chime","after_ms":8000}`))
+	c := r.dial(r.createHandoffAgent("salesvoice", `{"name":"chime","after_ms":8000}`))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 	c.say("transfer to sales")
@@ -756,11 +756,11 @@ func TestAgentE2EQuickRoutePlaysNoCue(t *testing.T) {
 
 // The next step cannot be built while the cue plays: the cue ends, the caller
 // keeps the first step, and no sound is left behind.
-func TestAgentE2ECueStopsWhenTheRouteFails(t *testing.T) {
+func TestAgentE2ECueStopsWhenTheHandoffFails(t *testing.T) {
 	probe := newProbe()
 	probe.holdTTS, probe.failAfterHold = "slowvoice", true
 	r := newAgentRigE2E(t, probe, withCue(t))
-	c := r.dial(r.createRoutedAgent("slowvoice", `{"name":"chime","after_ms":50}`))
+	c := r.dial(r.createHandoffAgent("slowvoice", `{"name":"chime","after_ms":50}`))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 	c.say("transfer to sales")
@@ -769,7 +769,7 @@ func TestAgentE2ECueStopsWhenTheRouteFails(t *testing.T) {
 	eventually(t, "cue on the wire", func() bool { return c.cueFrames() >= 3 })
 
 	close(probe.gate) // the build now fails
-	eventually(t, "route failed", func() bool { return r.has(EventRouteFailed, "sales") })
+	eventually(t, "route failed", func() bool { return r.has(EventHandoffFailed, "sales") })
 	eventually(t, "cue stopped because the route failed", func() bool { return r.cueStopReason() == "failed" })
 	time.Sleep(400 * time.Millisecond)
 	stopped := c.cueFrames()
@@ -787,7 +787,7 @@ func TestAgentE2ECueStopsWhenTheRouteFails(t *testing.T) {
 func TestAgentE2EUnknownCueNameStillHandsOff(t *testing.T) {
 	probe := newProbe()
 	r := newAgentRigE2E(t, probe, withCue(t))
-	agentID := r.createRoutedAgent("salesvoice", `{"name":"chime","after_ms":50}`)
+	agentID := r.createHandoffAgent("salesvoice", `{"name":"chime","after_ms":50}`)
 	delete(r.s.cues, "chime")
 	c := r.dial(agentID)
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
@@ -799,9 +799,9 @@ func TestAgentE2EUnknownCueNameStillHandsOff(t *testing.T) {
 }
 
 // send_dtmf is a call tool: after a route the new step can still press keys.
-func TestAgentE2ESendDTMFWorksAfterARoute(t *testing.T) {
+func TestAgentE2ESendDTMFWorksAfterAHandoff(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe(), func(cfg *Config) { cfg.DTMF.SendTool = true })
-	c := r.dial(r.createRoutedAgent("salesvoice"))
+	c := r.dial(r.createHandoffAgent("salesvoice"))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 	c.say("please transfer to sales")
 	c.waitReplies("[SALES", 1)
@@ -931,7 +931,7 @@ func TestAgentE2EStepWithoutEndCallKeepsTheCall(t *testing.T) {
 // path (the call connects and talks); a lifetime above the 5m ceiling is refused when the server is built.
 func TestAgentE2EConfiguredTokenLifetimeIsHonouredByTheLiveConnect(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe(), func(c *Config) { c.Token.MaxLifetime = 3 * time.Minute })
-	tok := r.voiceToken(r.createRoutedAgent("salesvoice"))
+	tok := r.voiceToken(r.createHandoffAgent("salesvoice"))
 	claims := jwt.MapClaims{}
 	if _, _, err := jwt.NewParser().ParseUnverified(tok, claims); err != nil {
 		t.Fatal(err)
@@ -953,9 +953,9 @@ func TestAgentE2EConfiguredTokenLifetimeIsHonouredByTheLiveConnect(t *testing.T)
 	}
 }
 
-// routedBackgroundFlow is front -> sales -> support (and sales -> front when back is set); the given
+// handoffBackgroundAgent is front -> sales -> support (and sales -> front when back is set); the given
 // audio object, if any, goes on each step by id.
-func (r *agentRigE2E) routedBackgroundAgent(audio map[string]string, back bool) string {
+func (r *agentRigE2E) handoffBackgroundAgent(audio map[string]string, back bool) string {
 	r.t.Helper()
 	stage := func(prompt, voice, extra string) string {
 		return `"llm":{"provider":"echo","model":"m","system_prompt":"` + prompt + `"},"tts":{"provider":"echo","voice":"` + voice + `"}` + extra
@@ -970,13 +970,13 @@ func (r *agentRigE2E) routedBackgroundAgent(audio map[string]string, back bool) 
 		}
 		return `{"id":"` + id + `","name":"` + name + `","config":{` + cfg + `}}`
 	}
-	routes := `{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."},` +
+	handoffs := `{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."},` +
 		`{"id":"e2","from":"sales","to":"support","condition":"The caller needs help."}`
 	if back {
-		routes += `,{"id":"e3","from":"sales","to":"front","condition":"The caller is done buying."}`
+		handoffs += `,{"id":"e3","from":"sales","to":"front","condition":"The caller is done buying."}`
 	}
 	cfg := `{"start":"front","steps":[` + step("front", "Front desk", "FRONT", true) + `,` + step("sales", "Sales", "SALES", false) + `,` +
-		step("support", "Support", "SUPPORT", false) + `],"routes":[` + routes + `]}`
+		step("support", "Support", "SUPPORT", false) + `],"routes":[` + handoffs + `]}`
 	a, err := r.s.agents.Create(r.t.Context(), agent.CreateRequest{Name: "Beds", Config: json.RawMessage(cfg)})
 	if err != nil || a.Readiness.State != agent.ReadinessReady {
 		r.t.Fatalf("background flow: %+v err=%v", a.Readiness, err)
@@ -987,12 +987,12 @@ func (r *agentRigE2E) routedBackgroundAgent(audio map[string]string, back bool) 
 
 // R5a: a step's background starts when the route to it arrives, and a step that names none keeps the
 // sound that is playing.
-func TestAgentE2EAStepsBackgroundStartsWhenTheRouteArrives(t *testing.T) {
+func TestAgentE2EAStepsBackgroundStartsWhenTheHandoffArrives(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe(), func(c *Config) {
 		c.Audio.Backgrounds = map[string]CueConfig{"office": {File: constWAV(t, "office", 20000), GainDB: ptrF(0)}}
 		c.Audio.AllowAgentBackground = true
 	})
-	c := r.dial(r.routedBackgroundAgent(map[string]string{"sales": `{"background":{"name":"office"}}`}, false))
+	c := r.dial(r.handoffBackgroundAgent(map[string]string{"sales": `{"background":{"name":"office"}}`}, false))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 	c.say("hello")
@@ -1016,13 +1016,13 @@ func TestAgentE2EAStepsBackgroundStartsWhenTheRouteArrives(t *testing.T) {
 }
 
 // K7: a route back to the start step restores the bed the call began with, the server default included.
-func TestAgentE2EAStepsBackgroundIsRestoredWhenARouteReturnsToTheStart(t *testing.T) {
+func TestAgentE2EAStepsBackgroundIsRestoredWhenAHandoffReturnsToTheStart(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe(), func(c *Config) {
 		c.Audio.Backgrounds = map[string]CueConfig{"soft": {File: constWAV(t, "soft", 6000), GainDB: ptrF(0)}}
 		c.Audio.BackgroundDefault = "soft"
 		c.Audio.AllowAgentBackground = true
 	})
-	c := r.dial(r.routedBackgroundAgent(map[string]string{"sales": `{"background":{"name":""}}`}, true))
+	c := r.dial(r.handoffBackgroundAgent(map[string]string{"sales": `{"background":{"name":""}}`}, true))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 	eventually(t, "the server default plays on the start step", func() bool { return c.cueFrames() >= 5 })
 

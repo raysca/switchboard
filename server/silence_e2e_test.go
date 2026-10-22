@@ -51,9 +51,9 @@ func TestSilenceAgentWithExplicitIdleSettingsStillHangsUp(t *testing.T) {
 	eventually(t, "the hang-up is counted", func() bool { return r.s.metrics.UserIdleHangupsTotal.Load() == 1 })
 }
 
-// silenceRoutedFlow is the Dealership shape with a text-only start step: the front step (the only one that
+// silenceHandoffAgent is the Dealership shape with a text-only start step: the front step (the only one that
 // can name speech-to-text) listens with silence, and each step's voice is given as its tts stage JSON.
-func silenceRoutedAgent(t *testing.T, r *agentRigE2E, frontTTS, salesTTS, frontExtra string) string {
+func silenceHandoffAgent(t *testing.T, r *agentRigE2E, frontTTS, salesTTS, frontExtra string) string {
 	t.Helper()
 	cfg := `{"start":"front","steps":[` +
 		`{"id":"front","name":"Front desk","config":{"stt":{"provider":"silence","model":"text","language":"en-US"},"llm":{"provider":"echo","model":"m","system_prompt":"FRONT"},"tts":` + frontTTS + frontExtra + `}},` +
@@ -75,7 +75,7 @@ const (
 
 // A routed flow keeps working in text when the steps differ in whether they make audio: the speech stages are
 // rebuilt at each route, and the call-level (start step) speech-to-text stays silence throughout.
-func TestSilenceRoutedAgentMovesBetweenStepsInText(t *testing.T) {
+func TestSilenceHandoffAgentMovesBetweenStepsInText(t *testing.T) {
 	for name, tts := range map[string][2]string{
 		"silence on both steps":          {ttsSilence, ttsSilence},
 		"silent front, audio sales":      {ttsSilence, ttsEchoSales},
@@ -83,7 +83,7 @@ func TestSilenceRoutedAgentMovesBetweenStepsInText(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newAgentRigE2E(t, newProbe())
-			c := r.dial(silenceRoutedAgent(t, r, tts[0], tts[1], ""))
+			c := r.dial(silenceHandoffAgent(t, r, tts[0], tts[1], ""))
 			eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 			c.say("hello")
@@ -99,11 +99,11 @@ func TestSilenceRoutedAgentMovesBetweenStepsInText(t *testing.T) {
 			if c.replies("[FRONT") != front {
 				t.Fatal("the front step answered after the route")
 			}
-			if !r.has(EventRoute, "front->sales") || !r.has(EventStepActive, "sales") || !r.has(EventStepClosed, "front") {
+			if !r.has(EventHandoff, "front->sales") || !r.has(EventStepActive, "sales") || !r.has(EventStepClosed, "front") {
 				t.Fatalf("timeline = %+v", r.timeline())
 			}
-			if r.s.metrics.route.total.Load() != 1 || r.s.metrics.route.failures.Load() != 0 {
-				t.Fatalf("metrics: routes=%d failures=%d", r.s.metrics.route.total.Load(), r.s.metrics.route.failures.Load())
+			if r.s.metrics.handoff.total.Load() != 1 || r.s.metrics.handoff.failures.Load() != 0 {
+				t.Fatalf("metrics: routes=%d failures=%d", r.s.metrics.handoff.total.Load(), r.s.metrics.handoff.failures.Load())
 			}
 			if c.ended() {
 				t.Fatal("the call ended")
@@ -114,9 +114,9 @@ func TestSilenceRoutedAgentMovesBetweenStepsInText(t *testing.T) {
 
 // The idle default belongs to the call (the start step's speech-to-text), so it survives the route: a caller
 // who is reading the second step's answer is not nudged or hung up on.
-func TestSilenceRoutedAgentIsNotNudgedBeforeOrAfterTheRoute(t *testing.T) {
+func TestSilenceHandoffAgentIsNotNudgedBeforeOrAfterTheHandoff(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe(), serverIdle(time.Second, "server prompt"))
-	c := r.dial(silenceRoutedAgent(t, r, ttsSilence, ttsSilence, ""))
+	c := r.dial(silenceHandoffAgent(t, r, ttsSilence, ttsSilence, ""))
 	c.say("please transfer to sales")
 	c.waitReplies("[SALES", 1)
 	time.Sleep(2500 * time.Millisecond) // more than twice the server's idle wait, after the route
@@ -126,9 +126,9 @@ func TestSilenceRoutedAgentIsNotNudgedBeforeOrAfterTheRoute(t *testing.T) {
 }
 
 // Idle settings are call-level, so they sit on the start step; set there they apply to a text-only routed flow.
-func TestSilenceRoutedAgentHonoursIdleSettingsOnItsStartStep(t *testing.T) {
+func TestSilenceHandoffAgentHonoursIdleSettingsOnItsStartStep(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe(), serverIdle(time.Minute, "server prompt"))
-	c := r.dial(silenceRoutedAgent(t, r, ttsSilence, ttsSilence, `,"idle":{"user_timeout_ms":1000,"max_prompts":1,"prompt":"Still there?","prompt_mode":"say","goodbye":"Goodbye."}`))
+	c := r.dial(silenceHandoffAgent(t, r, ttsSilence, ttsSilence, `,"idle":{"user_timeout_ms":1000,"max_prompts":1,"prompt":"Still there?","prompt_mode":"say","goodbye":"Goodbye."}`))
 	eventually(t, "the hang-up the start step asked for", c.ended)
 	eventually(t, "the hang-up is counted", func() bool { return r.s.metrics.UserIdleHangupsTotal.Load() == 1 })
 }

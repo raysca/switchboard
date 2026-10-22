@@ -74,7 +74,7 @@ func TestNoSecretLeavesTheServer(t *testing.T) {
 	if err != nil || plain.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("plain flow: %+v err=%v", plain.Readiness, err)
 	}
-	routedID := r.createRoutedAgent("salesvoice")
+	handoffID := r.createHandoffAgent("salesvoice")
 	w := apiRequest(s, http.MethodPost, "/api/v1/mcp-servers", e2eMgmtKey, `{"name":"crm","endpoint":"https://1.1.1.1/rpc","transport":"streamable-http","auth_env":"MCP_TOKEN_CRM","enabled":true}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("mcp create: %d %s", w.Code, w.Body)
@@ -84,7 +84,7 @@ func TestNoSecretLeavesTheServer(t *testing.T) {
 	}
 
 	// A real call through the echo stack: resolve, build, speak, hand off, hang up.
-	c := r.dial(routedID)
+	c := r.dial(handoffID)
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 	c.say("hello")
 	c.waitReplies("[FRONT", 1)
@@ -116,7 +116,7 @@ func TestNoSecretLeavesTheServer(t *testing.T) {
 		}
 		out.WriteString(path + "\n" + w.Body.String() + "\n")
 	}
-	for _, p := range []string{"/api/v1/providers", "/api/v1/flows", "/api/v1/flows/" + plain.ID, "/api/v1/flows/" + routedID,
+	for _, p := range []string{"/api/v1/providers", "/api/v1/flows", "/api/v1/flows/" + plain.ID, "/api/v1/flows/" + handoffID,
 		"/api/v1/mcp-servers", "/api/v1/sessions", "/api/v1/sessions/" + c.sessionID, "/api/v1/sessions/" + c.sessionID + "/traces", "/api/v1/sessions/" + mc.sessionID + "/traces", "/api/v1/flows/" + toolAgent.ID,
 		"/api/v1/server-config", "/api/v1/operations/status", "/debug/timeline?session=1", "/metrics", "/ready"} {
 		get(p)

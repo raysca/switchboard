@@ -34,11 +34,11 @@ func agentStages(stt bool) string {
 	return stages
 }
 
-func agentBody(name, routeTo string) string {
+func agentBody(name, handoffTo string) string {
 	return `{"name":"` + name + `","config":{"start":"front","steps":[` +
 		`{"id":"front","name":"Front desk","config":{` + agentStages(true) + `}},` +
 		`{"id":"sales","name":"Sales","config":{` + agentStages(false) + `}}],` +
-		`"routes":[{"id":"e1","from":"front","to":"` + routeTo + `","condition":"wants to buy"}]}}`
+		`"routes":[{"id":"e1","from":"front","to":"` + handoffTo + `","condition":"wants to buy"}]}}`
 }
 
 type agentResp struct {

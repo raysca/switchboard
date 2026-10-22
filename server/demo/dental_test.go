@@ -81,8 +81,8 @@ func TestInstallDentalCreatesTheServerAndTheAgent(t *testing.T) {
 	}
 	// The stored config is a valid three-step flow the server accepts.
 	g, err := agent.Decode(req.Config)
-	if err != nil || len(g.Steps) != 3 || len(g.Routes) != 2 {
-		t.Fatalf("config: steps=%d routes=%d err=%v", len(g.Steps), len(g.Routes), err)
+	if err != nil || len(g.Steps) != 3 || len(g.Handoffs) != 2 {
+		t.Fatalf("config: steps=%d routes=%d err=%v", len(g.Steps), len(g.Handoffs), err)
 	}
 	for _, s := range g.Steps {
 		if !s.EndCall {

@@ -13,8 +13,8 @@ import (
 
 const salesGreeting = "Sales here, what are you looking for?"
 
-// routedGreetingConfig is the front/sales echo flow with a route each way and a greeting on either step.
-func routedGreetingConfig(frontGreeting, salesGreeting, salesVoice string) string {
+// handoffGreetingConfig is the front/sales echo flow with a route each way and a greeting on either step.
+func handoffGreetingConfig(frontGreeting, salesGreeting, salesVoice string) string {
 	g := func(s string) string {
 		if s == "" {
 			return ""
@@ -29,9 +29,9 @@ func routedGreetingConfig(frontGreeting, salesGreeting, salesVoice string) strin
 		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."},{"id":"e2","from":"sales","to":"front","condition":"The caller wants support."}]}`
 }
 
-func routedGreetingAgent(t *testing.T, r *agentRigE2E, frontGreeting, salesGreeting, salesVoice string) string {
+func handoffGreetingAgent(t *testing.T, r *agentRigE2E, frontGreeting, salesGreeting, salesVoice string) string {
 	t.Helper()
-	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Routed greeting", Config: json.RawMessage(routedGreetingConfig(frontGreeting, salesGreeting, salesVoice))})
+	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Routed greeting", Config: json.RawMessage(handoffGreetingConfig(frontGreeting, salesGreeting, salesVoice))})
 	if err != nil || f.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("flow: %+v err %v", f.Readiness, err)
 	}
@@ -42,7 +42,7 @@ func routedGreetingAgent(t *testing.T, r *agentRigE2E, frontGreeting, salesGreet
 func TestAStepsGreetingIsSpokenWordForWordInItsVoiceAndReplacesTheModelsGreeting(t *testing.T) {
 	probe := newProbe()
 	r := newAgentRigE2E(t, probe)
-	c := r.dial(routedGreetingAgent(t, r, "", salesGreeting, "salesvoice"))
+	c := r.dial(handoffGreetingAgent(t, r, "", salesGreeting, "salesvoice"))
 	c.say("please transfer to sales")
 	c.waitReplies("Connecting you.", 1)
 	c.waitReplies(salesGreeting, 1)
@@ -67,7 +67,7 @@ func TestAStepsGreetingIsSpokenWordForWordInItsVoiceAndReplacesTheModelsGreeting
 
 func TestAReturnToTheStartStepDoesNotReplayTheOpeningGreeting(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe())
-	c := r.dial(routedGreetingAgent(t, r, greetingText, salesGreeting, "salesvoice"))
+	c := r.dial(handoffGreetingAgent(t, r, greetingText, salesGreeting, "salesvoice"))
 	c.waitReplies(greetingText, 1) // the opening
 	c.say("please transfer to sales")
 	c.waitReplies(salesGreeting, 1)
@@ -83,7 +83,7 @@ func TestAGreetingOnAStepThatCannotBeBuiltIsNeverSpokenAndTheCallGoesOn(t *testi
 	probe := newProbe()
 	probe.failTTS = "brokenvoice"
 	r := newAgentRigE2E(t, probe)
-	c := r.dial(routedGreetingAgent(t, r, "", salesGreeting, "brokenvoice"))
+	c := r.dial(handoffGreetingAgent(t, r, "", salesGreeting, "brokenvoice"))
 	c.say("please transfer to sales")
 	c.waitReplies("Connecting you.", 1)
 	time.Sleep(1200 * time.Millisecond)
@@ -94,14 +94,14 @@ func TestAGreetingOnAStepThatCannotBeBuiltIsNeverSpokenAndTheCallGoesOn(t *testi
 	c.waitReplies("[FRONT", 1) // the caller stayed with the front step
 }
 
-func TestADraftCallPlaysTheDraftsRouteGreeting(t *testing.T) {
+func TestADraftCallPlaysTheDraftsHandoffGreeting(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe())
-	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Draft routed", Config: json.RawMessage(routedGreetingConfig("", "", "salesvoice"))})
+	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Draft routed", Config: json.RawMessage(handoffGreetingConfig("", "", "salesvoice"))})
 	if err != nil {
 		t.Fatal(err)
 	}
 	r.agentID = f.ID
-	code, token, body := issueDraftToken(r, f.ID, routedGreetingConfig("", salesGreeting, "salesvoice"))
+	code, token, body := issueDraftToken(r, f.ID, handoffGreetingConfig("", salesGreeting, "salesvoice"))
 	if code != http.StatusCreated {
 		t.Fatalf("%d %s", code, body)
 	}

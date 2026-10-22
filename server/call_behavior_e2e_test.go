@@ -193,12 +193,12 @@ func TestCallBehaviorThePublishAPIRefusesASoundTheServerDoesNotOfferOrAllow(t *t
 }
 
 // The route sound is one of the server's cues: publish says which, and the editor reads the list from /server-config.
-func TestCallBehaviorThePublishAPIRefusesAnUnknownRouteCue(t *testing.T) {
+func TestCallBehaviorThePublishAPIRefusesAnUnknownHandoffCue(t *testing.T) {
 	cue := constWAV(t, "chime", 12000)
 	r := newAgentRigE2E(t, newProbe(), func(c *Config) {
 		c.Audio.Cues = map[string]CueConfig{"ding": {File: cue}, "chime": {File: cue}}
 	})
-	id := r.createRoutedAgent("salesvoice", `{"name":"chime","after_ms":50}`)
+	id := r.createHandoffAgent("salesvoice", `{"name":"chime","after_ms":50}`)
 	w := apiRequest(r.s, http.MethodGet, "/api/v1/server-config", e2eMgmtKey, "")
 	var cfg struct {
 		Data struct {
@@ -227,7 +227,7 @@ func TestCallBehaviorThePublishAPIRefusesAnUnknownRouteCue(t *testing.T) {
 // failover is a call-wide setting: on a later step publish says invalid_request and names the step.
 func TestCallBehaviorThePublishAPIRefusesCallWideSettingsOnALaterStep(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe())
-	id := r.createRoutedAgent("salesvoice")
+	id := r.createHandoffAgent("salesvoice")
 	cfg := string(agentConfigJSON("SALES", "salesvoice"))
 	i := strings.Index(cfg, `"id":"sales"`)
 	cfg = cfg[:i] + strings.Replace(cfg[i:], `"config":{`, `"config":{"failover":{"on":["timeout"]},`, 1)

@@ -97,14 +97,14 @@ func near(got, want int16) bool { return got >= want-10 && got <= want+10 }
 
 // K7: a route switches the bed to the arriving step's, keeps it for a step that names none, skips a switch to
 // the sound already playing (each SetBackground restarts it) and restores the start step's resolved bed.
-func TestRouteBackgroundSwitchesOnArrivalKeepsOtherwiseAndSkipsTheSame(t *testing.T) {
+func TestHandoffBackgroundSwitchesOnArrivalKeepsOtherwiseAndSkipsTheSame(t *testing.T) {
 	s := backgroundServer(t, true, "quiet") // the start step names none: it plays the default, ~2000
 	g := &CallAgent{Start: "front", Backgrounds: map[string]*agent.BackgroundSettings{
 		"sales": {Name: "loud"}, "shop": {Name: "loud"}, "mute": {Name: ""},
 	}}
 	var sets []ws.Underlay
-	hook := s.routeBackground(g, nil, func(u ws.Underlay) { sets = append(sets, u) })
-	active := func(to string) { hook(core.RouteEvent{Kind: core.RouteActive, To: to}) }
+	hook := s.handoffBackground(g, nil, func(u ws.Underlay) { sets = append(sets, u) })
+	active := func(to string) { hook(core.HandoffEvent{Kind: core.HandoffActive, To: to}) }
 	want := func(n int, what string) {
 		t.Helper()
 		if len(sets) != n {
@@ -112,8 +112,8 @@ func TestRouteBackgroundSwitchesOnArrivalKeepsOtherwiseAndSkipsTheSame(t *testin
 		}
 	}
 
-	hook(core.RouteEvent{Kind: core.RoutePreparing, To: "sales"})
-	hook(core.RouteEvent{Kind: core.RouteFailed, To: "sales"})
+	hook(core.HandoffEvent{Kind: core.HandoffPreparing, To: "sales"})
+	hook(core.HandoffEvent{Kind: core.HandoffFailed, To: "sales"})
 	want(0, "only an active route switches")
 	active("sales")
 	want(1, "arriving at a step with a sound")
@@ -137,7 +137,7 @@ func TestRouteBackgroundSwitchesOnArrivalKeepsOtherwiseAndSkipsTheSame(t *testin
 	active("mute")
 	want(3, "none again is not a switch")
 
-	if s.routeBackground(&CallAgent{Start: "front"}, nil, func(ws.Underlay) {}) != nil {
+	if s.handoffBackground(&CallAgent{Start: "front"}, nil, func(ws.Underlay) {}) != nil {
 		t.Fatal("no step names a sound: nothing to watch")
 	}
 }
@@ -149,10 +149,10 @@ func TestARefusedStepBackgroundKeepsTheCurrentSoundInsteadOfTheServerDefault(t *
 		t.Run(name, func(t *testing.T) {
 			g := &CallAgent{Start: "front", Backgrounds: map[string]*agent.BackgroundSettings{"b": {Name: "loud"}, "gone": {Name: "nope"}}}
 			var sets int
-			hook := s.routeBackground(g, &agent.AudioSettings{Background: &agent.BackgroundSettings{Name: ""}}, func(ws.Underlay) { sets++ })
-			hook(core.RouteEvent{Kind: core.RouteActive, To: "gone"})
+			hook := s.handoffBackground(g, &agent.AudioSettings{Background: &agent.BackgroundSettings{Name: ""}}, func(ws.Underlay) { sets++ })
+			hook(core.HandoffEvent{Kind: core.HandoffActive, To: "gone"})
 			if name == "ceiling off" {
-				hook(core.RouteEvent{Kind: core.RouteActive, To: "b"})
+				hook(core.HandoffEvent{Kind: core.HandoffActive, To: "b"})
 			}
 			if sets != 0 {
 				t.Fatalf("a refused step background must keep the current sound (start asked for none), got %d SetBackground calls", sets)

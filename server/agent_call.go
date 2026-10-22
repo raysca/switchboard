@@ -45,7 +45,7 @@ type CallAgent struct {
 	Start   string
 	Resolve func(ctx context.Context, stepID string) (StepSpec, error)
 	Commit  func(target string) error
-	Cue     *agent.RouteCue
+	Cue     *agent.HandoffCue
 	// Backgrounds is the background each step names (by step id); the steps that name none are absent.
 	Backgrounds map[string]*agent.BackgroundSettings
 
@@ -104,9 +104,9 @@ func anyEndCall(g agent.Definition) bool {
 // transferTools are the transfer tools of one step: one per outgoing route, the
 // route condition being the model's cue to call it.
 func transferTools(g agent.Definition, stepID string) []core.ToolDefinition {
-	routes := g.RoutesFrom(stepID)
-	defs := make([]core.ToolDefinition, 0, len(routes))
-	for _, e := range routes {
+	handoffs := g.HandoffsFrom(stepID)
+	defs := make([]core.ToolDefinition, 0, len(handoffs))
+	for _, e := range handoffs {
 		to, _ := g.Step(e.To)
 		defs = append(defs, core.ToolDefinition{
 			Name:        agent.TransferToolName(to.Name),
@@ -121,7 +121,7 @@ func transferTools(g agent.Definition, stepID string) []core.ToolDefinition {
 // transferTargets maps a step's transfer tool names to the target step ids.
 func transferTargets(g agent.Definition, stepID string) map[string]string {
 	out := map[string]string{}
-	for _, e := range g.RoutesFrom(stepID) {
+	for _, e := range g.HandoffsFrom(stepID) {
 		to, _ := g.Step(e.To)
 		out[agent.TransferToolName(to.Name)] = to.ID
 	}
@@ -160,7 +160,7 @@ func stepExecutor(inner core.ToolExecutor, allowed map[string]bool, transfer map
 		}
 		if target, ok := transfer[call.Name]; ok {
 			if err := commit(target, parseNote(call.Arguments)); err != nil {
-				if errors.Is(err, core.ErrRoutePending) || errors.Is(err, core.ErrRouteLimit) {
+				if errors.Is(err, core.ErrHandoffPending) || errors.Is(err, core.ErrHandoffLimit) {
 					return res(core.ToolFailed, `{"error":"transfer_unavailable"}`), nil
 				}
 				return res(core.ToolFailed, `{"error":"transfer_failed"}`), nil
@@ -252,7 +252,7 @@ func (c *CallAgent) setNote(n string) { c.noteMu.Lock(); c.note = n; c.noteMu.Un
 // failure (a duplicate while one is pending, the limit) the previous note is restored.
 func (c *CallAgent) commitWithNote(target, note string) error {
 	if c.Commit == nil {
-		return errors.New("route not ready")
+		return errors.New("handoff not ready")
 	}
 	// Commit only starts the route build and returns; the greeting (takeNote) runs
 	// later on the trigger path, so holding commitMu here cannot deadlock with it.

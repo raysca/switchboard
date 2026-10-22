@@ -23,7 +23,7 @@ func TestSetupFailureClosesProviders(t *testing.T) {
 			probe := newProbe()
 			r := newAgentRigE2E(t, probe)
 			r.s.sessionBudget.MaxAsyncTasks = tc.async
-			id := r.createRoutedAgent("salesvoice")
+			id := r.createHandoffAgent("salesvoice")
 			if tc.greeting {
 				raw := strings.Replace(string(agentConfigJSON("SALES", "salesvoice")), `"config":{`, `"config":{"greeting":"hello there",`, 1)
 				a, err := r.s.agents.Create(r.t.Context(), agent.CreateRequest{Name: "Greeter", Config: json.RawMessage(raw)})

@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-// The library's API says routes and steps: no exported name carries the old handoff/node vocabulary.
-func TestNoHandoffOrNodeVocabularyInTheAPI(t *testing.T) {
+// The library's API says handoffs and steps: no exported name carries the old route/node vocabulary (Router, the mechanism, stays).
+func TestNoRouteOrNodeVocabularyInTheAPI(t *testing.T) {
 	fset := token.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }, 0)
 	if err != nil {
@@ -21,7 +21,7 @@ func TestNoHandoffOrNodeVocabularyInTheAPI(t *testing.T) {
 			for _, decl := range file.Decls {
 				ast.Inspect(decl, func(n ast.Node) bool {
 					id, ok := n.(*ast.Ident)
-					if ok && id.IsExported() && (strings.Contains(id.Name, "Handoff") || strings.Contains(id.Name, "NodeStages") || strings.Contains(id.Name, "BuildNodeFunc")) {
+					if ok && id.IsExported() && (strings.Contains(strings.ReplaceAll(id.Name, "Router", ""), "Route") || strings.Contains(id.Name, "NodeStages") || strings.Contains(id.Name, "BuildNodeFunc")) {
 						t.Errorf("%s: %s still uses the old vocabulary", name, id.Name)
 					}
 					return true

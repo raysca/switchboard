@@ -72,7 +72,7 @@ func TestAgentConfigHasEntryWithSTTAndASalesStepWithout(t *testing.T) {
 	p.Stages.STT = Stage{Provider: "xai"}
 	p.Stages.LLM = Stage{Provider: "xai", Model: "grok-3-mini"}
 	p.Stages.TTS = Stage{Provider: "xai", Voice: "eve"}
-	cfg := routedAgentConfig(p)
+	cfg := handoffAgentConfig(p)
 	steps := cfg["steps"].([]map[string]any)
 	if cfg["start"] != "front" || len(steps) != 2 {
 		t.Fatalf("start=%v steps=%d", cfg["start"], len(steps))

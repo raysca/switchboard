@@ -133,8 +133,8 @@ func contains(list []string, s string) bool {
 	return false
 }
 
-func TestPublishRefusesARouteSoundTheServerDoesNotHave(t *testing.T) {
-	routed := func(cue string) json.RawMessage {
+func TestPublishRefusesAHandoffSoundTheServerDoesNotHave(t *testing.T) {
+	handoff := func(cue string) json.RawMessage {
 		return json.RawMessage(strings.Replace(twoStepCfg(""), `"routes":`, `"route_cue":`+cue+`,"routes":`, 1))
 	}
 	for _, c := range []struct {
@@ -149,7 +149,7 @@ func TestPublishRefusesARouteSoundTheServerDoesNotHave(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			svc := testServiceWith(t, &fakePolicy{cues: c.cues})
-			a, err := svc.Create(context.Background(), CreateRequest{Name: c.name, Config: routed(c.cue)})
+			a, err := svc.Create(context.Background(), CreateRequest{Name: c.name, Config: handoff(c.cue)})
 			if c.want == "" {
 				if err != nil {
 					t.Fatal(err)
@@ -162,7 +162,7 @@ func TestPublishRefusesARouteSoundTheServerDoesNotHave(t *testing.T) {
 		})
 	}
 	// Readiness stays green for a stored flow whose sound the server dropped: the call runs without it (K6).
-	g, err := Decode(routed(`{"name":"gone"}`))
+	g, err := Decode(handoff(`{"name":"gone"}`))
 	if err != nil {
 		t.Fatal(err)
 	}

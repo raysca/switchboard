@@ -585,22 +585,22 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 		s.metrics.GreetingFailedTotal.Add(1)
 		s.logger.Warn("greeting not queued", "session", call.StoredSessionID, "err", s.redactor.Redact(err.Error()))
 	}
-	call.OnRoute = s.onRoute(timeline, call.StoredSessionID)
+	call.OnHandoff = s.onHandoff(timeline, call.StoredSessionID)
 	call.OnEndCall = s.onEndCall(call.StoredSessionID)
 	call.OnProviderRetry = func(stage, provider string, retry int) {
 		timeline.Record(TimelineEvent{Type: EventProviderRetry, Provider: provider, Details: fmt.Sprintf("%s retry %d", stage, retry)})
 	}
-	if hook := s.routeBackground(call.Agent, call.Audio, conn.SetBackground); hook != nil {
-		base := call.OnRoute
-		call.OnRoute = func(e core.RouteEvent) { base(e); hook(e) }
+	if hook := s.handoffBackground(call.Agent, call.Audio, conn.SetBackground); hook != nil {
+		base := call.OnHandoff
+		call.OnHandoff = func(e core.HandoffEvent) { base(e); hook(e) }
 	}
 	cue := s.newCallCue(call.Agent, conn.Cue(), timeline)
 	hold := s.newCallHold(call.Audio, conn.Cue(), timeline, cue)
 	call.toolHold = hold
 	if cue != nil || hold != nil {
-		base := call.OnRoute
+		base := call.OnHandoff
 		// The hold finishes first when a route starts preparing: the two sounds share one player.
-		call.OnRoute = func(e core.RouteEvent) { base(e); hold.onRoute(e); cue.onRoute(e) }
+		call.OnHandoff = func(e core.HandoffEvent) { base(e); hold.onHandoff(e); cue.onHandoff(e) }
 	}
 	phase := "build_pipeline"
 	var stopRecording func()

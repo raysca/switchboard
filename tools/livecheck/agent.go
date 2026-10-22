@@ -103,7 +103,7 @@ const agentMarker = "catalogue"
 
 // flowConfig is the two-step flow for S14: Front hands buyers to Sales. Both steps use the
 // profile's providers; only Front (the entry) has STT, as the server requires.
-func routedAgentConfig(p Profile) map[string]any {
+func handoffAgentConfig(p Profile) map[string]any {
 	front := agentConfig(p)
 	front["llm"].(map[string]any)["system_prompt"] = "You are the front desk of a car dealership. Answer in one short sentence. " +
 		"If the caller wants to buy a car or asks about prices, call the transfer_to_sales tool, then say one short sentence that you are connecting them."
@@ -122,7 +122,7 @@ func routedAgentConfig(p Profile) map[string]any {
 
 // provisionFlow creates the two-step flow for S14 and returns its id.
 func (s *server) provisionAgent(p Profile) (string, error) {
-	return s.id("flows", map[string]any{"name": "Live Check Graph", "description": "livecheck graph " + p.Name, "config": routedAgentConfig(p)})
+	return s.id("flows", map[string]any{"name": "Live Check Graph", "description": "livecheck graph " + p.Name, "config": handoffAgentConfig(p)})
 }
 
 // brokenSecret keeps a key's length and prefix but changes its last characters, so the provider

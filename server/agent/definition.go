@@ -11,17 +11,17 @@ import (
 // Definition limits keep a stored flow and a call's step set bounded.
 const (
 	MaxSteps     = 8
-	MaxRoutes    = 32
+	MaxHandoffs  = 32
 	maxCondition = 512
 )
 
 // Definition is the stored flow: steps (each a full per-step Config), routes
 // between them, and the call-level route cue. A flat Config is a one-step Definition.
 type Definition struct {
-	Start    string    `json:"start"`
-	Steps    []Step    `json:"steps"`
-	Routes   []Route   `json:"routes"`
-	RouteCue *RouteCue `json:"route_cue,omitempty"`
+	Start      string      `json:"start"`
+	Steps      []Step      `json:"steps"`
+	Handoffs   []Handoff   `json:"routes"`
+	HandoffCue *HandoffCue `json:"route_cue,omitempty"`
 }
 
 type Position struct {
@@ -43,16 +43,16 @@ type Step struct {
 	Position *Position `json:"position,omitempty"`
 }
 
-type Route struct {
+type Handoff struct {
 	ID        string `json:"id"`
 	From      string `json:"from"`
 	To        string `json:"to"`
 	Condition string `json:"condition"`
 }
 
-// RouteCue names a server-configured sound (audio.cues) that plays while the
+// HandoffCue names a server-configured sound (audio.cues) that plays while the
 // call is between steps, once the gap exceeds AfterMS (0: default 300 ms).
-type RouteCue struct {
+type HandoffCue struct {
 	Name    string `json:"name"`
 	AfterMS int    `json:"after_ms,omitempty"`
 }
@@ -67,10 +67,10 @@ type rawStep struct {
 }
 
 type rawDefinition struct {
-	Start    string    `json:"start"`
-	Steps    []rawStep `json:"steps"`
-	Routes   []Route   `json:"routes"`
-	RouteCue *RouteCue `json:"route_cue"`
+	Start      string      `json:"start"`
+	Steps      []rawStep   `json:"steps"`
+	Handoffs   []Handoff   `json:"routes"`
+	HandoffCue *HandoffCue `json:"route_cue"`
 }
 
 var (
@@ -114,10 +114,10 @@ func Decode(raw json.RawMessage) (Definition, error) {
 	if err := dec.Decode(&rg); err != nil {
 		return Definition{}, invalid("%v", err)
 	}
-	if len(rg.Steps) == 0 || len(rg.Steps) > MaxSteps || len(rg.Routes) > MaxRoutes {
-		return Definition{}, invalid("a flow has 1 to %d steps and at most %d routes", MaxSteps, MaxRoutes)
+	if len(rg.Steps) == 0 || len(rg.Steps) > MaxSteps || len(rg.Handoffs) > MaxHandoffs {
+		return Definition{}, invalid("a flow has 1 to %d steps and at most %d routes", MaxSteps, MaxHandoffs)
 	}
-	g := Definition{Start: rg.Start, Routes: rg.Routes, RouteCue: rg.RouteCue, Steps: make([]Step, 0, len(rg.Steps))}
+	g := Definition{Start: rg.Start, Handoffs: rg.Handoffs, HandoffCue: rg.HandoffCue, Steps: make([]Step, 0, len(rg.Steps))}
 	ids, slugs := map[string]bool{}, map[string]bool{}
 	for _, rn := range rg.Steps {
 		name := strings.TrimSpace(rn.Name)
@@ -137,14 +137,14 @@ func Decode(raw json.RawMessage) (Definition, error) {
 		}
 		g.Steps = append(g.Steps, Step{ID: rn.ID, Name: name, Config: cfg, Tools: rn.Tools, EndCall: rn.EndCall, Position: rn.Position})
 	}
-	if c := g.RouteCue; c != nil && (!cueName.MatchString(c.Name) || c.AfterMS < 0 || c.AfterMS > maxCueAfterMS) {
+	if c := g.HandoffCue; c != nil && (!cueName.MatchString(c.Name) || c.AfterMS < 0 || c.AfterMS > maxCueAfterMS) {
 		return Definition{}, invalid("route_cue needs a name matching %s and after_ms between 0 and %d", cueName, maxCueAfterMS)
 	}
 	if !ids[g.Start] {
 		return Definition{}, invalid("start %q is not a step", g.Start)
 	}
 	pairs := map[[2]string]bool{}
-	for _, e := range g.Routes {
+	for _, e := range g.Handoffs {
 		key := [2]string{e.From, e.To}
 		switch {
 		case e.ID == "" || !ids[e.From] || !ids[e.To] || e.From == e.To:
@@ -251,9 +251,9 @@ func (g Definition) Step(id string) (Step, bool) {
 	return Step{}, false
 }
 
-func (g Definition) RoutesFrom(id string) []Route {
-	var out []Route
-	for _, e := range g.Routes {
+func (g Definition) HandoffsFrom(id string) []Handoff {
+	var out []Handoff
+	for _, e := range g.Handoffs {
 		if e.From == id {
 			out = append(out, e)
 		}
