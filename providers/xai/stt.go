@@ -771,6 +771,7 @@ func (p *STTProcessor) receive(ctx context.Context, st *activeSTTStream) {
 				if p.cfg.CircuitBreaker != nil {
 					p.cfg.CircuitBreaker.Report(sendErr, classify)
 				}
+				p.noRedial(st)
 				p.failBoundStream(st, fmt.Errorf("%w: %w", core.ErrSTTUnavailable, providerErr), "xai buffered audio send failed")
 				return
 			}
@@ -935,6 +936,19 @@ func (p *STTProcessor) beginDrain(ctx context.Context, st *activeSTTStream) erro
 	return nil
 }
 
+// noRedial stops the rest of st's turn from dialing again after a failed write. The failure retires
+// the turn's (turn, gen) in the transcript finalizer, so a stream reopened for the same pair would
+// have its transcript dropped. With no fallback the remaining speech of that turn is lost and the
+// next turn (dialFailed is cleared when it starts) recovers; with fallbacks STTFailover replays the
+// turn to the next candidate (failBoundStream).
+func (p *STTProcessor) noRedial(st *activeSTTStream) {
+	p.mu.Lock()
+	if p.active == st {
+		p.dialFailed = true
+	}
+	p.mu.Unlock()
+}
+
 // streamWriteFailed handles a failed write on a live stream like a failed
 // read: the stream is stopped and released (the next audio opens a fresh one),
 // the failure is counted and reported to the breaker once, and the error is
@@ -950,6 +964,9 @@ func (p *STTProcessor) streamWriteFailed(st *activeSTTStream, err error, what st
 	st.mu.Lock()
 	bound, gen := st.turnID != "", st.gen
 	st.mu.Unlock()
+	if bound {
+		p.noRedial(st)
+	}
 	p.releaseStream(st)
 	p.stopStream(st)
 	p.ErrorsTotal.Add(1)

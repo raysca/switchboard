@@ -170,6 +170,16 @@ func TestXAISTT_LiveSendFailureIsReportedNotFatal(t *testing.T) {
 			}
 			waitXAI(t, "stream closed", func() bool { return o.streams[0].closes.Load() >= 1 })
 			_ = s.Post(&core.InputAudioFrame{Gen: 1, Samples: []byte{2, 2}})
+			if bound {
+				// The failure retired this (turn, gen) downstream, so a stream reopened for it
+				// would have its transcript dropped: no redial for the rest of the turn.
+				time.Sleep(50 * time.Millisecond)
+				if n := o.opens.Load(); n != 1 {
+					t.Fatalf("opens within the failed turn = %d, want 1", n)
+				}
+				_ = s.Post(&core.UserStartedSpeakingFrame{Gen: 2, Seq: 2})
+				_ = s.Post(&core.InputAudioFrame{Gen: 2, Samples: []byte{3, 3}})
+			}
 			waitXAI(t, "reopen", func() bool { return o.opens.Load() == 2 })
 		})
 	}
