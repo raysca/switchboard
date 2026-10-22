@@ -278,3 +278,14 @@ go run ./examples/xai_pipeline
 # 3. Custom Application Processor (Filter / Audit / Logging)
 go run ./examples/custom_processor
 ```
+
+---
+
+## 8. Local Development with `make dev`
+
+`make dev` is the shortcut for everything above (`scripts/dev.sh`). It builds the binaries and starts the server and the admin UI together, with a generated management key and token secret and a SQLite store in `.govoice-dev/` (git-ignored; delete the directory to start over). It seeds a ready **Dev Assistant** flow (the target of the examples) and a two-step **Dealership desk** flow (the front desk hands buyers to sales) from the providers the server detected, plus test MCP servers. Provider keys come from `examples/.env` (template `examples/.env.example`); nothing is stored.
+
+- **Admin UI**: `http://127.0.0.1:5173`, already signed in by the dev proxy, so there is nothing to paste. `make admin-link` prints a magic link that signs the UI in; `make admin-link URL=https://host` does the same for a hosted server.
+- **Ports**: `PUBLIC_PORT` (8080, voice WebSocket and `/health`), `ADMIN_PORT` (9090, management API, metrics, debug), `UI_PORT` (5173) and `CLIENT_PORT` (3000, only `make example-web`). A default port that something else holds is skipped: the next free one is used and printed. A port you name is exact: `PUBLIC_PORT=18080 make dev` fails with the holder's name if 18080 is taken.
+- **Restarting**: a second `make dev` from the same checkout stops the first one (its server and the UI dev server) before starting. Nothing outside this checkout's own stack is ever killed.
+- **Examples against the running stack**: `make example-web` (browser client), `make example-cli` (a voice clip, or `TEXT="Hello"` for a text turn) and `make example-go NAME=google_pipeline` (a standalone Go example, reads `examples/.env`).
