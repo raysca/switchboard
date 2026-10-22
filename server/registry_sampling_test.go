@@ -30,4 +30,10 @@ func TestLLMBuildersMapSampling(t *testing.T) {
 			t.Fatalf("%+v", c)
 		}
 	})
+	t.Run("xai and offline", func(t *testing.T) { // offline.llm builds through xaiLLMProcessor too
+		c := xaiLLMConfig(spec, "https://x/v1/responses", "k", nil)
+		if c.Temperature == nil || *c.Temperature != 0 || c.TopP == nil || *c.TopP != 0.9 || c.MaxOutputTokens != 200 {
+			t.Fatalf("%+v", c)
+		}
+	})
 }

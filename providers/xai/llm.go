@@ -35,6 +35,11 @@ type Config struct {
 	RetryPolicy     resilience.Policy
 	CircuitBreaker  *resilience.Breaker
 	HTTPClient      *http.Client
+	// Sampling: nil / 0 are left out of the request body (provider default).
+	// MaxOutputTokens is max_output_tokens on the Responses API, max_tokens on chat completions.
+	Temperature     *float64
+	TopP            *float64
+	MaxOutputTokens int
 }
 
 // Processor implements core.Processor for the xAI LLM Responses API.
@@ -196,6 +201,11 @@ type responsesRequest struct {
 	Tools    []XAIToolDefinition `json:"tools,omitempty"`
 	Input    []chatMessage       `json:"input,omitempty"`
 	Messages []chatMessage       `json:"messages,omitempty"`
+
+	Temperature     *float64 `json:"temperature,omitempty"`
+	TopP            *float64 `json:"top_p,omitempty"`
+	MaxOutputTokens int      `json:"max_output_tokens,omitempty"` // Responses API
+	MaxTokens       int      `json:"max_tokens,omitempty"`        // chat completions
 }
 
 type chatChunkChoice struct {
@@ -316,11 +326,16 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 		Store:  false, // Spec: store: false MUST be sent on every request
 		Stream: true,
 		Tools:  providerTools,
+
+		Temperature: p.cfg.Temperature,
+		TopP:        p.cfg.TopP,
 	}
 	if strings.Contains(p.cfg.Endpoint, "chat/completions") {
 		reqBody.Messages = messages
+		reqBody.MaxTokens = p.cfg.MaxOutputTokens
 	} else {
 		reqBody.Input = messages
+		reqBody.MaxOutputTokens = p.cfg.MaxOutputTokens
 	}
 
 	// Supervised async execution

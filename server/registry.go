@@ -506,11 +506,17 @@ func elevenlabsTTSConfig(cfg *Config, spec StageSpec) elevenlabs.TTSConfig {
 	return c
 }
 
-// apiKey validates an API key credential: a single non-empty token.
+// xaiLLMConfig is the xAI stage config, shared by xai.llm and offline.llm.
+func xaiLLMConfig(spec StageSpec, endpoint, key string, br *resilience.Breaker) xai.Config {
+	c := xai.Config{Model: spec.Model, Endpoint: endpoint, SystemPrompt: spec.SystemPrompt, APIKey: key, CircuitBreaker: br}
+	c.RetryPolicy.OnRetry = spec.OnRetry
+	c.Temperature, c.TopP, c.MaxOutputTokens = spec.sampling()
+	return c
+}
+
 // xaiLLMProcessor is the xAI Responses-API stage, shared by xai.llm and offline.llm.
 func xaiLLMProcessor(spec StageSpec, endpoint, key string, br *resilience.Breaker, who string) (core.Processor, error) {
-	xaiCfg := xai.Config{Model: spec.Model, Endpoint: endpoint, SystemPrompt: spec.SystemPrompt, APIKey: key, CircuitBreaker: br}
-	xaiCfg.RetryPolicy.OnRetry = spec.OnRetry
+	xaiCfg := xaiLLMConfig(spec, endpoint, key, br)
 	if len(spec.Tools) > 0 {
 		loop, err := coretools.NewToolLoop(spec.Tools, spec.ToolExecutor, spec.History, spec.toolLoopConfig())
 		if err != nil {
@@ -529,6 +535,7 @@ func openAILLMConfig(cfg *Config, spec StageSpec, key, baseURL string, br *resil
 	return c
 }
 
+// apiKey validates an API key credential: a single non-empty token.
 func apiKey(secret []byte) (string, error) {
 	key := strings.TrimSpace(string(secret))
 	if key == "" || strings.ContainsAny(key, " \t\r\n") {
