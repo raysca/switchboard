@@ -532,3 +532,52 @@ func TestDuplicateCopiesALegacyStoredVersion(t *testing.T) {
 		t.Fatalf("a new publish of the legacy config must be refused: %v", err)
 	}
 }
+
+func TestReadinessCountsAMissingMCPTokenVariable(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		required bool
+		set      bool
+		want     string
+		state    string
+		env      []string
+	}{
+		{"required missing", true, false, ReadinessToolUnavailable, "auth_env_missing", []string{"MCP_TOKEN_X"}},
+		{"optional missing", false, false, ReadinessWithToolWarning, "auth_env_missing", []string{"MCP_TOKEN_X"}},
+		{"set", true, true, ReadinessReady, "ready", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := testService(t)
+			ctx := context.Background()
+			svc.SetTokenEnv(func(string) bool { return tc.set })
+			m := storage.MCPServer{ID: storage.NewID(), Name: "tok", Endpoint: "https://mcp.example/rpc", Transport: "streamable-http", AuthEnv: "MCP_TOKEN_X", Enabled: true, ValidationState: "healthy"}
+			if err := svc.store.MCP().CreateServer(ctx, m); err != nil {
+				t.Fatal(err)
+			}
+			d, err := svc.store.MCP().AddDiscovery(ctx, m.ID, []storage.MCPTool{
+				{RemoteName: "a", SchemaJSON: []byte(`{"type":"object"}`)},
+				{RemoteName: "b", SchemaJSON: []byte(`{"type":"object"}`)}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			a, err := svc.Create(ctx, CreateRequest{Name: "tok", Config: validConfig()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			sel := []ToolSelection{
+				{ServerID: m.ID, RemoteName: "a", SchemaHash: d.Tools[0].SchemaHash, Required: tc.required},
+				{ServerID: m.ID, RemoteName: "b", SchemaHash: d.Tools[1].SchemaHash, Required: tc.required}}
+			if _, err := svc.SetMCPTools(ctx, a.ID, sel); err != nil {
+				t.Fatal(err)
+			}
+			got, err := svc.Get(ctx, a.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := got.Readiness
+			if r.State != tc.want || r.ToolDependencies[0].State != tc.state || fmt.Sprint(r.MissingEnv) != fmt.Sprint(tc.env) {
+				t.Fatalf("readiness=%+v", r)
+			}
+		})
+	}
+}

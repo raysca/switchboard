@@ -343,3 +343,21 @@ func TestMCPCallBargeInStopsTheHoldSound(t *testing.T) {
 		t.Fatalf("the hold sound started %d times: it must not restart after the tool was abandoned", starts)
 	}
 }
+
+// An empty token variable counts as missing: flow readiness names it, and setting it clears it.
+func TestFlowReadinessNamesAnEmptyMCPTokenVariable(t *testing.T) {
+	r := newMCPCallRig(t)
+	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
+	a := r.flowWith(id, hashes, true, nil, "lookup_order")
+	vars := testProviderVars(t)
+	vars["MCP_TOKEN_TEST"] = ""
+	r.s.env = mapEnv(vars)
+	got, err := r.s.flows.Get(t.Context(), a.ID)
+	if err != nil || got.Readiness.State != flow.ReadinessToolUnavailable || got.Readiness.ToolDependencies[0].State != "auth_env_missing" || len(got.Readiness.MissingEnv) != 1 || got.Readiness.MissingEnv[0] != "MCP_TOKEN_TEST" {
+		t.Fatalf("readiness=%+v err=%v", got.Readiness, err)
+	}
+	vars["MCP_TOKEN_TEST"] = "tok-1"
+	if got, err = r.s.flows.Get(t.Context(), a.ID); err != nil || got.Readiness.State != flow.ReadinessReady {
+		t.Fatalf("readiness=%+v err=%v", got.Readiness, err)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,7 +22,13 @@ var ErrNotFound = sql.ErrNoRows
 type Service struct {
 	store *storage.Store
 	av    Availability
+	// tokenSet reports whether an MCP token variable has a value; nil counts
+	// every variable as set.
+	tokenSet func(name string) bool
 }
+
+// SetTokenEnv makes readiness report MCP servers whose token variable is unset.
+func (s *Service) SetTokenEnv(isSet func(name string) bool) { s.tokenSet = isSet }
 
 func NewService(store *storage.Store, av Availability) *Service {
 	return &Service{store: store, av: av}
@@ -477,6 +484,7 @@ func (s *Service) flowReadiness(ctx context.Context, version storage.FlowVersion
 	snapshots := make([]MCPToolSnapshot, 0, len(selections))
 	requiredFailure := ""
 	optionalWarning := false
+	var missing []string
 	for _, selection := range selections {
 		state := "ready"
 		currentHash := ""
@@ -485,6 +493,9 @@ func (s *Service) flowReadiness(ctx context.Context, version storage.FlowVersion
 			state = "server_unavailable"
 		} else if !server.Enabled {
 			state = "server_disabled"
+		} else if server.AuthEnv != "" && s.tokenSet != nil && !s.tokenSet(server.AuthEnv) {
+			state = "auth_env_missing"
+			missing = append(missing, server.AuthEnv)
 		} else if server.ValidationState != "healthy" || server.LatestDiscoveryID == "" {
 			state = "server_unavailable"
 		} else {
@@ -529,7 +540,8 @@ func (s *Service) flowReadiness(ctx context.Context, version storage.FlowVersion
 		}
 		snapshots = append(snapshots, MCPToolSnapshot{ServerID: server.ID, ServerName: server.Name, Endpoint: server.Endpoint, Transport: server.Transport, AuthEnv: server.AuthEnv, RemoteName: selection.RemoteName, SchemaJSON: json.RawMessage(schema), SchemaHash: selection.SchemaHash, Required: selection.Required})
 	}
-	base := Readiness{State: ReadinessReady, Reasons: []string{}, ToolDependencies: dependencies}
+	slices.Sort(missing)
+	base := Readiness{State: ReadinessReady, Reasons: []string{}, ToolDependencies: dependencies, MissingEnv: slices.Compact(missing)}
 	if requiredFailure != "" {
 		base.State = requiredFailure
 		base.Reasons = []string{"required_tool_unavailable"}

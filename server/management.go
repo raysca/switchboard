@@ -84,6 +84,7 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	// The production provider check and the recording sink can still fail:
 	// both run before anything points at the store fail() closes.
 	flows := flow.NewService(store, s.availability)
+	flows.SetTokenEnv(func(n string) bool { return s.env(n) != "" })
 	if bad := s.unavailableFlowProviders(ctx, flows); len(bad) > 0 {
 		for _, b := range bad {
 			s.logger.Error("flow references a provider this build cannot run", slog.String("problem", b))
