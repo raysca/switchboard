@@ -532,6 +532,23 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 		return nil, &ws.RejectError{Reason: admissionReason(err), Err: err}
 	}
 
+	// A panic from here until the call is registered (flow resolution, a provider
+	// constructor) releases what setup acquired, then propagates to onSessionReady.
+	var fail func(error) (*core.Session, error)
+	registered := false
+	defer func() {
+		if r := recover(); r != nil {
+			switch { // once registered, finishCall owns the release
+			case registered:
+			case fail != nil:
+				_, _ = fail(errors.New("call setup panicked"))
+			default:
+				s.admission.ReleaseSession(principal, flowID)
+			}
+			panic(r)
+		}
+	}()
+
 	sessionID := s.nextCallID.Add(1)
 	timeline := s.timelines.GetOrCreate(sessionID)
 	timeline.Record(TimelineEvent{Type: EventConnect, Details: "websocket connected"})
@@ -585,7 +602,7 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 	var stopRecording func()
 	var pipe *core.Pipeline
 	var session *core.Session
-	fail := func(err error) (*core.Session, error) {
+	fail = func(err error) (*core.Session, error) {
 		// Release provider clients: the session closes its processors, and
 		// before a session exists the built pipeline's processors are closed here.
 		if session != nil {
@@ -808,6 +825,7 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 		s.live.Delete(call.StoredSessionID) // gone for operators before teardown work starts
 		s.finishCall(sessionID, principal, flowID, session, conn, timeline, errProviders, ending, releaseCall, stopRecording)
 	}()
+	registered = true
 
 	s.metrics.SessionsStartedTotal.Add(1)
 
