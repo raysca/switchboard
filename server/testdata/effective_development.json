@@ -26,7 +26,8 @@
  },
  "MCP": {
   "AllowLocalHTTP": true,
-  "Timeout": 15000000000
+  "Timeout": 15000000000,
+  "SyncInterval": 300000000000
  },
  "Demo": {
   "AutoInstall": ""

@@ -50,6 +50,9 @@ func ValidateConfig(cfg *Config) error {
 	if err := cfg.Warmup.Validate(); err != nil {
 		return err
 	}
+	if d := cfg.MCP.SyncInterval; d != 0 && (d < 30*time.Second || d > 24*time.Hour) {
+		return fmt.Errorf("mcp.sync_interval must be 0 (off) or between 30s and 24h, got %v", d)
+	}
 	return validateRetentionAndRecording(cfg)
 }
 

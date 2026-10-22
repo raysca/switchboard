@@ -27,6 +27,8 @@ func TestMetrics_ExpositionFormatAndBoundedLabels(t *testing.T) {
 	m.LeakedSessionsTotal.Add(1)
 	m.LLMCircuitStateGoogle.Store(0)
 	m.LLMCircuitStateXAI.Store(1)
+	m.MCPSyncOKTotal.Add(3)
+	m.MCPSyncFailedTotal.Add(1)
 
 	var buf bytes.Buffer
 	m.WritePrometheus(&buf)
@@ -41,6 +43,8 @@ func TestMetrics_ExpositionFormatAndBoundedLabels(t *testing.T) {
 		"voice_leaked_sessions_total 1",
 		"voice_llm_circuit_state{provider=\"google\"} 0",
 		"voice_llm_circuit_state{provider=\"xai\"} 1",
+		"voice_mcp_sync_total{result=\"ok\"} 3",
+		"voice_mcp_sync_total{result=\"failed\"} 1",
 		"voice_process_goroutines",
 		"voice_process_heap_bytes",
 	}

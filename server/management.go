@@ -25,6 +25,7 @@ type management struct {
 	store     *storage.Store
 	traces    *trace.Adapter
 	retention *retention.Job
+	mcpSync   *mcp.Syncer
 	recStop   context.CancelFunc // ends the recording janitor
 }
 
@@ -113,6 +114,16 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	} else {
 		s.logger.Warn("retention disabled: stored transcripts and traces are kept indefinitely")
 	}
+	if d := s.cfg.MCP.SyncInterval; d > 0 {
+		m.mcpSync = mcp.NewSyncer(mcpService, d, s.logger, func(ok bool) {
+			if ok {
+				s.metrics.MCPSyncOKTotal.Add(1)
+			} else {
+				s.metrics.MCPSyncFailedTotal.Add(1)
+			}
+		})
+		m.mcpSync.Start()
+	}
 	if sink != nil {
 		s.recSink = sink
 		jctx, stop := context.WithCancel(context.Background())
@@ -159,10 +170,20 @@ func (s *Server) unavailableFlowProviders(ctx context.Context, flows *flow.Servi
 	}
 }
 
+// stopSync ends the background MCP sync, waiting at most until ctx ends.
+func (m *management) stopSync(ctx context.Context) {
+	if m != nil && m.mcpSync != nil {
+		_ = m.mcpSync.Stop(ctx)
+	}
+}
+
 func (m *management) close() {
 	if m == nil {
 		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	m.stopSync(ctx) // before the store closes; a no-op once Shutdown stopped it
+	cancel()
 	if m.retention != nil {
 		m.retention.Stop()
 	}

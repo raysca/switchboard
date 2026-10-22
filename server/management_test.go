@@ -36,6 +36,18 @@ func TestEnableManagementWiresAPIsAndRetention(t *testing.T) {
 	if s.mgmt.Load() == nil || s.mgmt.Load().retention == nil {
 		t.Fatal("retention job not started")
 	}
+	if s.mgmt.Load().mcpSync == nil {
+		t.Fatal("MCP background sync not started (mcp.sync_interval defaults to 5m)")
+	}
+}
+
+func TestMCPSyncIntervalZeroStartsNoSyncer(t *testing.T) {
+	s := apiTestServer(t)
+	s.cfg.MCP.SyncInterval = 0
+	enableTestManagement(t, s)
+	if s.mgmt.Load().mcpSync != nil {
+		t.Fatal("mcp.sync_interval 0 started a syncer")
+	}
 }
 
 // enableTestManagement wires a throwaway SQLite flow store into s.

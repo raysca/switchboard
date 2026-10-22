@@ -507,85 +507,92 @@ func (s *Service) span(ctx context.Context, name string) core.Span {
 	return core.StartSpanSafe(ctx, s.tracer, core.NewTraceEvent(name, time.Now(), "", "", 0, core.TracePolicy{Content: core.TraceMetadata}, nil))
 }
 
+// syncResult is what one sync found; writeResult stores it. An empty State
+// means nothing is written (the sync never started).
+type syncResult struct {
+	State                 string
+	Connected, Discovered time.Time
+	Discovery             storage.MCPDiscovery
+	Err                   error
+}
+
+// Refresh syncs one server now and always writes the result (the manual path).
 func (s *Service) Refresh(ctx context.Context, id string) (storage.MCPDiscovery, error) {
 	ctx, cancel := s.timed(ctx)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return storage.MCPDiscovery{}, err
 	}
-	started := time.Now()
-	span := s.span(ctx, "mcp.discovery")
-	ended := false
-	end := func(err error) {
-		if !ended {
-			ended = true
-			span.SetAttribute("mcp.duration_ms", time.Since(started).Milliseconds())
-			span.End(err)
-		}
-	}
-	defer end(nil)
 	m, err := s.Get(ctx, id)
 	if err != nil {
-		end(err)
 		return storage.MCPDiscovery{}, err // ErrNotFound, or a store failure
 	}
+	r := s.syncServer(ctx, m)
+	s.writeResult(ctx, m.ID, r)
+	return r.Discovery, r.Err
+}
+
+func (s *Service) writeResult(ctx context.Context, id string, r syncResult) {
+	if r.State != "" {
+		_ = s.store.MCP().SetValidation(context.WithoutCancel(ctx), id, r.State, r.Connected, r.Discovered)
+	}
+}
+
+// syncServer connects to m and stores its tool list as a discovery (unchanged
+// tools reuse the latest one). It writes no validation state: the caller does.
+func (s *Service) syncServer(ctx context.Context, m storage.MCPServer) syncResult {
+	if err := ctx.Err(); err != nil {
+		return syncResult{Err: err}
+	}
+	started := time.Now()
+	span := s.span(ctx, "mcp.discovery")
+	end := func(err error) {
+		span.SetAttribute("mcp.duration_ms", time.Since(started).Milliseconds())
+		span.End(err)
+	}
+	fail := func(state string, connected time.Time, spanErr, err error) syncResult {
+		end(spanErr)
+		return syncResult{State: state, Connected: connected, Err: err}
+	}
 	if !m.Enabled {
-		_ = s.store.MCP().SetValidation(ctx, m.ID, StateDisabled, time.Time{}, time.Time{})
-		end(ErrUnavailable)
-		return storage.MCPDiscovery{}, ErrUnavailable
+		return fail(StateDisabled, time.Time{}, ErrUnavailable, ErrUnavailable)
 	}
 	u, err := s.endpoint(ctx, m)
 	if err != nil {
-		_ = s.store.MCP().SetValidation(ctx, m.ID, StateConnectionFailed, time.Time{}, time.Time{})
-		end(err)
-		return storage.MCPDiscovery{}, ErrUnavailable
+		return fail(StateConnectionFailed, time.Time{}, err, ErrUnavailable)
 	}
 	token, err := s.token(m)
 	if err != nil {
-		_ = s.store.MCP().SetValidation(ctx, m.ID, StateAuthenticationFailed, time.Time{}, time.Time{})
-		end(err)
-		return storage.MCPDiscovery{}, ErrUnavailable
+		return fail(StateAuthenticationFailed, time.Time{}, err, ErrUnavailable)
 	}
 	tools, err := s.remote.ListTools(ctx, u.String(), token)
 	if err != nil {
-		state := validationStateForError(err, true)
-		_ = s.store.MCP().SetValidation(context.WithoutCancel(ctx), m.ID, state, time.Time{}, time.Time{})
-		end(safeCategory(err))
-		return storage.MCPDiscovery{}, ErrUnavailable
+		return fail(validationStateForError(err, true), time.Time{}, safeCategory(err), ErrUnavailable)
 	}
 	if len(tools) > maxToolsPerDiscovery {
-		_ = s.store.MCP().SetValidation(context.WithoutCancel(ctx), m.ID, StateDiscoveryFailed, time.Now(), time.Time{})
-		end(ErrInvalidSchema)
-		return storage.MCPDiscovery{}, ErrInvalidSchema
+		return fail(StateDiscoveryFailed, time.Now(), ErrInvalidSchema, ErrInvalidSchema)
 	}
 	items := make([]storage.MCPTool, 0, len(tools))
 	for _, tool := range tools {
 		if len(tool.InputSchema) == 0 || len(tool.InputSchema) > defaultMaxSchemaBytes || strings.TrimSpace(tool.Name) == "" || len(tool.Name) > 256 || len(tool.Description) > 4096 {
-			_ = s.store.MCP().SetValidation(context.WithoutCancel(ctx), m.ID, StateSchemaInvalid, time.Now(), time.Time{})
-			end(ErrInvalidSchema)
-			return storage.MCPDiscovery{}, ErrInvalidSchema
+			return fail(StateSchemaInvalid, time.Now(), ErrInvalidSchema, ErrInvalidSchema)
 		}
 		if _, err := validateSchemaContext(ctx, tool.InputSchema, defaultMaxSchemaBytes); err != nil {
-			_ = s.store.MCP().SetValidation(context.WithoutCancel(ctx), m.ID, StateSchemaInvalid, time.Now(), time.Time{})
-			end(ErrInvalidSchema)
-			return storage.MCPDiscovery{}, ErrInvalidSchema
+			return fail(StateSchemaInvalid, time.Now(), ErrInvalidSchema, ErrInvalidSchema)
 		}
 		items = append(items, storage.MCPTool{RemoteName: tool.Name, Description: tool.Description, SchemaJSON: tool.InputSchema})
 	}
-	if ctx.Err() != nil {
-		_ = s.store.MCP().SetValidation(context.WithoutCancel(ctx), m.ID, StateConnectionFailed, time.Now(), time.Time{})
-		end(ctx.Err())
-		return storage.MCPDiscovery{}, ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return fail(StateConnectionFailed, time.Now(), err, err)
 	}
 	d, err := s.store.MCP().AddDiscovery(ctx, m.ID, items)
 	if err != nil {
-		_ = s.store.MCP().SetValidation(context.WithoutCancel(ctx), m.ID, StateDiscoveryFailed, time.Now(), time.Time{})
-		end(ErrInvalidSchema)
-		return storage.MCPDiscovery{}, ErrInvalidSchema
+		return fail(StateDiscoveryFailed, time.Now(), ErrInvalidSchema, ErrInvalidSchema)
 	}
-	_ = s.store.MCP().SetValidation(ctx, m.ID, StateHealthy, time.Now(), time.Now())
 	span.SetAttribute("mcp.tool_count", len(items))
-	return d, nil
+	end(nil)
+	now := time.Now()
+	return syncResult{State: StateHealthy, Connected: now, Discovered: now, Discovery: d}
 }
 
 func (s *Service) Validate(ctx context.Context, id string) (storage.MCPServer, error) {

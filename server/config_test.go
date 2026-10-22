@@ -342,3 +342,22 @@ func TestTurnAnalyzerStopSecsKeepsItsYAMLKey(t *testing.T) {
 		t.Fatalf("stop_secs loaded as %v", cfg.Turn.Analyzer.Hold)
 	}
 }
+
+func TestConfig_MCPSyncInterval(t *testing.T) {
+	cfg := DefaultConfig(ProfileDevelopment)
+	if cfg.MCP.SyncInterval != 5*time.Minute {
+		t.Fatalf("mcp.sync_interval default = %v, want 5m", cfg.MCP.SyncInterval)
+	}
+	for _, d := range []time.Duration{0, 30 * time.Second, 24 * time.Hour} {
+		cfg.MCP.SyncInterval = d
+		if err := ValidateConfig(cfg); err != nil {
+			t.Fatalf("mcp.sync_interval %v: %v", d, err)
+		}
+	}
+	for _, d := range []time.Duration{-time.Second, 10 * time.Second, 48 * time.Hour} {
+		cfg.MCP.SyncInterval = d
+		if err := ValidateConfig(cfg); err == nil || !strings.Contains(err.Error(), "mcp.sync_interval") {
+			t.Fatalf("mcp.sync_interval %v: err = %v, want one naming mcp.sync_interval", d, err)
+		}
+	}
+}

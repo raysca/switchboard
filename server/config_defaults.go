@@ -44,6 +44,7 @@ func DefaultConfig(profile Profile) *Config {
 	cfg.Limits.PingTimeout = 10 * time.Second
 	cfg.Limits.DrainTimeout = 30 * time.Second
 	cfg.MCP.Timeout = 15 * time.Second
+	cfg.MCP.SyncInterval = 5 * time.Minute
 
 	// VAD defaults based on profile
 	if profile == ProfileProduction {

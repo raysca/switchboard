@@ -61,9 +61,12 @@ type Config struct {
 	// MCP: remote tool servers. AllowLocalHTTP also allows http or https to loopback
 	// test servers (development and tests only; the production profile refuses it).
 	// Timeout bounds discovery and each tool call (default 15s, at most 2m).
+	// SyncInterval re-syncs every enabled server in the background (default 5m;
+	// 0 = off; otherwise 30s to 24h).
 	MCP struct {
 		AllowLocalHTTP bool          `yaml:"allow_local_http"`
 		Timeout        time.Duration `yaml:"timeout"`
+		SyncInterval   time.Duration `yaml:"sync_interval"`
 	} `yaml:"mcp"`
 
 	// Demo installs at start-up (the admin UI button works without it).

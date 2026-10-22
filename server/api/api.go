@@ -86,6 +86,7 @@ type ServerConfig struct {
 	MaxSessions                  int    `json:"max_sessions"`
 	MaxCallDurationSeconds       int    `json:"max_call_duration_seconds"`
 	VoiceTokenMaxLifetimeSeconds int    `json:"voice_token_max_lifetime_seconds"`
+	MCPSyncIntervalSeconds       int    `json:"mcp_sync_interval_seconds"` // 0: automatic MCP syncs are off
 	ClientIP                     string `json:"client_ip"`
 	Secure                       bool   `json:"secure"`
 	// Audio and Idle tell the editor what a flow can choose from and what a call does when the flow says

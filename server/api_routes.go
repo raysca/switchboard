@@ -50,6 +50,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			Profile: string(s.cfg.Profile), MaxSessions: s.cfg.Limits.MaxSessions,
 			MaxCallDurationSeconds:       int(s.cfg.Limits.MaxCallDuration.Seconds()),
 			VoiceTokenMaxLifetimeSeconds: int(s.effectiveVoiceTokenLifetime().Seconds()),
+			MCPSyncIntervalSeconds:       int(s.cfg.MCP.SyncInterval.Seconds()),
 			ClientIP:                     s.clientIP(r), Secure: s.secure(r),
 			Audio: api.ServerAudio{Backgrounds: append([]string{}, policyFrom(s.cfg).sounds...), Cues: append([]string{}, policyFrom(s.cfg).cues...), AllowFlowBackground: s.cfg.Audio.AllowFlowBackground, BackgroundDefault: s.cfg.Audio.BackgroundDefault},
 			Idle:  api.ServerIdle{UserTimeoutMS: int(s.cfg.Idle.UserTimeout.Milliseconds()), MaxPrompts: s.cfg.Idle.MaxPrompts, PromptMode: cmp.Or(s.cfg.Idle.PromptMode, "llm")},

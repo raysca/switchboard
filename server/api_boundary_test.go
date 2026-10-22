@@ -405,12 +405,16 @@ func TestVoiceTokenLifetimeFollowsTheConfiguredMaximum(t *testing.T) {
 	}
 	var sc struct {
 		Data struct {
-			Lifetime int `json:"voice_token_max_lifetime_seconds"`
+			Lifetime int  `json:"voice_token_max_lifetime_seconds"`
+			MCPSync  *int `json:"mcp_sync_interval_seconds"`
 		} `json:"data"`
 	}
 	_ = json.Unmarshal(apiRequest(s, "GET", "/api/v1/server-config", "management-test-key-32-bytes-long-and-separate", "").Body.Bytes(), &sc)
 	if sc.Data.Lifetime != 180 {
 		t.Fatalf("server-config reports %d s", sc.Data.Lifetime)
+	}
+	if want := int(s.cfg.MCP.SyncInterval.Seconds()); sc.Data.MCPSync == nil || *sc.Data.MCPSync != want {
+		t.Fatalf("server-config mcp_sync_interval_seconds = %v, want %d", sc.Data.MCPSync, want)
 	}
 }
 

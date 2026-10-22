@@ -122,9 +122,13 @@ type Metrics struct {
 	// AsyncToolTurnsTotal / AsyncToolResultsDroppedTotal mirror core.AsyncTrigger.
 	AsyncToolTurnsTotal          atomic.Uint64
 	AsyncToolResultsDroppedTotal atomic.Uint64
-	filters                      filterMetrics
-	summary                      summaryMetrics
-	route                        routeMetrics
+
+	// MCPSyncOKTotal / MCPSyncFailedTotal count background MCP server syncs.
+	MCPSyncOKTotal, MCPSyncFailedTotal atomic.Uint64
+
+	filters filterMetrics
+	summary summaryMetrics
+	route   routeMetrics
 	// completion verdicts: complete, incomplete_short, incomplete_long, no_marker.
 	completion [4]atomic.Uint64
 }
@@ -340,6 +344,9 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 		fmt.Fprintf(w, "voice_turn_completion_total{verdict=%q} %d\n", v, m.completion[i].Load())
 	}
 	fmt.Fprintf(w, "# HELP voice_async_tool_results_dropped_total Finished async tool results or operator context notes that could not be injected (session closing, context budget).\n# TYPE voice_async_tool_results_dropped_total counter\nvoice_async_tool_results_dropped_total %d\n", m.AsyncToolResultsDroppedTotal.Load())
+	fmt.Fprintf(w, "# HELP voice_mcp_sync_total Background MCP server syncs by result.\n# TYPE voice_mcp_sync_total counter\n")
+	fmt.Fprintf(w, "voice_mcp_sync_total{result=\"ok\"} %d\n", m.MCPSyncOKTotal.Load())
+	fmt.Fprintf(w, "voice_mcp_sync_total{result=\"failed\"} %d\n", m.MCPSyncFailedTotal.Load())
 
 	for _, c := range []struct {
 		name, help string
