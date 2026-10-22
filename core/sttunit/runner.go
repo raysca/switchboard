@@ -131,6 +131,9 @@ func (st *stream) event(name string) {
 }
 
 func (st *stream) endTrace(err error) {
+	if errors.Is(err, errCanceled) { // cancelled/closed streams end complete, not failed
+		err = nil
+	}
 	st.traceEnd.Do(func() {
 		if st.span == nil {
 			return

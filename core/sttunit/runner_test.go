@@ -756,6 +756,14 @@ func (s *syncBuf) String() string {
 type spanTracer struct {
 	mu   sync.Mutex
 	done map[string]bool
+	errs map[string][]error
+}
+
+// endErrs returns the errors the named span ended with, one per End.
+func (t *spanTracer) endErrs(name string) []error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]error(nil), t.errs[name]...)
 }
 
 func (t *spanTracer) StartSpan(_ context.Context, ev core.TraceEvent) core.Span {
@@ -775,12 +783,14 @@ type recSpan struct {
 
 func (*recSpan) SetAttribute(string, any) {}
 func (*recSpan) AddEvent(core.TraceEvent) {}
-func (s *recSpan) End(error) {
+func (s *recSpan) End(err error) {
 	s.t.mu.Lock()
 	defer s.t.mu.Unlock()
 	if s.t.done == nil {
 		s.t.done = map[string]bool{}
+		s.t.errs = map[string][]error{}
 	}
+	s.t.errs[s.name] = append(s.t.errs[s.name], err)
 	s.t.done[s.name] = true
 }
 
@@ -1225,5 +1235,55 @@ func TestRunner_StoppedStreamEmitsNothing(t *testing.T) {
 	time.Sleep(50 * time.Millisecond) // a bounded wait for something that must not happen
 	if c := h.candidates(); len(c) != 0 {
 		t.Fatalf("a stopped stream emitted %+v", c)
+	}
+}
+
+// A stream cancelled by the session closing is not a failure: its span ends
+// complete (nil), or every call would export an errored STT span.
+func TestRunner_CancelledStreamSpanEndsComplete(t *testing.T) {
+	conn := newFakeConn(t)
+	tr := &spanTracer{}
+	h := newHarnessTraced(t, Config{Dial: dialConn(conn)}, core.DefaultResourceBudget(), tr)
+	h.audio(1) // idle audio: an unbound stream, open until hangup
+	h.waitFor("open", func() bool { return conn.recvs.Load() >= 1 })
+	_ = h.sess.Close()
+	h.waitFor("span ended", func() bool { return tr.ended("stt.stream") })
+	if errs := tr.endErrs("stt.stream"); len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("cancelled stream span ended with %v, want one nil", errs)
+	}
+}
+
+// A failed dial still ends the span as a failure.
+func TestRunner_FailedDialSpanEndsFailed(t *testing.T) {
+	tr := &spanTracer{}
+	h := newHarnessTraced(t, Config{Dial: func(context.Context) (Conn, error) { return nil, errors.New("refused") }}, core.DefaultResourceBudget(), tr)
+	h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	h.waitFor("error frame", func() bool { return len(h.errorFrames()) == 1 })
+	h.waitFor("span ended", func() bool { return tr.ended("stt.stream") })
+	if errs := tr.endErrs("stt.stream"); len(errs) != 1 || errs[0] == nil {
+		t.Fatalf("failed dial span ended with %v, want one error", errs)
+	}
+}
+
+// stop with the cancel sentinel (session closed while opening, flush stopped) ends the span
+// complete; with a provider failure it ends failed.
+func TestRunner_StopCancelSentinelEndsComplete(t *testing.T) {
+	for _, tc := range []struct {
+		err    error
+		failed bool
+	}{{errCanceled, false}, {errProviderFailure, true}} {
+		conn := newFakeConn(t)
+		tr := &spanTracer{}
+		h := newHarnessTraced(t, Config{Dial: dialConn(conn)}, core.DefaultResourceBudget(), tr)
+		h.audio(1)
+		h.waitFor("open", func() bool { return conn.recvs.Load() >= 1 })
+		h.r.mu.Lock()
+		st := h.r.active
+		h.r.mu.Unlock()
+		h.r.stop(st, tc.err)
+		h.waitFor("span ended", func() bool { return tr.ended("stt.stream") })
+		if errs := tr.endErrs("stt.stream"); len(errs) != 1 || (errs[0] != nil) != tc.failed {
+			t.Fatalf("stop(%v): span ended with %v", tc.err, errs)
+		}
 	}
 }

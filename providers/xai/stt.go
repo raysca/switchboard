@@ -235,7 +235,15 @@ func (st *activeSTTStream) firstFinal(turn string, gen uint64) {
 		st.traceSpan.AddEvent(core.NewTraceEvent("stt.first_final", time.Now(), st.traceSession, core.TurnID(turn), core.Generation(gen), st.tracePolicy, nil))
 	})
 }
+
+// errCanceled marks a stream that ended because the call, stream or session was cancelled,
+// closed or rotated: its span ends complete, not failed.
+var errCanceled = errors.New("canceled")
+
 func (st *activeSTTStream) endTrace(err error) {
+	if errors.Is(err, errCanceled) {
+		err = nil
+	}
 	st.traceEnd.Do(func() {
 		if st.traceSpan == nil {
 			return
@@ -511,14 +519,14 @@ func (p *STTProcessor) ensure(ctx context.Context) error {
 	if p.closed || p.active != nil {
 		p.mu.Unlock()
 		cancel()
-		span.End(errors.New("canceled"))
+		span.End(nil)
 		return nil
 	}
 	if p.live >= maxLiveStreams { // earlier opens are still hanging: lose this turn, keep the session's tasks
 		p.dialFailed = true
 		p.mu.Unlock()
 		cancel()
-		span.End(errors.New("canceled"))
+		span.End(errors.New("provider_failure"))
 		p.refuseOpen(turn, gen, errTooManyStreams)
 		return nil
 	}
@@ -541,7 +549,7 @@ func (p *STTProcessor) ensure(ctx context.Context) error {
 		p.mu.Unlock()
 		p.releaseStream(st)
 		p.stopStream(st)
-		st.endTrace(errors.New("canceled"))
+		st.endTrace(errCanceled)
 		if errors.Is(err, core.ErrSessionClosed) {
 			return nil
 		}
@@ -615,7 +623,7 @@ func (p *STTProcessor) run(ctx context.Context, st *activeSTTStream) {
 	if st.ctx.Err() != nil { // stopped while opening: stopStream had no stream to close
 		_ = s.Close()
 		p.releaseStream(st)
-		st.endTrace(errors.New("canceled"))
+		st.endTrace(errCanceled)
 		return
 	}
 	st.traceSpan.AddEvent(core.NewTraceEvent("stt.start", time.Now(), st.traceSession, core.TurnID(turn), core.Generation(gen), st.tracePolicy, nil))
@@ -635,7 +643,7 @@ func (p *STTProcessor) openFailed(st *activeSTTStream, err error) {
 	p.releaseStream(st)
 	p.stopStream(st)
 	if stopped {
-		st.endTrace(errors.New("canceled"))
+		st.endTrace(errCanceled)
 		return
 	}
 	st.endTrace(errors.New("provider_failure"))
@@ -674,7 +682,7 @@ func (p *STTProcessor) receive(ctx context.Context, st *activeSTTStream) {
 		msg, err := st.stream.Recv(st.ctx)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || st.ctx.Err() != nil {
-				traceFailure = errors.New("canceled")
+				traceFailure = errCanceled
 				return
 			}
 			st.mu.Lock()
@@ -754,7 +762,7 @@ func (p *STTProcessor) receive(ctx context.Context, st *activeSTTStream) {
 			}
 			if sendErr != nil {
 				if st.ctx.Err() != nil {
-					traceFailure = errors.New("canceled")
+					traceFailure = errCanceled
 					return
 				}
 				p.ErrorsTotal.Add(1)
