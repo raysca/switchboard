@@ -38,7 +38,8 @@ func TestBootstrapDryRunPrintsThePlanAndNoSecret(t *testing.T) {
 	}
 	for _, want := range []string{
 		"run.googleapis.com", "artifactregistry.googleapis.com", "secretmanager.googleapis.com", "iamcredentials.googleapis.com",
-		"artifacts repositories create govoice", "govoice-runtime", "govoice-deployer",
+		"artifacts repositories create switchboard", "switchboard-runtime", "switchboard-deployer",
+		"sqladmin.googleapis.com", "sql instances create switchboard-db", "sql databases create switchboard", "roles/cloudsql.client",
 		"workload-identity-pools create github", "attribute.repository", "assertion.repository=='acme/go-voice'", "assertion.ref=='refs/heads/main'",
 		"roles/run.admin", "roles/iam.workloadIdentityUser",
 	} {
@@ -65,8 +66,8 @@ func TestBootstrapDryRunPrintsThePlanAndNoSecret(t *testing.T) {
 	}
 	// The deployer may read exactly one secret (the management key, for the smoke test), never a provider key.
 	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, "add-iam-policy-binding") && strings.Contains(line, "govoice-deployer") &&
-			strings.Contains(line, "secrets") && !strings.Contains(line, "GOVOICE_MANAGEMENT_API_KEY") {
+		if strings.Contains(line, "add-iam-policy-binding") && strings.Contains(line, "switchboard-deployer") &&
+			strings.Contains(line, "secrets") && !strings.Contains(line, "SWITCHBOARD_MANAGEMENT_API_KEY") {
 			t.Errorf("the deployer must not read other secrets: %s", line)
 		}
 	}
@@ -85,5 +86,44 @@ func TestBootstrapRefusesMissingOrMalformedInput(t *testing.T) {
 	}
 	if out, err := runBootstrap(t, append(bootstrapEnv(t), "GOOGLE_SA_KEY_FILE=/nonexistent/sa.json")); err == nil || !strings.Contains(out, "readable file") {
 		t.Errorf("an unreadable key file must be refused: %v %s", err, out)
+	}
+}
+
+// The database password and its connection URL never reach the output, and only the runtime account may read the DSN secret.
+func TestBootstrapKeepsTheDatabaseSecretToTheRuntimeAccount(t *testing.T) {
+	out, err := runBootstrap(t, bootstrapEnv(t))
+	if err != nil {
+		t.Fatalf("dry run failed: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "postgres://") {
+		t.Fatalf("the dry run printed a connection URL:\n%s", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "add-iam-policy-binding SWITCHBOARD_DATABASE_DSN") && !strings.Contains(line, "serviceAccount:switchboard-runtime@") {
+			t.Errorf("only the runtime account may read the database secret: %s", line)
+		}
+	}
+	if !strings.Contains(out, "--deletion-protection") {
+		t.Error("the Cloud SQL instance must be created with deletion protection")
+	}
+}
+
+func TestBootstrapMountsOnlyTheOptionalProvidersThatAreSet(t *testing.T) {
+	out, err := runBootstrap(t, append(bootstrapEnv(t), "OPENAI_API_KEY=SENTINEL-OPENAI"))
+	if err != nil {
+		t.Fatalf("dry run failed: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "SENTINEL-OPENAI") {
+		t.Fatalf("the dry run printed a provider key:\n%s", out)
+	}
+	for _, want := range []string{"create secret OPENAI_API_KEY", "secrets add-iam-policy-binding OPENAI_API_KEY --member=serviceAccount:switchboard-runtime@demo-proj", "GCP_PROVIDER_SECRETS=OPENAI_API_KEY"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("plan lacks %q", want)
+		}
+	}
+	for _, other := range []string{"DEEPGRAM_API_KEY", "CARTESIA_API_KEY", "NVIDIA_API_KEY"} {
+		if strings.Contains(out, other) {
+			t.Errorf("%s was not set and must not be in the plan", other)
+		}
 	}
 }

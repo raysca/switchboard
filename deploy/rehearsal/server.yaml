@@ -6,7 +6,7 @@
 #   mcp                       (allow_local_http + a short timeout)
 # Everything else must stay identical to the real thing.
 # Cloud Run: ONE service, ONE public port (8080). The management API and the admin UI are served
-# on it behind the management key (public_admin). One instance, SQLite on the instance's memory
+# on it behind the management key (public_admin). One instance; flows and call history in Postgres (Cloud SQL in production, the compose postgres here)
 # disk: the demo is rebuilt by demo.auto_install on every start.
 profile: development
 
@@ -85,9 +85,9 @@ observability:
   timeline_max_events: 1000
   timeline_ttl: 15m
 
-# GOVOICE_DATABASE_DSN is the file path, e.g. /tmp/govoice.db (Cloud Run's writable in-memory disk).
+# GOVOICE_DATABASE_DSN is a postgres:// URL (set in docker-compose.yaml for the rehearsal).
 storage:
-  dialect: "sqlite"
+  dialect: "postgres"
 
 retention:
   enabled: true

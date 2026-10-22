@@ -1,6 +1,7 @@
 # Cloud Run: ONE service, ONE public port (8080). The management API and the admin UI are served
-# on it behind the management key (public_admin). One instance, SQLite on the instance's memory
-# disk: the demo is rebuilt by demo.auto_install on every start.
+# on it behind the management key (public_admin). One instance (live calls are in memory); flows and
+# call history are in Cloud SQL (Postgres) through the unix socket Cloud Run mounts, so they survive
+# deploys and restarts. The dentistry demo is (re)installed by demo.auto_install on every start.
 profile: production
 
 public_listen_addr: "0.0.0.0:8080"
@@ -75,9 +76,10 @@ observability:
   timeline_max_events: 1000
   timeline_ttl: 15m
 
-# GOVOICE_DATABASE_DSN is the file path, e.g. /tmp/govoice.db (Cloud Run's writable in-memory disk).
+# GOVOICE_DATABASE_DSN is a postgres:// URL (the SWITCHBOARD_DATABASE_DSN secret), e.g.
+# postgres://switchboard:<password>@/switchboard?host=/cloudsql/<project>:<region>:switchboard-db&sslmode=disable
 storage:
-  dialect: "sqlite"
+  dialect: "postgres"
 
 retention:
   enabled: true

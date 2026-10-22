@@ -54,7 +54,7 @@ Compose publishes 8080 and 9092 on `127.0.0.1` only. It does **not** publish 909
 
 - Limits as shipped: compose caps the server at 4 CPU and 4096M (reservation 1 CPU and 1024M); the Cloud Run manifest sets 2 CPU and 2Gi, and `config/cloudrun.yaml` sets `max_sessions: 10`.
 
-<!-- src: deploy/docker-compose.yaml:50-57; deploy/gcp/govoice.service.yaml:32-35; config/cloudrun.yaml:41 -->
+<!-- src: deploy/docker-compose.yaml:50-57; deploy/gcp/switchboard.service.yaml:32-35; config/cloudrun.yaml:41 -->
 
 - Google speech quota: about 100 concurrently speaking calls per project for Chirp 3 HD streaming (see [operations.md](operations.md#tts-streaming)).
 
@@ -87,7 +87,7 @@ Compose publishes 8080 and 9092 on `127.0.0.1` only. It does **not** publish 909
 | File | Used by | What it sets |
 |---|---|---|
 | `config/production.yaml` | the image default, Compose, systemd | Postgres store; probe listener on 9092; trusted proxies `127.0.0.1/32`, `::1/128`, `172.16.0.0/12` (covers the compose subnet `172.28.0.0/16`); `max_sessions: 250`, `max_pending_handshakes: 100`; `drain_timeout: 45s`; `max_call_duration: 60m`; VAD `process` mode with 8 workers; retention on (7 days content, 30 days metadata); `idle.user_timeout: 30s` |
-| `config/cloudrun.yaml` | the Cloud Run demo | `public_admin` on; SQLite; `max_sessions: 10`; `max_call_duration: 20m`; trusted proxy `169.254.0.0/16`; `origin_allow_same_host: true` with an empty `origin_allowlist`; probe listener off; 2 VAD workers; retention 1 day and 7 days; `demo.auto_install: dental` |
+| `config/cloudrun.yaml` | the Cloud Run demo | `public_admin` on; Postgres (Cloud SQL); `max_sessions: 10`; `max_call_duration: 20m`; trusted proxy `169.254.0.0/16`; `origin_allow_same_host: true` with an empty `origin_allowlist`; probe listener off; 2 VAD workers; retention 1 day and 7 days; `demo.auto_install: dental` |
 | `config/development.yaml` | local development only | in-process VAD, an origin allowlist that includes `*`, `mcp.allow_local_http` |
 | `config/perf.yaml` | `deploy/docker-compose.perf.yaml` | the echo-provider performance stack |
 | `deploy/rehearsal/server.yaml` | the local Cloud Run rehearsal | `cloudrun.yaml` with the development profile; a test enforces that it differs only in profile, `tls` and `mcp` |
@@ -145,7 +145,7 @@ The variables an operator sets for the shipped server and scripts. Provider secr
 | `DENTAL_MCP_URL` | demo only | server | Needed by `demo.auto_install: dental` |
 | `POSTGRES_PASSWORD` | Compose only | compose file | URL-safe (for example `openssl rand -hex 24`) |
 | `DENTAL_MCP_TOKEN`, `PORT` | `dental-mcp` image | `cmd/dental-mcp` | Token is required; `PORT` defaults to 8081 |
-| `PROJECT_ID`, `GITHUB_REPO`, `GOOGLE_SA_KEY_FILE`, `REGION`, `AR_REPO`, `BILLING_ACCOUNT`, `BUDGET_USD`, `DRY_RUN` (and `XAI_API_KEY`, `ELEVENLABS_API_KEY`, `GOOGLE_API_KEY`) | one-time Cloud Run bootstrap only | `deploy/gcp/bootstrap.sh` | See [section 10](#10-path-c-google-cloud-run-the-demo-deployment) |
+| `PROJECT_ID`, `GITHUB_REPO`, `GOOGLE_SA_KEY_FILE`, `REGION`, `AR_REPO`, `SQL_INSTANCE`, `BILLING_ACCOUNT`, `BUDGET_USD`, `DRY_RUN` (and `XAI_API_KEY`, `ELEVENLABS_API_KEY`, `GOOGLE_API_KEY`; optionally `OPENAI_API_KEY`, `DEEPGRAM_API_KEY`, `CARTESIA_API_KEY`, `NVIDIA_API_KEY`) | one-time Cloud Run bootstrap only | `deploy/gcp/bootstrap.sh` | See [section 10](#10-path-c-google-cloud-run-the-demo-deployment) |
 | `SMOKE_IMAGE`, `SMOKE_LOCAL` | smoke scripts only | `deploy/smoke.sh`, `deploy/smoke-cloudrun.sh` | See [section 17](#17-smoke-tests-troubleshooting-and-checklist) |
 
 <!-- src: server/config_validate.go:290-300; server/config.go:81; server/server.go:185-198; server/management.go:38-47,197; vad/silero.go:40-44,62-82,120,131-140; smartturn/model.go:25; deploy/Dockerfile:107-111; deploy/govoice.service:19-21; server/catalog/data/*.yaml; docs/providers.md:11-26; docs/security/mcp.md:9; server/otelexport/otelexport.go:88-100; server/demo_api.go:35,176; deploy/docker-compose.yaml:36-37,67; cmd/dental-mcp/main.go:2,19-23; deploy/gcp/bootstrap.sh:6-10,23; deploy/smoke.sh:15; deploy/smoke-cloudrun.sh:4 -->
@@ -161,7 +161,7 @@ Provider keys, the token secret, the management key and the database password co
 - Cloud Run: Secret Manager secrets created by the bootstrap script and injected with `secretKeyRef` (see [section 10](#10-path-c-google-cloud-run-the-demo-deployment)).
 - The VAD and Smart Turn worker processes get an allowlisted environment that excludes every provider variable.
 
-<!-- src: deploy/docker-compose.yaml:25-37; .gitignore:64; deploy/govoice.service:12-18; deploy/gcp/govoice.service.yaml:43-66; vad/silero.go:129-140 -->
+<!-- src: deploy/docker-compose.yaml:25-37; .gitignore:64; deploy/govoice.service:12-18; deploy/gcp/switchboard.service.yaml:43-66; vad/silero.go:129-140 -->
 
 ## 7. Storage
 
@@ -171,9 +171,9 @@ Provider keys, the token secret, the management key and the database password co
 | Rule | never two processes on one file; never a filesystem without reliable locks | migrations take an advisory lock, so replicas can start together |
 | Backup | online `VACUUM INTO`; verify with `PRAGMA quick_check` and `PRAGMA foreign_key_check` | `pg_dump` or physical backup with point-in-time recovery |
 
-Migrations run forward-only at startup and a failed migration aborts the start. Back up before each upgrade, and restore into an isolated instance with the matching build. Details are in [storage.md](storage.md). The Cloud Run demo keeps SQLite in `/tmp/govoice.db`, which is lost when the instance stops (the demo reinstalls itself on start). Retention settings (`retention.*`, shipped on in `production.yaml`) are described in [privacy.md](privacy.md#server-data-retention-and-privacy-controls).
+Migrations run forward-only at startup and a failed migration aborts the start. Back up before each upgrade, and restore into an isolated instance with the matching build. Details are in [storage.md](storage.md). The Cloud Run deployment keeps flows and call history in Cloud SQL (Postgres, with daily automated backups), so deploys and restarts lose nothing; on each start the dentistry demo is added only if missing (a demo MCP server you disabled is switched back on). Retention settings (`retention.*`, shipped on in `production.yaml`) are described in [privacy.md](privacy.md#server-data-retention-and-privacy-controls).
 
-<!-- src: docs/storage.md (moved up from the former operations directory); former hardening guide §2; server/storage/backup_test.go:19; deploy/gcp/govoice.service.yaml:1-3,44; .github/workflows/deploy.yml:13; config/production.yaml:90-96 -->
+<!-- src: docs/storage.md (moved up from the former operations directory); former hardening guide §2; server/storage/backup_test.go:19; deploy/gcp/switchboard.service.yaml:1-3,44; .github/workflows/deploy.yml:13; config/production.yaml:90-96 -->
 
 ## 8. Path A: Docker Compose (reference production stack)
 
@@ -251,22 +251,30 @@ nginx on a host: `deploy/nginx.conf` is a complete `nginx.conf` (top-level `user
 
 ## 10. Path C: Google Cloud Run (the demo deployment)
 
-This is the deployment the repository automates, and it is a **demo**, not a production reference: one voice-server instance, SQLite on the instance's memory disk, a public `dental-mcp` service and the Smile Dental flow reinstalled on every start. Production-style scaling uses Path A. The shape:
+This is the deployment the repository automates. It is a single-instance deployment, not a scaled production reference: one Switchboard instance (live calls are in memory), flows and call history in a small Cloud SQL Postgres instance, a public `dental-mcp` service and the Smile Dental demo flow reinstalled on every start. Scaling out uses Path A. The shape:
 
-- Voice server (`deploy/gcp/govoice.service.yaml`): `maxScale: 1` (SQLite and live calls are in memory), `minScale` from `MIN_INSTANCES`, CPU always allocated (`cpu-throttling: "false"`), second-generation execution environment, session affinity on, `timeoutSeconds: 3600`, `containerConcurrency: 20`, 2 CPU and 2Gi, a startup probe on `/health:8080`, and `config/cloudrun.yaml` (which caps a call at 20 minutes). It runs `tini -- server -config /etc/govoice/cloudrun.yaml`.
+- Switchboard (`deploy/gcp/switchboard.service.yaml`, service `switchboard`): `maxScale: 1` (live calls are in memory), the Cloud SQL instance `switchboard-db` attached through the Cloud Run mount (the DSN is the `SWITCHBOARD_DATABASE_DSN` secret, a unix-socket URL), `minScale` from `MIN_INSTANCES`, CPU always allocated (`cpu-throttling: "false"`), second-generation execution environment, session affinity on, `timeoutSeconds: 3600`, `containerConcurrency: 20` (above `max_sessions: 10` on purpose, so admin and probe requests never queue behind calls), 2 CPU and 2Gi, a startup probe on `/health:8080`, and `config/cloudrun.yaml` (which caps a call at 20 minutes). It runs `tini -- server -config /etc/govoice/cloudrun.yaml`.
 - `dental-mcp` (`deploy/gcp/dental-mcp.service.yaml`): in-memory fake data, so `maxScale: 1`, scaling to zero, 1 CPU and 256Mi, token from the `DENTAL_MCP_TOKEN` secret.
 
-<!-- src: deploy/gcp/govoice.service.yaml:1-66; deploy/gcp/dental-mcp.service.yaml:1-34; config/cloudrun.yaml:1-4,46 -->
+<!-- src: deploy/gcp/switchboard.service.yaml:1-66; deploy/gcp/dental-mcp.service.yaml:1-34; config/cloudrun.yaml:1-4,46 -->
 
-**One-time setup.** Export the variables listed in [section 5](#5-environment-variables) for the bootstrap (`PROJECT_ID`, `GITHUB_REPO` as `owner/name`, the three provider keys and `GOOGLE_SA_KEY_FILE`; optional `REGION`, default `us-central1`, `AR_REPO`, `BILLING_ACCOUNT` and `BUDGET_USD`), preview with `DRY_RUN=1 deploy/gcp/bootstrap.sh`, then run `deploy/gcp/bootstrap.sh`. It is idempotent and never rotates an existing secret. It enables the APIs it needs, creates an Artifact Registry repository, three service accounts (`govoice-runtime`, `dental-mcp-runtime`, `govoice-deployer`), seven Secret Manager secrets (`XAI_API_KEY`, `ELEVENLABS_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_SA_KEY`, and random `TOKEN_SECRET`, `GOVOICE_MANAGEMENT_API_KEY`, `DENTAL_MCP_TOKEN`) with read access scoped per account, a Workload Identity Federation pool and provider restricted to `GITHUB_REPO` on `refs/heads/main`, the GitHub repository variables `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WIF_PROVIDER` and `GCP_DEPLOYER_SA` (when `gh` is available), and, if `BILLING_ACCOUNT` is set, a budget alert (default 150 USD; the script notes that a warm 2 vCPU and 2 GiB instance alone is about 100 USD a month).
+**One-time setup.** Export the variables listed in [section 5](#5-environment-variables) for the bootstrap (`PROJECT_ID`, `GITHUB_REPO` as `owner/name`, the three demo provider keys and `GOOGLE_SA_KEY_FILE`; optional `REGION`, default `us-central1`, `AR_REPO` and `SQL_INSTANCE`, `BILLING_ACCOUNT` and `BUDGET_USD`, and `OPENAI_API_KEY`, `DEEPGRAM_API_KEY`, `CARTESIA_API_KEY` and `NVIDIA_API_KEY` for more providers), preview with `DRY_RUN=1 deploy/gcp/bootstrap.sh`, then run `deploy/gcp/bootstrap.sh`. It is idempotent and never rotates an existing secret. It enables the APIs it needs, creates an Artifact Registry repository `switchboard`, a Cloud SQL Postgres instance `switchboard-db` (db-f1-micro, about 10 USD a month, with its `switchboard` database and user), three service accounts (`switchboard-runtime`, `dental-mcp-runtime`, `switchboard-deployer`), Secret Manager secrets (`XAI_API_KEY`, `ELEVENLABS_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_SA_KEY`, and generated `TOKEN_SECRET`, `SWITCHBOARD_MANAGEMENT_API_KEY`, `SWITCHBOARD_DATABASE_DSN`, `DENTAL_MCP_TOKEN`, plus one per optional provider key you set) with read access scoped per account (the runtime and deployer accounts also get `roles/cloudsql.client`), a Workload Identity Federation pool and provider restricted to `GITHUB_REPO` on `refs/heads/main`, the GitHub repository variables `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WIF_PROVIDER`, `GCP_DEPLOYER_SA` and `GCP_PROVIDER_SECRETS` (the optional provider secrets the deploy mounts; when `gh` is available), and, if `BILLING_ACCOUNT` is set, a budget alert (default 150 USD; a warm 2 vCPU and 2 GiB instance is about 100 USD a month and Cloud SQL about 10).
 
 <!-- src: deploy/gcp/bootstrap.sh:1-134 -->
 
-**Continuous deploy** (`.github/workflows/deploy.yml`). It runs after the `ci` workflow succeeds for a push to `main` in this repository, or by `workflow_dispatch` from `main` with a `min_instances` input (default 1; 0 stops idle spend and loses nothing, because the demo reinstalls on start). It authenticates with Workload Identity Federation (no GCP key is stored in GitHub), builds both images tagged with the commit SHA, deploys `dental-mcp`, deploys the voice server as a `candidate` revision with 0% traffic, runs `deploy/smoke-cloudrun.sh` against the candidate, and only then moves traffic to it and removes the tag. A failed smoke test removes the tag and leaves the previous revision serving. The first deploy (no previous revision) has no candidate step. Both services are granted the `allUsers` invoker role, so they are public: the management key and voice tokens are the protection.
+**Continuous deploy** (`.github/workflows/deploy.yml`). It runs after the `ci` workflow succeeds for a push to `main` in this repository, or by `workflow_dispatch` from `main` with a `min_instances` input (default 1; 0 stops idle spend, and flows and calls stay in Cloud SQL, but the first call after idle waits for a cold start). It authenticates with Workload Identity Federation (no GCP key is stored in GitHub), builds both images tagged with the commit SHA, deploys `dental-mcp`, mounts the optional provider keys, deploys Switchboard as a `candidate` revision with 0% traffic, runs `deploy/smoke-cloudrun.sh` against the candidate, and only then moves traffic to it and removes the tag. A failed smoke test removes the tag and leaves the previous revision serving. The first deploy (no previous revision) has no candidate step. Both services are granted the `allUsers` invoker role, so they are public: the management key and voice tokens are the protection.
 
 <!-- src: .github/workflows/deploy.yml:1-109 -->
 
-**Signing in to the admin UI.** After the first deploy, `gcloud secrets versions access latest --secret=GOVOICE_MANAGEMENT_API_KEY --project <project> | scripts/admin-link.sh https://<service-url>` (also printed by the bootstrap), or `make admin-link URL=https://<service-url>` with the key in `GOVOICE_MANAGEMENT_API_KEY`. The link is `<url>/#key=<key>`: the key is in the URL fragment, which browsers never send to a server, and the admin UI reads it into memory and removes it from the address bar and history at once. The link is a credential: do not paste it into chat or tickets. The hosted UI never sends a keyless "are you signed in" request (that would count as a failed login below).
+**Deploys share one database.** During a deploy the candidate revision and the serving revision both run against the same Cloud SQL database (`maxScale: 1` is per revision). The candidate applies forward-only migrations at start, so keep migrations additive until the candidate is promoted, and take an on-demand backup (`gcloud sql backups create --instance switchboard-db`) before shipping a schema change: a failed smoke test removes the candidate, but not a migration it already ran. Retention purges run in both revisions for the same window. The instance has deletion protection on. If you ever recreate it (or its `switchboard` user), delete the `SWITCHBOARD_DATABASE_DSN` secret first so the bootstrap writes a new password.
+
+**Providers on Cloud Run.** The demo needs xAI, ElevenLabs and Google. Set `OPENAI_API_KEY`, `DEEPGRAM_API_KEY`, `CARTESIA_API_KEY` or `NVIDIA_API_KEY` for the bootstrap and re-run it: the secret is created, the runtime account may read it, and the next deploy mounts it, so the provider shows as detected in the admin UI. `echo` is always listed (it costs nothing and needs no key); `offline` is off in production unless its endpoints are configured. `NVIDIA_STT_FUNCTION_ID` and `NVIDIA_TTS_FUNCTION_ID` are plain settings, not secrets: add them to the manifest if you use NVIDIA speech.
+
+**Exposure.** Both services allow unauthenticated invocation, because browser clients open the WebSocket directly: the management key, the voice tokens and the failed-login throttle are the protection. For a closed deployment put the admin UI behind Identity-Aware Proxy or a load balancer with Cloud Armor, and keep voice clients on a separate path; the repository does not automate that.
+
+**Moving from the earlier `govoice` names.** The service, image repository, service accounts, budget and the management-key secret are now named `switchboard`. Re-running the bootstrap creates the new ones next to the old ones and never deletes anything; after the first successful deploy (a new service has a new URL), delete the `govoice` service, repository, service accounts and secret by hand. In-container names (`GOVOICE_*` variables, `/opt/govoice`, `govoice` module) are unchanged.
+
+**Signing in to the admin UI.** After the first deploy, `gcloud secrets versions access latest --secret=SWITCHBOARD_MANAGEMENT_API_KEY --project <project> | scripts/admin-link.sh https://<service-url>` (also printed by the bootstrap), or `make admin-link URL=https://<service-url>` with the key in `GOVOICE_MANAGEMENT_API_KEY`. The link is `<url>/#key=<key>`: the key is in the URL fragment, which browsers never send to a server, and the admin UI reads it into memory and removes it from the address bar and history at once. The link is a credential: do not paste it into chat or tickets. The hosted UI never sends a keyless "are you signed in" request (that would count as a failed login below).
 
 <!-- src: deploy/gcp/bootstrap.sh:132-134; Makefile:199; former runbook -->
 
@@ -328,7 +336,7 @@ The `limits` block in `config/production.yaml` sets the ceilings: `max_sessions`
 
 Several replicas need Postgres and sticky token issuance plus `/ws` (section 13), and the same `limits.max_call_duration` on every replica. Live-call control and draft test calls are held in the memory of one instance. SQLite and the Cloud Run demo are single-instance by design.
 
-<!-- src: docs/storage.md; docs/operations.md:39,44,49,112; deploy/gcp/govoice.service.yaml:17 -->
+<!-- src: docs/storage.md; docs/operations.md:39,44,49,112; deploy/gcp/switchboard.service.yaml:17 -->
 
 ## 15. Monitoring and alerts
 
