@@ -266,9 +266,10 @@ func TestHoldStopsAtTheCapAndStaysOffUntilAllToolsReturn(t *testing.T) {
 	h, p, r := newTestHold(t, nil)
 	h.toolStarted()
 	waitCue(t, "hold start", func() bool { s, _ := p.counts(); return s == 1 })
-	waitCue(t, "cap stop", func() bool { _, st := p.counts(); return st == 1 })
-	if ev := r.events(); ev[len(ev)-1] != "cue_stop:cap" {
-		t.Fatalf("events = %v", ev)
+	// The player's Stop is counted before the hold records the event, so wait for the event itself.
+	waitCue(t, "cap stop", func() bool { ev := r.events(); return len(ev) > 0 && ev[len(ev)-1] == "cue_stop:cap" })
+	if _, st := p.counts(); st != 1 {
+		t.Fatalf("cap stops = %d, want 1", st)
 	}
 	h.botAudio()
 	time.Sleep(80 * time.Millisecond)
