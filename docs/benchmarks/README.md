@@ -181,3 +181,11 @@ profile, `SCENARIOS=S1`, `MODES=off`.
   processed. Google Vertex-mode LLM calls are counted per stream by the provider (genai's own client is not on the pool);
   Nvidia LLM (OpenAI-compatible) is labelled `provider="nvidia"`.
 Stage-level `STAGES=llm` is the cheapest paid check; `e2e` (Playwright, real Google) the most expensive.
+
+## Reports and measurement notes
+
+Committed results and their write-ups, each machine- and date-specific:
+
+- [Container soak, churn and chaos](container-soak-churn-chaos.md) (2 CPU / 2 GB `deploy/docker-compose.perf.yaml` stack, echo provider), with its generated reports [capacity](../../reports/capacity-container.md), [churn](../../reports/churn-container.md) and [chaos](../../reports/chaos-container.md).
+- Framework: [latency baseline](baseline.md), [load, soak and capacity](capacity.md), [turn quality gate](turn-quality.md), [TTS unit sizing](tts-unit-sizing.md).
+- Live providers (small n, opt-in): [first-audio latency breakdown](first-audio-latency.md), [provider conformance matrix](provider-matrix.md), [agent matrix](agent-matrix.md), [turn manager with Google](turn-manager-live.md), [NVIDIA](nvidia-live.md), [xAI](xai-live.md).
