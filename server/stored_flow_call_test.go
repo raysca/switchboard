@@ -753,12 +753,20 @@ func TestStoredFlow_SamplingReachesStageSpec(t *testing.T) {
 	}
 	check("call LLM fallback", spec.LLMFallbacks[0].Sampling)
 
-	// A later publish with a different temperature does not change the pinned call.
+	// A later publish with a different temperature changes new calls, not the one already resolved.
 	v2 := strings.Replace(single, `"temperature":0.3`, `"temperature":1.5`, 1)
 	if _, err := s.flows.Update(t.Context(), created.ID, flow.UpdateRequest{Config: json.RawMessage(v2)}); err != nil {
 		t.Fatal(err)
 	}
-	check("pinned call after republish", spec.LLM.Sampling)
+	spec2, release2, err := s.resolveCall(t.Context(), created.ID, "samp-2", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release2()
+	if tp := spec2.LLM.Sampling.Temperature; tp == nil || *tp != 1.5 {
+		t.Fatalf("new call after republish: temperature = %v, want 1.5", tp)
+	}
+	check("earlier call after the new call resolved", spec.LLM.Sampling)
 
 	flat := `{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}}`
 	step := `{"llm":{"provider":"google","model":"m",` + samp + `,"fallbacks":[{"provider":"xai","model":"grok"}]},"tts":{"provider":"google"}}`
