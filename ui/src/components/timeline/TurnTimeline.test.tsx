@@ -215,4 +215,14 @@ describe("TurnTimeline", () => {
     expect(screen.getByText("failed")).toHaveClass("status--bad");
     expect(screen.getByText("cancelled")).toHaveClass("status--neutral");
   });
+
+  it("shows a failed tool call's error category next to its status", async () => {
+    const user = userEvent.setup();
+    const turns: TurnDTO[] = [{ id: "t1", session_id: "s", ordinal: 1, started_at: "2026-10-05T12:00:00Z", transcript: "x", assistant_text: "y", interrupted: false }];
+    const call = { id: "a", session_id: "s", turn_id: "t1", remote_name: "tool_a", schema_hash: "h", started_at: "2026-10-05T12:00:01Z", ended_at: "2026-10-05T12:00:01.200Z", status: "failed", error_category: "timeout" };
+    render(<TurnTimeline turns={turns} traces={{ session_id: "s", spans: [], events: [], tool_calls: [call] }} />);
+    await user.click(screen.getByRole("button", { name: /Show traces/i }));
+    expect(screen.getByText("failed")).toBeVisible();
+    expect(screen.getByText("timeout")).toBeVisible();
+  });
 });

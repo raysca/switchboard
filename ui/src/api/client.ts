@@ -61,6 +61,7 @@ export const serverConfigSchema = z.object({
   max_sessions: z.number(),
   max_call_duration_seconds: z.number(),
   voice_token_max_lifetime_seconds: z.number(),
+  mcp_sync_interval_seconds: z.number().optional(),
   client_ip: z.string(),
   secure: z.boolean(),
   audio: z.object({ backgrounds: z.array(z.string()), cues: z.array(z.string()), allow_flow_background: z.boolean(), background_default: z.string() }),
@@ -283,6 +284,9 @@ export type CreateMCPServerInput = {
   enabled?: boolean;
 };
 
+/** PATCH body: a field left out is unchanged; `auth_env: ""` clears the token variable. */
+export type UpdateMCPServerInput = Partial<Pick<CreateMCPServerInput, "name" | "description" | "endpoint" | "auth_env">>;
+
 const mcpServersEnvelope = z.object({
   data: z.array(mcpServerSchema),
 });
@@ -349,6 +353,7 @@ export const sessionToolCallSchema = z.object({
   started_at: z.string(),
   ended_at: z.string().nullish(),
   status: z.string(),
+  error_category: z.string().optional(),
 });
 export type ToolCallDTO = z.infer<typeof sessionToolCallSchema>;
 
@@ -365,6 +370,7 @@ const turnToolSchema = z.object({
   name: z.string(),
   status: z.string(),
   duration_ms: z.number(),
+  error_category: z.string().optional(),
 });
 type TurnToolDTO = z.infer<typeof turnToolSchema>;
 
@@ -620,6 +626,13 @@ export function createApiClient(
         await request("/mcp-servers", mcpServerEnvelope, {
           method: "POST",
           body: payload,
+        })
+      ).data,
+    updateMCPServer: async (id: string, patch: UpdateMCPServerInput) =>
+      (
+        await request(`/mcp-servers/${encodeURIComponent(id)}`, mcpServerEnvelope, {
+          method: "PATCH",
+          body: patch,
         })
       ).data,
     deleteMCPServer: async (id: string, confirmedDetach?: boolean) => {

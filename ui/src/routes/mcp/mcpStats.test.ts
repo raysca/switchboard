@@ -171,3 +171,10 @@ describe("formatApiError", () => {
     expect(formatApiError("odd", "fallback")).toBe("fallback");
   });
 });
+
+describe("serverStatus with a missing token variable", () => {
+  it("names the variable", () => {
+    const s = { enabled: true, validation_state: "healthy", auth_env: "MCP_TOKEN_X", auth_env_set: false } as MCPServerDTO;
+    expect(serverStatus(s)).toEqual({ tone: "bad", label: "Token variable MCP_TOKEN_X is not set on the server" });
+  });
+});

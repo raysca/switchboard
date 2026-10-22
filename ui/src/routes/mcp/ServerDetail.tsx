@@ -1,8 +1,9 @@
 import { Fragment, useState } from "react";
 import { Link } from "react-router";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ApiError, type FlowDTO, type ApiClient, type MCPServerDetailDTO } from "../../api/client";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ApiError, type FlowDTO, type ApiClient, type MCPServerDetailDTO, type UpdateMCPServerInput } from "../../api/client";
 import { ErrorState } from "../../components/primitives";
+import { ConnectServerDialog } from "./ConnectServerDialog";
 import { DeleteServerDialog } from "./DeleteServerDialog";
 import { DriftPanel, MissingTools } from "./DriftPanel";
 import { ToolTestConsole } from "./ToolTestConsole";
@@ -32,6 +33,23 @@ export function ServerDetail({ client, server, flows, flowsFailed, flowsCapped, 
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [refs, setRefs] = useState<{ id: string; name: string }[]>([]);
   const [removing, setRemoving] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const configQuery = useQuery({ queryKey: ["server-config"], queryFn: () => client.getServerConfig(), retry: false });
+  const config = configQuery.data;
+
+  const edit = useMutation({
+    mutationFn: (patch: UpdateMCPServerInput) => client.updateMCPServer(server.id, patch),
+    onSuccess: (updated) => {
+      setEditing(false);
+      setEditError(null);
+      // The reply is the same view as GET, minus the tools: keep the tools, show the new state at once.
+      queryClient.setQueryData(["mcp-server", server.id], { ...server, ...updated });
+      void queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
+      void queryClient.invalidateQueries({ queryKey: ["flows"] });
+    },
+    onError: (err) => setEditError(formatApiError(err, "Could not save the server")),
+  });
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
@@ -83,6 +101,9 @@ export function ServerDetail({ client, server, flows, flowsFailed, flowsCapped, 
   const missing = drift.filter((d) => d.kind === "missing");
   const tools = server.discovery?.tools ?? [];
   const synced = ago(server.last_discovered_at, now);
+  const checked = ago(server.last_connected_at, now);
+  const every = config?.mcp_sync_interval_seconds ?? 0;
+  const unit = every % 60 === 0 ? [every / 60, "minute"] : [every, "second"];
 
   return (
     <section aria-labelledby="mcp-server-title" className="mcp-detail">
@@ -94,6 +115,8 @@ export function ServerDetail({ client, server, flows, flowsFailed, flowsCapped, 
             {st.label}
             {synced ? ` · synced ${synced}` : ""}
           </p>
+          {checked && <p className="subtext">Last checked {checked}</p>}
+          {config && <p className="subtext">{every ? `Checked automatically every ${unit[0]} ${unit[1]}${unit[0] === 1 ? "" : "s"}` : "Automatic checks are off"}</p>}
           {server.description && <p className="subtext">{server.description}</p>}
           <dl className="mcp-facts">
             <div>
@@ -149,6 +172,16 @@ export function ServerDetail({ client, server, flows, flowsFailed, flowsCapped, 
               Enable
             </button>
           )}
+          <button
+            type="button"
+            className="action-button-small"
+            onClick={() => {
+              setEditError(null);
+              setEditing(true);
+            }}
+          >
+            Edit
+          </button>
           <button
             type="button"
             className="action-button-small action-button-danger"
@@ -238,8 +271,9 @@ export function ServerDetail({ client, server, flows, flowsFailed, flowsCapped, 
           </table>
         </div>
       )}
-      <p className="subtext">Tokens are read only from <code>MCP_TOKEN_*</code> variables. Private and loopback addresses are refused.</p>
+      <p className="subtext">Tokens are read only from <code>MCP_TOKEN_*</code> variables. Private and loopback addresses are refused in production{config?.profile === "development" ? "; this development server allows loopback addresses" : ""}.</p>
 
+      {editing && <ConnectServerDialog server={server} pending={edit.isPending} error={editError} onSubmit={(patch) => edit.mutate(patch)} onCancel={() => setEditing(false)} />}
       {deleting && (
         <DeleteServerDialog
           name={server.name}

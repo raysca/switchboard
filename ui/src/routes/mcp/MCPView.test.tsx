@@ -138,7 +138,78 @@ describe("MCPView", () => {
 
   it("names a token variable that is not set", async () => {
     setup({ getMCPServer: vi.fn().mockResolvedValue(detail({ auth_env_set: false })) });
-    expect(await screen.findByText(/not set on the server/)).toBeVisible();
+    expect((await screen.findAllByText(/not set on the server/)).length).toBeGreaterThan(0);
+  });
+
+  it("shows a missing token variable as the status text, in the list and the detail", async () => {
+    setup({ getFlows: vi.fn().mockResolvedValue([]), getMCPServers: vi.fn().mockResolvedValue([server({ auth_env_set: false })]), getMCPServer: vi.fn().mockResolvedValue(detail({ auth_env_set: false })) });
+    expect(await within(await screen.findByRole("link", { name: /^billing/ })).findByText(/^Token variable MCP_TOKEN_BILLING is not set on the server/)).toBeVisible();
+    expect(screen.getAllByText(/Token variable MCP_TOKEN_BILLING is not set on the server/).length).toBeGreaterThan(1);
+  });
+
+  it("shows when the server was last checked and how often it checks by itself", async () => {
+    const cfg = (s: number) => ({ getServerConfig: vi.fn().mockResolvedValue({ profile: "production", mcp_sync_interval_seconds: s }) });
+    const old = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-12T15:00:00Z"));
+    setup(cfg(300));
+    expect(await screen.findByText("Last checked 4 min ago")).toBeVisible();
+    expect(await screen.findByText("Checked automatically every 5 minutes")).toBeVisible();
+    old.mockRestore();
+  });
+
+  it("says automatic checks are off, and which addresses are refused", async () => {
+    setup({ getServerConfig: vi.fn().mockResolvedValue({ profile: "production", mcp_sync_interval_seconds: 0 }) });
+    expect(await screen.findByText("Automatic checks are off")).toBeVisible();
+    expect(screen.getByText(/refused in production/)).toBeVisible();
+  });
+
+  it("says a development server allows loopback", async () => {
+    setup({ getServerConfig: vi.fn().mockResolvedValue({ profile: "development", mcp_sync_interval_seconds: 60 }) });
+    expect(await screen.findByText(/this development server allows loopback/)).toBeVisible();
+    expect(screen.getByText("Checked automatically every 1 minute")).toBeVisible();
+  });
+
+  it("edits a server in place: prefilled, only changed fields sent, the returned state shown", async () => {
+    const updateMCPServer = vi.fn().mockResolvedValue(server({ name: "billing2", validation_state: "connection_failed" }));
+    const { user } = setup({ updateMCPServer });
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    const name = screen.getByLabelText("Name");
+    expect(name).toHaveValue("billing");
+    expect(screen.getByLabelText("Endpoint URL")).toHaveValue("https://mcp.example.com/billing");
+    await user.clear(name);
+    await user.type(name, "billing2");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(updateMCPServer).toHaveBeenCalledWith("billing", { name: "billing2" });
+    expect(await screen.findByRole("heading", { name: "billing2", level: 2 })).toBeVisible();
+    expect(screen.getAllByText(/^Unreachable/).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("clears the token variable with an empty string", async () => {
+    const updateMCPServer = vi.fn().mockResolvedValue(server({ auth_env: "" }));
+    const { user } = setup({ updateMCPServer });
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.clear(screen.getByLabelText("Token variable (optional)"));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(updateMCPServer).toHaveBeenCalledWith("billing", { auth_env: "" });
+  });
+
+  it("explains a refused edit by its reason", async () => {
+    const updateMCPServer = vi.fn().mockRejectedValue(new ApiError("MCP server configuration is invalid", "invalid_mcp_server", 400, "r1", { reason: "destination_denied" }));
+    const { user } = setup({ updateMCPServer });
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.type(screen.getByLabelText("Description (optional)"), "x");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("That address is not allowed: MCP servers must be public HTTPS addresses.");
+  });
+
+  it("gives the same sentence when connecting is refused", async () => {
+    const createMCPServer = vi.fn().mockRejectedValue(new ApiError("MCP server configuration is invalid", "invalid_mcp_server", 400, "r1", { reason: "invalid_auth_env" }));
+    const { user } = setup({ createMCPServer });
+    await user.click((await screen.findAllByRole("button", { name: "Connect server" }))[0]);
+    await user.type(screen.getByLabelText("Name"), "x");
+    await user.type(screen.getByLabelText("Endpoint URL"), "https://a.example.com");
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/token variable/i);
   });
 
   it("lists the tools with what the model sees, the schema and how many flows use each", async () => {

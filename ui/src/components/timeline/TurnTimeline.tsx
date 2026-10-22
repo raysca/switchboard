@@ -169,6 +169,7 @@ export function TurnTimeline({ turns, traces, loading }: TurnTimelineProps) {
                                 <Status tone={tc.status === "succeeded" ? "good" : tc.status === "cancelled" ? "neutral" : "bad"}>
                                   {tc.status}
                                 </Status>
+                                {tc.error_category && <span className="subtext">{tc.error_category}</span>}
                                 <span>{formatDuration(tc.started_at, tc.ended_at)}</span>
                               </div>
                             </div>

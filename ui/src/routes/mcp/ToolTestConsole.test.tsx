@@ -79,4 +79,17 @@ describe("ToolTestConsole", () => {
     await userEvent.click(screen.getByRole("button", { name: "Run tool" }));
     expect(await screen.findByText("failed")).toBeVisible();
   });
+
+  it.each([
+    ["tool_error", { category: "tool_error", message: "no such order" }, "The tool reported an error: no such order"],
+    ["timeout", { category: "timeout" }, "The tool did not answer in time"],
+    ["unavailable", { category: "unavailable" }, "The server could not be reached"],
+    ["invalid_arguments", { category: "invalid_arguments" }, "The tool rejected the arguments"],
+    ["result_too_large", { category: "result_too_large" }, "The tool's result was too large"],
+    ["cancelled", { category: "cancelled" }, "The call was cancelled"],
+  ])("explains a %s failure", async (_n, details, sentence) => {
+    const { user } = setup(vi.fn().mockRejectedValue(new ApiError("failed", "mcp_tool_failed", 502, "r9", details)));
+    await user.click(screen.getByRole("button", { name: "Run tool" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(sentence);
+  });
 });

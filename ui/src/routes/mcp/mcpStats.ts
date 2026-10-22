@@ -6,6 +6,7 @@ type Tone = "ok" | "bad" | "idle";
 export function serverStatus(s: MCPServerDTO): { tone: Tone; label: string } {
   if (s.pending_deletion) return { tone: "idle", label: "Being removed" };
   if (!s.enabled || s.validation_state === "disabled") return { tone: "idle", label: "Disabled" };
+  if (s.auth_env && !s.auth_env_set) return { tone: "bad", label: `Token variable ${s.auth_env} is not set on the server` };
   switch (s.validation_state) {
     case "healthy":
       return { tone: "ok", label: "Connected" };
@@ -91,8 +92,35 @@ export function referencedFlows(details: unknown): { id: string; name: string }[
   return [...seen].map(([id, name]) => ({ id, name }));
 }
 
+// One sentence per refusal reason (create and edit) and per tool-test failure category.
+const REASONS: Record<string, string> = {
+  invalid_endpoint: "That endpoint is not a valid URL: use an https:// address.",
+  destination_denied: "That address is not allowed: MCP servers must be public HTTPS addresses.",
+  invalid_auth_env: "The token variable must be named MCP_TOKEN_ followed by A-Z, 0-9 or _ (max 48).",
+  invalid_metadata: "The name or description is not valid: use plain text of a reasonable length.",
+  transport_unsupported: "Only streamable HTTP servers are supported.",
+};
+const CATEGORIES: Record<string, string> = {
+  invalid_arguments: "The tool rejected the arguments",
+  timeout: "The tool did not answer in time",
+  unavailable: "The server could not be reached",
+  result_too_large: "The tool's result was too large",
+  cancelled: "The call was cancelled",
+};
+
+/** The sentence for an error's `details` (`reason` or `category`), if it carries a known one. */
+function detailSentence(details: unknown): string | undefined {
+  const d = (details && typeof details === "object" ? details : {}) as { reason?: string; category?: string; message?: string };
+  if (d.reason && REASONS[d.reason]) return REASONS[d.reason];
+  if (d.category === "tool_error") return `The tool reported an error${d.message ? `: ${d.message}` : ""}`;
+  return d.category ? CATEGORIES[d.category] : undefined;
+}
+
 export function formatApiError(err: unknown, fallback: string): string {
-  if (err instanceof ApiError) return err.requestId ? `${err.message} (Request ID: ${err.requestId})` : err.message;
+  if (err instanceof ApiError) {
+    const text = detailSentence(err.details) ?? err.message;
+    return err.requestId ? `${text} (Request ID: ${err.requestId})` : text;
+  }
   if (err instanceof Error) return err.message;
   return fallback;
 }
