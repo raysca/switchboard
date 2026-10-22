@@ -30,8 +30,8 @@ func createTestFlowAndVersion(t *testing.T, s *storage.Store) (string, string, s
 	t.Helper()
 	ctx := context.Background()
 	flowID := storage.NewID()
-	a := storage.Flow{ID: flowID, Name: "APIAgent", Enabled: true, CreatedAt: time.Now()}
-	if err := s.Flows().Create(ctx, a); err != nil {
+	a := storage.Agent{ID: flowID, Name: "APIAgent", Enabled: true, CreatedAt: time.Now()}
+	if err := s.Agents().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
 	v, err := publishTestVersion(ctx, s, flowID, []byte(`{"llm":"test"}`), nil)
@@ -50,8 +50,8 @@ func setupTracesHandler(t *testing.T) (*storage.Store, http.Handler, string, str
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	sess := storage.SessionRecord{
 		ID:                  sessID,
-		FlowID:              flowID,
-		FlowVersionID:       vID,
+		AgentID:             flowID,
+		AgentVersionID:      vID,
 		ConfigHash:          hash,
 		Status:              "active",
 		StartedAt:           now,
@@ -333,7 +333,7 @@ func TestSessionsSayWhetherTheyWereADraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	draftID := storage.NewID()
-	if err := s.Sessions().Create(context.Background(), storage.SessionRecord{ID: draftID, FlowID: flowID, FlowVersionID: versionID, ConfigHash: draftHash, Status: "active", StartedAt: time.Now().UTC(), Draft: true}); err != nil {
+	if err := s.Sessions().Create(context.Background(), storage.SessionRecord{ID: draftID, AgentID: flowID, AgentVersionID: versionID, ConfigHash: draftHash, Status: "active", StartedAt: time.Now().UTC(), Draft: true}); err != nil {
 		t.Fatal(err)
 	}
 	for id, want := range map[string]bool{sessID: false, draftID: true} {
@@ -357,7 +357,7 @@ func TestSessionsCarryTheCallerTheEndReasonAndAMedianReply(t *testing.T) {
 	ctx := context.Background()
 	id := storage.NewID()
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	if err := s.Sessions().Create(ctx, storage.SessionRecord{ID: id, FlowID: flowID, FlowVersionID: vID, ConfigHash: hash, Status: "active", StartedAt: now, Caller: "flow-test-abc"}); err != nil {
+	if err := s.Sessions().Create(ctx, storage.SessionRecord{ID: id, AgentID: flowID, AgentVersionID: vID, ConfigHash: hash, Status: "active", StartedAt: now, Caller: "flow-test-abc"}); err != nil {
 		t.Fatal(err)
 	}
 	for i, l := range []string{`{"voice_to_voice_ms":500}`, `{"voice_to_voice_ms":900}`, `{"voice_to_voice_ms":700}`} {
@@ -366,7 +366,7 @@ func TestSessionsCarryTheCallerTheEndReasonAndAMedianReply(t *testing.T) {
 		}
 	}
 	idle := storage.NewID() // a session with no measured turn
-	if err := s.Sessions().Create(ctx, storage.SessionRecord{ID: idle, FlowID: flowID, FlowVersionID: vID, ConfigHash: hash, Status: "active", StartedAt: now.Add(time.Second)}); err != nil {
+	if err := s.Sessions().Create(ctx, storage.SessionRecord{ID: idle, AgentID: flowID, AgentVersionID: vID, ConfigHash: hash, Status: "active", StartedAt: now.Add(time.Second)}); err != nil {
 		t.Fatal(err)
 	}
 	handler := api.NewTracesHandler(s.Sessions(), s.Traces())
@@ -403,7 +403,7 @@ func TestSessionsCarryTheCallerTheEndReasonAndAMedianReply(t *testing.T) {
 }
 
 // publishTestVersion publishes config (with the given MCP selection) as the flow's next version.
-func publishTestVersion(ctx context.Context, s *storage.Store, flowID string, config []byte, tools []storage.SelectedTool) (storage.FlowVersion, error) {
-	v, _, err := s.Flows().MutateAndPublish(ctx, flowID, storage.FlowMutation{Tools: &tools}, config)
+func publishTestVersion(ctx context.Context, s *storage.Store, flowID string, config []byte, tools []storage.SelectedTool) (storage.AgentVersion, error) {
+	v, _, err := s.Agents().MutateAndPublish(ctx, flowID, storage.AgentMutation{Tools: &tools}, config)
 	return v, err
 }

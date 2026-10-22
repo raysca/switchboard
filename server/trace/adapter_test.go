@@ -34,8 +34,8 @@ func createTestSession(t *testing.T, s *storage.Store) string {
 	t.Helper()
 	ctx := context.Background()
 	flowID := storage.NewID()
-	a := storage.Flow{ID: flowID, Name: "TraceAgent", Enabled: true, CreatedAt: time.Now()}
-	if err := s.Flows().Create(ctx, a); err != nil {
+	a := storage.Agent{ID: flowID, Name: "TraceAgent", Enabled: true, CreatedAt: time.Now()}
+	if err := s.Agents().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
 	v, err := publishTestVersion(ctx, s, flowID, []byte(`{"llm":"test"}`), nil)
@@ -45,8 +45,8 @@ func createTestSession(t *testing.T, s *storage.Store) string {
 	sessID := storage.NewID()
 	sess := storage.SessionRecord{
 		ID:                  sessID,
-		FlowID:              flowID,
-		FlowVersionID:       v.ID,
+		AgentID:             flowID,
+		AgentVersionID:      v.ID,
 		ConfigHash:          v.ConfigHash,
 		Status:              "active",
 		StartedAt:           time.Now().UTC(),
@@ -348,8 +348,8 @@ func stringContains(s, substr string) bool {
 }
 
 // publishTestVersion publishes config (with the given MCP selection) as the flow's next version.
-func publishTestVersion(ctx context.Context, s *storage.Store, flowID string, config []byte, tools []storage.SelectedTool) (storage.FlowVersion, error) {
-	v, _, err := s.Flows().MutateAndPublish(ctx, flowID, storage.FlowMutation{Tools: &tools}, config)
+func publishTestVersion(ctx context.Context, s *storage.Store, flowID string, config []byte, tools []storage.SelectedTool) (storage.AgentVersion, error) {
+	v, _, err := s.Agents().MutateAndPublish(ctx, flowID, storage.AgentMutation{Tools: &tools}, config)
 	return v, err
 }
 

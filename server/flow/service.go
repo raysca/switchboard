@@ -154,19 +154,19 @@ func (s *Service) create(ctx context.Context, req CreateRequest, mcpReviewRequir
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
-	row := storage.Flow{ID: storage.NewID(), Name: name, Description: req.Description, Enabled: enabled}
+	row := storage.Agent{ID: storage.NewID(), Name: name, Description: req.Description, Enabled: enabled}
 	selected, err := toStorageSelections(req.MCPTools)
 	if err != nil {
 		return Flow{}, err
 	}
-	if _, err := s.store.Flows().CreateWithVersionAndToolsAndReviewRequired(ctx, row, config, selected, mcpReviewRequired); err != nil {
+	if _, err := s.store.Agents().CreateWithVersionAndToolsAndReviewRequired(ctx, row, config, selected, mcpReviewRequired); err != nil {
 		return Flow{}, err
 	}
 	return s.Get(ctx, row.ID)
 }
 
 func (s *Service) Get(ctx context.Context, id string) (Flow, error) {
-	row, err := s.store.Flows().Current(ctx, id)
+	row, err := s.store.Agents().Current(ctx, id)
 	if err != nil {
 		return Flow{}, err
 	}
@@ -174,7 +174,7 @@ func (s *Service) Get(ctx context.Context, id string) (Flow, error) {
 }
 
 func (s *Service) List(ctx context.Context, limit, offset int) ([]Flow, error) {
-	rows, err := s.store.Flows().List(ctx, limit, offset)
+	rows, err := s.store.Agents().List(ctx, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +198,7 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (Flo
 			return Flow{}, err
 		}
 	}
-	mutation := storage.FlowMutation{Name: req.Name, Description: req.Description, Enabled: req.Enabled}
+	mutation := storage.AgentMutation{Name: req.Name, Description: req.Description, Enabled: req.Enabled}
 	if req.MCPTools != nil {
 		selected, err := toStorageSelections(*req.MCPTools)
 		if err != nil {
@@ -214,7 +214,7 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (Flo
 			return Flow{}, err
 		}
 	}
-	if _, _, err := s.store.Flows().MutateAndPublish(ctx, id, mutation, config); err != nil {
+	if _, _, err := s.store.Agents().MutateAndPublish(ctx, id, mutation, config); err != nil {
 		return Flow{}, err
 	}
 	return s.Get(ctx, id)
@@ -230,13 +230,13 @@ func (s *Service) checkConfigTools(ctx context.Context, id string, config json.R
 	if selected != nil {
 		return checkStepTools(g, *selected)
 	}
-	row, err := s.store.Flows().Current(ctx, id)
+	row, err := s.store.Agents().Current(ctx, id)
 	if err != nil {
 		return err
 	}
 	var current []ToolSelection
 	if row.CurrentVersionID != "" {
-		rows, err := s.store.Flows().SelectedTools(ctx, row.CurrentVersionID)
+		rows, err := s.store.Agents().SelectedTools(ctx, row.CurrentVersionID)
 		if err != nil {
 			return err
 		}
@@ -248,7 +248,7 @@ func (s *Service) checkConfigTools(ctx context.Context, id string, config json.R
 // VersionByNumber returns an earlier published version (config and tool selection) so a client can show it or
 // publish it again with Update. Nothing is written: restoring is a normal publish of the old content.
 func (s *Service) VersionByNumber(ctx context.Context, id string, number int) (Version, error) {
-	v, err := s.store.Flows().VersionByNumber(ctx, id, number)
+	v, err := s.store.Agents().VersionByNumber(ctx, id, number)
 	if err != nil {
 		return Version{}, err
 	}
@@ -256,7 +256,7 @@ func (s *Service) VersionByNumber(ctx context.Context, id string, number int) (V
 }
 
 func (s *Service) Archive(ctx context.Context, id string) error {
-	return s.store.Flows().Archive(ctx, id)
+	return s.store.Agents().Archive(ctx, id)
 }
 
 func (s *Service) Duplicate(ctx context.Context, id, name string) (Flow, error) {
@@ -277,7 +277,7 @@ func (s *Service) Duplicate(ctx context.Context, id, name string) (Flow, error) 
 // runs: the flow's current version with the draft's config and hash, and the flow's attached MCP
 // tools. Nothing is written. A draft cannot change tool selections, only use the attached ones.
 func (s *Service) ResolveDraft(ctx context.Context, id string, config json.RawMessage, selection *[]ToolSelection) (Snapshot, Readiness, error) {
-	row, err := s.store.Flows().Current(ctx, id)
+	row, err := s.store.Agents().Current(ctx, id)
 	if err != nil {
 		return Snapshot{}, Readiness{}, err
 	}
@@ -294,7 +294,7 @@ func (s *Service) ResolveDraft(ctx context.Context, id string, config json.RawMe
 	if err := s.checkConfigTools(ctx, id, canonical, selection); err != nil {
 		return Snapshot{}, Readiness{}, err
 	}
-	base, err := s.store.Flows().Version(ctx, row.CurrentVersionID)
+	base, err := s.store.Agents().Version(ctx, row.CurrentVersionID)
 	if err != nil {
 		return Snapshot{}, Readiness{}, err
 	}
@@ -309,7 +309,7 @@ func (s *Service) ResolveDraft(ctx context.Context, id string, config json.RawMe
 		if err != nil {
 			return Snapshot{}, Readiness{}, err
 		}
-		if err := s.store.Flows().ValidateSelections(ctx, selected); err != nil {
+		if err := s.store.Agents().ValidateSelections(ctx, selected); err != nil {
 			return Snapshot{}, Readiness{}, err
 		}
 		draft.MCPTools = selected
@@ -320,14 +320,14 @@ func (s *Service) ResolveDraft(ctx context.Context, id string, config json.RawMe
 }
 
 func (s *Service) ResolveCurrent(ctx context.Context, id string) (Snapshot, error) {
-	row, err := s.store.Flows().Current(ctx, id)
+	row, err := s.store.Agents().Current(ctx, id)
 	if err != nil {
 		return Snapshot{}, err
 	}
 	if row.Archived || !row.Enabled || row.CurrentVersionID == "" {
 		return Snapshot{}, errors.New("flow unavailable")
 	}
-	v, err := s.store.Flows().Version(ctx, row.CurrentVersionID)
+	v, err := s.store.Agents().Version(ctx, row.CurrentVersionID)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -370,7 +370,7 @@ func (s *Service) StartCapturedSession(ctx context.Context, snapshot Snapshot, s
 		runtimeTools = append(runtimeTools, storage.SelectedTool{ServerID: tool.ServerID, RemoteName: tool.RemoteName, SchemaHash: tool.SchemaHash, Required: tool.Required})
 	}
 	if err := s.store.Sessions().Create(ctx, storage.SessionRecord{
-		ID: sessionID, FlowID: snapshot.FlowID, FlowVersionID: snapshot.Version.ID,
+		ID: sessionID, AgentID: snapshot.FlowID, AgentVersionID: snapshot.Version.ID,
 		ConfigHash: snapshot.ConfigHash, StartedAt: time.Now().UTC(), Status: "active", RuntimeSnapshotJSON: runtimeJSON, RuntimeTools: runtimeTools, Draft: snapshot.Draft, Caller: caller,
 	}); err != nil {
 		return SessionPin{}, err
@@ -388,11 +388,11 @@ func (s *Service) ResolveSession(ctx context.Context, sessionID string) (Snapsho
 	if err != nil {
 		return Snapshot{}, err
 	}
-	v, err := s.store.Flows().Version(ctx, session.FlowVersionID)
+	v, err := s.store.Agents().Version(ctx, session.AgentVersionID)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	if v.FlowID != session.FlowID || v.ConfigHash != session.ConfigHash {
+	if v.AgentID != session.AgentID || v.ConfigHash != session.ConfigHash {
 		return Snapshot{}, errors.New("session flow snapshot is inconsistent")
 	}
 	version := toVersion(v)
@@ -405,21 +405,21 @@ func (s *Service) ResolveSession(ctx context.Context, sessionID string) (Snapsho
 	if runtimeTools == nil {
 		_, runtimeTools = s.flowReadiness(ctx, v, true, false)
 	}
-	return Snapshot{FlowID: session.FlowID, Version: version, ConfigHash: session.ConfigHash, MCPTools: runtimeTools}, nil
+	return Snapshot{FlowID: session.AgentID, Version: version, ConfigHash: session.ConfigHash, MCPTools: runtimeTools}, nil
 }
 
 // SetMCPTools publishes a new immutable flow version. Existing versions and
 // sessions keep their prior associations; every requested schema must match
 // the server's latest discovery at publication time.
 func (s *Service) SetMCPTools(ctx context.Context, id string, tools []ToolSelection) (Version, error) {
-	row, err := s.store.Flows().Current(ctx, id)
+	row, err := s.store.Agents().Current(ctx, id)
 	if err != nil {
 		return Version{}, err
 	}
 	if row.Archived || row.CurrentVersionID == "" {
 		return Version{}, errors.New("flow unavailable")
 	}
-	current, err := s.store.Flows().Version(ctx, row.CurrentVersionID)
+	current, err := s.store.Agents().Version(ctx, row.CurrentVersionID)
 	if err != nil {
 		return Version{}, err
 	}
@@ -430,10 +430,10 @@ func (s *Service) SetMCPTools(ctx context.Context, id string, tools []ToolSelect
 	return *updated.Version, nil
 }
 
-func (s *Service) fromRow(ctx context.Context, row storage.Flow) (Flow, error) {
+func (s *Service) fromRow(ctx context.Context, row storage.Agent) (Flow, error) {
 	a := Flow{ID: row.ID, Name: row.Name, Description: row.Description, Enabled: row.Enabled, Archived: row.Archived, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 	if row.CurrentVersionID != "" {
-		v, err := s.store.Flows().Version(ctx, row.CurrentVersionID)
+		v, err := s.store.Agents().Version(ctx, row.CurrentVersionID)
 		if err != nil {
 			return Flow{}, err
 		}
@@ -456,7 +456,7 @@ const (
 
 // flowReadiness evaluates an already-loaded version (with its MCPTools)
 // against the current provider availability.
-func (s *Service) flowReadiness(ctx context.Context, version storage.FlowVersion, enabled, archived bool) (Readiness, []MCPToolSnapshot) {
+func (s *Service) flowReadiness(ctx context.Context, version storage.AgentVersion, enabled, archived bool) (Readiness, []MCPToolSnapshot) {
 	if version.MCPReviewRequired {
 		return Readiness{State: ReadinessNeedsToolReview, Reasons: []string{"mcp_tools_detached_review_required"}, ToolDependencies: []ToolDependency{}}, nil
 	}
@@ -608,7 +608,7 @@ func normalizeConfig(raw json.RawMessage) (json.RawMessage, error) {
 	return canonical, nil
 }
 
-func toVersion(v storage.FlowVersion) Version {
+func toVersion(v storage.AgentVersion) Version {
 	tools := make([]ToolSelection, 0, len(v.MCPTools))
 	for _, tool := range v.MCPTools {
 		tools = append(tools, ToolSelection{ServerID: tool.ServerID, RemoteName: tool.RemoteName, SchemaHash: tool.SchemaHash, Required: tool.Required})

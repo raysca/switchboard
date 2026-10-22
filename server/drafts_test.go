@@ -147,7 +147,7 @@ func TestDraftCallIsRecordedAsADraftOnTheCurrentVersion(t *testing.T) {
 			return false
 		}
 		sessionHash = rec.ConfigHash
-		return rec.Draft && rec.FlowVersionID == f.Version.ID
+		return rec.Draft && rec.AgentVersionID == f.Version.ID
 	})
 	if sessionHash == f.Version.ConfigHash {
 		t.Fatal("the session must carry the draft's hash, not the published version's")

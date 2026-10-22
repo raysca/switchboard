@@ -227,7 +227,7 @@ func TestScenario1_FreshInstallAndOnboarding(t *testing.T) {
 	store := openScenarioDB(t, "scenario1_fresh_install")
 
 	// 1. Invariant: Clean database with zero flows
-	initialFlows, err := store.Flows().List(ctx, 10, 0)
+	initialFlows, err := store.Agents().List(ctx, 10, 0)
 	if err != nil {
 		t.Fatalf("list flows on fresh db: %v", err)
 	}
@@ -767,7 +767,7 @@ func TestScenario5_MCPDeletionSafety(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query current references: %v", err)
 	}
-	if len(refs) == 0 || refs[0].FlowID != flowCreated.ID {
+	if len(refs) == 0 || refs[0].AgentID != flowCreated.ID {
 		t.Fatalf("expected flow reference in details: %+v", refs)
 	}
 

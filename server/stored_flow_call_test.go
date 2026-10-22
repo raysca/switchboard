@@ -98,7 +98,7 @@ func TestStoredFlowDrivesCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	activeSessions := func(status string) int {
-		rows, err := s.store.Sessions().List(t.Context(), storage.SessionFilter{FlowID: created.ID, Status: status})
+		rows, err := s.store.Sessions().List(t.Context(), storage.SessionFilter{AgentID: created.ID, Status: status})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -106,7 +106,7 @@ func TestStoredFlowDrivesCall(t *testing.T) {
 	}
 	waitFor(t, func() bool { mu.Lock(); defer mu.Unlock(); return len(got) == 3 && activeSessions("active") == 1 })
 	// The session is stored under the token's jti, so the caller can find it.
-	if rows, _ := s.store.Sessions().List(t.Context(), storage.SessionFilter{FlowID: created.ID}); len(rows) != 1 || rows[0].ID != lastTokenID {
+	if rows, _ := s.store.Sessions().List(t.Context(), storage.SessionFilter{AgentID: created.ID}); len(rows) != 1 || rows[0].ID != lastTokenID {
 		t.Fatalf("session id %v, want the token jti %q", rows, lastTokenID)
 	}
 
@@ -294,7 +294,7 @@ func TestTextTurnReachesFlowLLM(t *testing.T) {
 
 func activeSessionCount(t *testing.T, s *Server, flowID string) int {
 	t.Helper()
-	rows, err := s.store.Sessions().List(t.Context(), storage.SessionFilter{FlowID: flowID, Status: "active"})
+	rows, err := s.store.Sessions().List(t.Context(), storage.SessionFilter{AgentID: flowID, Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +339,7 @@ func TestShutdownEndsActiveSessionRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	rows, err := store.Sessions().List(ctx, storage.SessionFilter{FlowID: flowID})
+	rows, err := store.Sessions().List(ctx, storage.SessionFilter{AgentID: flowID})
 	if err != nil || len(rows) != 1 || rows[0].Status != "ended" {
 		t.Fatalf("session rows after shutdown = %+v (err %v), want one ended", rows, err)
 	}
@@ -634,7 +634,7 @@ func TestCallRefusedWhenTheVariableIsGone(t *testing.T) {
 	ts := httptest.NewServer(s.wsServer)
 	defer ts.Close()
 	dialUntilRefused(t, ts, resp.Data.Token)
-	rows, err := s.store.Sessions().List(t.Context(), storage.SessionFilter{FlowID: flowID})
+	rows, err := s.store.Sessions().List(t.Context(), storage.SessionFilter{AgentID: flowID})
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("refused call left sessions %v (err %v)", rows, err)
 	}

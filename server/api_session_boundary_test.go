@@ -78,8 +78,8 @@ func TestSessionRoutesUseManagementBoundaryAndServeQueries(t *testing.T) {
 
 	// 7. Create a session and verify detail endpoint through server
 	flowID := storage.NewID()
-	a := storage.Flow{ID: flowID, Name: "A", Enabled: true, CreatedAt: time.Now()}
-	if err := store.Flows().Create(context.Background(), a); err != nil {
+	a := storage.Agent{ID: flowID, Name: "A", Enabled: true, CreatedAt: time.Now()}
+	if err := store.Agents().Create(context.Background(), a); err != nil {
 		t.Fatal(err)
 	}
 	v, err := publishTestVersion(context.Background(), store, flowID, []byte(`{"llm":"test"}`), nil)
@@ -89,8 +89,8 @@ func TestSessionRoutesUseManagementBoundaryAndServeQueries(t *testing.T) {
 	sessID := storage.NewID()
 	sess := storage.SessionRecord{
 		ID:                  sessID,
-		FlowID:              flowID,
-		FlowVersionID:       v.ID,
+		AgentID:             flowID,
+		AgentVersionID:      v.ID,
 		ConfigHash:          v.ConfigHash,
 		Status:              "active",
 		StartedAt:           time.Now().UTC(),

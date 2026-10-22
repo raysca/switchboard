@@ -77,7 +77,7 @@ func TestUpdateFlowPublishesNewVersionKeepingOldPinned(t *testing.T) {
 	if err != nil || u.Version.Number != 2 {
 		t.Fatalf("err=%v version=%+v", err, u.Version)
 	}
-	old, err := svc.store.Flows().Version(ctx, a.Version.ID)
+	old, err := svc.store.Agents().Version(ctx, a.Version.ID)
 	if err != nil || strings.Contains(string(old.ConfigJSON), `"steps"`) {
 		t.Fatalf("version 1 must stay flat: err=%v", err)
 	}

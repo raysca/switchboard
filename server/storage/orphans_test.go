@@ -28,12 +28,12 @@ func eachStore(t *testing.T, fn func(t *testing.T, s *Store)) {
 	}
 }
 
-// seedSession makes one session of a fresh flow, started at `started`, with the given status.
+// seedSession makes one session of a fresh agent, started at `started`, with the given status.
 func seedSession(t *testing.T, s *Store, started time.Time, status string) (sessionID string) {
 	t.Helper()
 	ctx := context.Background()
-	a := Flow{ID: NewID(), Name: "A", Enabled: true, CreatedAt: time.Now()}
-	if err := s.Flows().Create(ctx, a); err != nil {
+	a := Agent{ID: NewID(), Name: "A", Enabled: true, CreatedAt: time.Now()}
+	if err := s.Agents().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
 	v, err := publishTestVersion(ctx, s, a.ID, []byte(`{}`), nil)
@@ -41,7 +41,7 @@ func seedSession(t *testing.T, s *Store, started time.Time, status string) (sess
 		t.Fatal(err)
 	}
 	id := NewID()
-	if err := s.Sessions().Create(ctx, SessionRecord{ID: id, FlowID: a.ID, FlowVersionID: v.ID, ConfigHash: v.ConfigHash, StartedAt: started, Status: "active"}); err != nil {
+	if err := s.Sessions().Create(ctx, SessionRecord{ID: id, AgentID: a.ID, AgentVersionID: v.ID, ConfigHash: v.ConfigHash, StartedAt: started, Status: "active"}); err != nil {
 		t.Fatal(err)
 	}
 	if status != "active" {
@@ -157,8 +157,8 @@ func TestEndOrphansUnblocksAnMCPServerPinnedOnlyByTheDeadCall(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		a := Flow{ID: NewID(), Name: "pin", Enabled: true}
-		if err := s.Flows().Create(ctx, a); err != nil {
+		a := Agent{ID: NewID(), Name: "pin", Enabled: true}
+		if err := s.Agents().Create(ctx, a); err != nil {
 			t.Fatal(err)
 		}
 		v, err := publishTestVersion(ctx, s, a.ID, []byte(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`), []SelectedTool{{ServerID: m.ID, RemoteName: "tool", SchemaHash: d.Tools[0].SchemaHash, Required: true}})
@@ -166,7 +166,7 @@ func TestEndOrphansUnblocksAnMCPServerPinnedOnlyByTheDeadCall(t *testing.T) {
 			t.Fatal(err)
 		}
 		sessionID := NewID()
-		if err := s.Sessions().Create(ctx, SessionRecord{ID: sessionID, FlowID: a.ID, FlowVersionID: v.ID, ConfigHash: v.ConfigHash, StartedAt: time.Now().Add(-2 * time.Hour), Status: "active"}); err != nil {
+		if err := s.Sessions().Create(ctx, SessionRecord{ID: sessionID, AgentID: a.ID, AgentVersionID: v.ID, ConfigHash: v.ConfigHash, StartedAt: time.Now().Add(-2 * time.Hour), Status: "active"}); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.MCP().DetachAndDelete(ctx, m.ID); err != nil {

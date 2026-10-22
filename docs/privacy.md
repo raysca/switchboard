@@ -115,8 +115,8 @@ Databases that never ran with a trace content mode need no action.
 
 - Sessions with status `active` or `draining` are never deleted and their
   content is never purged, whatever their age.
-- Flow versions (`flow_versions`) and MCP discoveries and tool schemas
-  (`mcp_discoveries`, `mcp_tools`, `flow_mcp_tools`) are immutable (database
+- Flow versions (`agent_versions`) and MCP discoveries and tool schemas
+  (`mcp_discoveries`, `mcp_tools`, `agent_mcp_tools`) are immutable (database
   triggers reject updates and deletes) and retention never touches them.
 - Deletes follow foreign-key order inside transactions, which satisfies the
   `ON DELETE RESTRICT` constraints on SQLite and PostgreSQL.

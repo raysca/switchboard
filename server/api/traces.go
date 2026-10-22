@@ -182,10 +182,10 @@ func (h tracesHandler) collection(w http.ResponseWriter, r *http.Request, reques
 	}
 
 	filter := storage.SessionFilter{
-		Limit:  page.Limit,
-		Offset: page.Offset,
-		Status: r.URL.Query().Get("status"),
-		FlowID: r.URL.Query().Get("flow_id"),
+		Limit:   page.Limit,
+		Offset:  page.Offset,
+		Status:  r.URL.Query().Get("status"),
+		AgentID: r.URL.Query().Get("flow_id"),
 	}
 
 	records, err := h.sessions.List(r.Context(), filter)
@@ -349,8 +349,8 @@ func (h tracesHandler) tracesRoute(w http.ResponseWriter, r *http.Request, id, r
 func toSessionDTO(r storage.SessionRecord) SessionDTO {
 	dto := SessionDTO{
 		ID:            r.ID,
-		FlowID:        r.FlowID,
-		FlowVersionID: r.FlowVersionID,
+		FlowID:        r.AgentID,
+		FlowVersionID: r.AgentVersionID,
 		ConfigHash:    r.ConfigHash,
 		StartedAt:     r.StartedAt,
 		Status:        r.Status,
