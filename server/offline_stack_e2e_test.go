@@ -22,6 +22,14 @@ func TestOfflineStackCall(t *testing.T) {
 	if base == "" {
 		t.Skip("OFFLINE_ADAPTER_URL not set")
 	}
+	// The xai clients to Ollama and the adapter use process-lifetime shared pools: drop their idle
+	// keep-alive connections so the package goleak check sees only leaks. Registered before the rig
+	// so it runs after the rig's Shutdown, once no call can return a connection to the pool.
+	t.Cleanup(func() {
+		for _, o := range []netpool.Options{{Provider: "xai", Stage: "llm"}, {Provider: "xai", Stage: "tts"}} {
+			netpool.Get(o).Close()
+		}
+	})
 	rig := newFlowRigE2E(t, newProbe(), func(c *Config) {
 		c.Providers.Offline.STTEndpoint = "ws" + strings.TrimPrefix(base, "http") + "/v1/stt"
 		c.Providers.Offline.TTSEndpoint = base + "/v1/tts"
@@ -30,13 +38,6 @@ func TestOfflineStackCall(t *testing.T) {
 		}
 	})
 	realVAD(t, rig.s)
-	// The xai clients to Ollama and the adapter use process-lifetime shared pools: drop their idle
-	// keep-alive connections so the package goleak check sees only leaks.
-	t.Cleanup(func() {
-		for _, o := range []netpool.Options{{Provider: "xai", Stage: "llm"}, {Provider: "xai", Stage: "tts"}} {
-			netpool.Get(o).Close()
-		}
-	})
 	call := rig.dial(offlineFlow(t, rig, offlineFlowConfig))
 	call.sendAudio(callerSpeech(t))
 
