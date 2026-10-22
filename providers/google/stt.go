@@ -623,10 +623,15 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 		st.cancel()
 		_ = stream.Close()
 		provErr := MapError("stt", err)
+		p.Errors.Add(1)
 		if p.cfg.CircuitBreaker != nil {
 			p.cfg.CircuitBreaker.Report(provErr, classify)
 		}
-		return provErr
+		// Like a failed Recv: reported, not returned (a ProcessFrame error ends
+		// the call). active is cleared, so the next audio opens a fresh stream.
+		if err := e.Push(&core.ErrorFrame{Err: provErr, Turn: core.TurnID(turn), Gen: core.Generation(turnGen)}); err != nil {
+			return err
+		}
 	}
 
 	return e.Push(f)
