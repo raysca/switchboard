@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// toolRig is a agent with one published version and one MCP server offering tools "echo" and "lookup".
+// toolRig is an agent with one published version and one MCP server offering tools "echo" and "lookup".
 type toolRig struct {
 	s       *Store
 	agentID string
@@ -137,7 +137,7 @@ func TestChoosingToolsClearsTheReviewFlagAndOtherwiseItCarriesForward(t *testing
 	eachStore(t, func(t *testing.T, s *Store) {
 		r := newToolRig(t, s)
 		ctx := context.Background()
-		// Detaching a server a agent pins publishes a version that needs review.
+		// Detaching a server an agent pins publishes a version that needs review.
 		pinned := []SelectedTool{r.sel("echo", false)}
 		if _, _, err := r.publish(t, AgentMutation{Tools: &pinned}); err != nil {
 			t.Fatal(err)

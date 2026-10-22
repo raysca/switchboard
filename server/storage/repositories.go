@@ -175,7 +175,7 @@ func (r AgentRepository) Version(ctx context.Context, id string) (AgentVersion, 
 	return v, nil
 }
 
-// VersionByNumber returns one numbered version of a agent with its selected tools, or sql.ErrNoRows.
+// VersionByNumber returns one numbered version of an agent with its selected tools, or sql.ErrNoRows.
 // Versions are immutable, so this is what an earlier publish looked like.
 func (r AgentRepository) VersionByNumber(ctx context.Context, agentID string, number int) (AgentVersion, error) {
 	var id string
@@ -450,7 +450,7 @@ func (r MCPRepository) DetachAndDelete(ctx context.Context, id string) error {
 	return r.s.WithTx(ctx, func(tx *sql.Tx) error {
 		// Match publication/session-start lock order: agent rows first, then the
 		// MCP server row. This makes detach serialize with new assignments without
-		// holding the server lock while waiting on a agent.
+		// holding the server lock while waiting on an agent.
 		rows, err := tx.QueryContext(ctx, r.s.bind("SELECT DISTINCT a.id FROM agents a JOIN agent_mcp_tools t ON t.agent_version_id=a.current_version_id WHERE t.mcp_server_id=? ORDER BY a.id"), id)
 		if err != nil {
 			return err
