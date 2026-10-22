@@ -377,7 +377,7 @@ func TestMCPCallBackgroundSyncFailsAndHealsAServerAndFlowReadiness(t *testing.T)
 	r := newMCPCallRig(t, func(c *Config) { c.MCP.SyncInterval = 0 })
 	var down atomic.Bool
 	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if down.Load() {
+		if down.Load() && req.Method != http.MethodDelete { // let session DELETEs through so the MCP server ends them (goleak)
 			http.Error(w, "down", http.StatusServiceUnavailable)
 			return
 		}
