@@ -196,6 +196,11 @@ dental-mcp: ## dev|Run the Smile Dental demo MCP server on :18767 (token: dev-de
 dev: ## dev|Run the server and admin UI with generated secrets and a seeded Dev Assistant
 	@./scripts/dev.sh up
 
+dev-fresh: ## dev|Run the dev stack on an empty, unseeded store (wiped each start) to try the first-run wizard at /onboarding
+	rm -rf .govoice-dev-fresh
+	@GOVOICE_DEV_DIR=$(CURDIR)/.govoice-dev-fresh GOVOICE_DEV_SEED=0 ./scripts/dev.sh up
+.PHONY: dev-fresh
+
 admin-link: ## dev|Print a magic link that signs the admin UI in (URL=https://host for a hosted server, else the local dev stack)
 	@if [ -n "$(URL)" ]; then ./scripts/admin-link.sh "$(URL)"; else ./scripts/dev.sh link; fi
 

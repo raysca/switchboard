@@ -32,6 +32,7 @@ examples/secrets
 .agents/
 progress.md
 .govoice-dev/
+.govoice-dev-fresh/
 
 # e2e (Playwright)
 e2e/node_modules/
