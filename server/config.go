@@ -117,7 +117,7 @@ type Config struct {
 		OrtLibPath string `yaml:"ort_lib_path"`
 		QueueCap   int    `yaml:"queue_cap"`
 		// StopMS is the silence after speech that ends the user's VAD turn
-		// (rounded up to 32 ms chunks). Default 800; 200..2000.
+		// (rounded up to 32 ms chunks). Default 200; 200..2000.
 		StopMS int `yaml:"stop_ms"`
 	} `yaml:"vad"`
 
