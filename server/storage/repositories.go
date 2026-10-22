@@ -582,10 +582,11 @@ func (r MCPRepository) AddDiscovery(ctx context.Context, serverID string, tools 
 			return out, errors.New("duplicate MCP tool name")
 		}
 	}
-	// The ordered name/schema-hash pairs are the immutable discovery identity.
-	pairs := make([][2]string, len(sorted))
+	// The ordered name/schema-hash/description triples are the immutable discovery identity (the model sees
+	// descriptions). Descriptions joined the hash later: the first sync after that deploy stores one new discovery per server.
+	pairs := make([][3]string, len(sorted))
 	for i, t := range sorted {
-		pairs[i] = [2]string{t.RemoteName, t.SchemaHash}
+		pairs[i] = [3]string{t.RemoteName, t.SchemaHash, t.Description}
 	}
 	raw, err := jsonMarshal(pairs)
 	if err != nil {

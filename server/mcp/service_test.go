@@ -99,7 +99,7 @@ func TestRefreshPersistsSortedCanonicalImmutableSnapshots(t *testing.T) {
 	if got.DiscoveryHash != first.DiscoveryHash || got.Tools[0].SchemaHash == "" {
 		t.Fatalf("bad canonical hashes: %#v", got)
 	}
-	remote.tools[0].InputSchema = json.RawMessage(`{"type":"object","properties":{"v":{"type":"number"}}}`)
+	remote.tools[0].Description = "updated description"
 	second, err := svc.Refresh(context.Background(), server.ID)
 	if err != nil {
 		t.Fatal(err)

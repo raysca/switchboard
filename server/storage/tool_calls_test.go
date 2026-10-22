@@ -64,8 +64,15 @@ func TestAddDiscoveryDoesNotDuplicateUnchangedTools(t *testing.T) {
 		if n := count(); n != 1 {
 			t.Fatalf("discoveries=%d, want 1", n)
 		}
+		described, err := s.MCP().AddDiscovery(ctx, m.ID, []MCPTool{{RemoteName: "a", Description: "new words", SchemaJSON: []byte(`{"type":"object"}`)}})
+		if err != nil || described.ID == first.ID || count() != 2 {
+			t.Fatalf("description-only change: %+v err=%v", described, err)
+		}
+		if _, err := s.MCP().AddDiscovery(ctx, m.ID, []MCPTool{{RemoteName: "a", Description: "new words", SchemaJSON: []byte(`{"type":"object"}`)}}); err != nil || count() != 2 {
+			t.Fatalf("identical described list duplicated: err=%v", err)
+		}
 		changed, err := s.MCP().AddDiscovery(ctx, m.ID, []MCPTool{{RemoteName: "a", SchemaJSON: []byte(`{"type":"string"}`)}})
-		if err != nil || changed.ID == first.ID || count() != 2 {
+		if err != nil || changed.ID == first.ID || count() != 3 {
 			t.Fatalf("changed=%+v err=%v", changed, err)
 		}
 	})
