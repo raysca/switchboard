@@ -281,7 +281,9 @@ func (wp *workerProcess) start() (workerProc, error) {
 	if err := cmd.Start(); err != nil {
 		_ = stdin.Close()
 		_ = stdout.Close()
-		return workerProc{}, fmt.Errorf("start worker: %w", err)
+		err = fmt.Errorf("start worker: %w", err)
+		wp.logFailure(err) // like a failed handshake: respawnLoop retries silently
+		return workerProc{}, err
 	}
 	p := workerProc{cmd: cmd, stdin: stdin, stdout: stdout}
 	if err := wp.handshake(stdin, stdout); err != nil {

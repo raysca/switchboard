@@ -678,3 +678,25 @@ func (w lockedWriter) Write(p []byte) (int, error) {
 	defer w.mu.Unlock()
 	return w.b.Write(p)
 }
+
+// A worker binary that cannot be started (missing, not executable) is logged once, not retried silently.
+func TestWorkerProcess_SpawnFailureIsLogged(t *testing.T) {
+	logged := captureLogs(t)
+	exec, err := New(Config{Mode: "process", Workers: 1, Batch: 4, QueueCap: 256, IntraOp: 1, PerSessionLimit: 1, ParentDeadline: 200 * time.Millisecond, ParentGrace: 200 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exec.Close()
+	b := exec.backend.(*workerProcessBackend)
+	wp := b.workers[0]
+	good := b.cfg.WorkerBinary
+	b.cfg.WorkerBinary = filepath.Join(t.TempDir(), "missing-vadworker")
+	if _, err := wp.start(); err == nil {
+		t.Fatal("start of a missing binary succeeded")
+	}
+	b.cfg.WorkerBinary = good
+	out := logged()
+	if strings.Count(out, "vad: worker failed") != 1 || !strings.Contains(out, "start worker") {
+		t.Fatalf("spawn failure not logged once:\n%s", out)
+	}
+}
