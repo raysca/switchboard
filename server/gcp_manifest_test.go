@@ -10,7 +10,7 @@ import (
 )
 
 // Every secret name the deployed services and the bootstrap script must agree on.
-var gcpSecretNames = []string{"TOKEN_SECRET", "SWITCHBOARD_MANAGEMENT_API_KEY", "SWITCHBOARD_DATABASE_DSN", "XAI_API_KEY", "ELEVENLABS_API_KEY", "GOOGLE_API_KEY", "GOOGLE_SA_KEY", "DENTAL_MCP_TOKEN"}
+var gcpSecretNames = []string{"TOKEN_SECRET", "SWITCHBOARD_MANAGEMENT_API_KEY", "SWITCHBOARD_DATABASE_DSN", "xai-api-key", "elevenlabs-api-key", "google-api-key", "GOOGLE_SA_KEY", "DENTAL_MCP_TOKEN"}
 
 // The placeholders the workflow's envsubst fills in; any other ${VAR} in a manifest is a typo.
 var gcpSample = map[string]string{
@@ -132,7 +132,7 @@ func TestVoiceServiceManifest(t *testing.T) {
 	}
 	want := map[string]string{
 		"TOKEN_SECRET": "TOKEN_SECRET", "GOVOICE_MANAGEMENT_API_KEY": "SWITCHBOARD_MANAGEMENT_API_KEY",
-		"XAI_API_KEY": "XAI_API_KEY", "ELEVENLABS_API_KEY": "ELEVENLABS_API_KEY", "GOOGLE_API_KEY": "GOOGLE_API_KEY",
+		"XAI_API_KEY": "xai-api-key", "ELEVENLABS_API_KEY": "elevenlabs-api-key", "GOOGLE_API_KEY": "google-api-key",
 		"MCP_TOKEN_DENTAL": "DENTAL_MCP_TOKEN",
 	}
 	got := secretEnv(t, m)

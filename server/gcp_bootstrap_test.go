@@ -74,7 +74,8 @@ func TestBootstrapDryRunPrintsThePlanAndNoSecret(t *testing.T) {
 }
 
 func TestBootstrapRefusesMissingOrMalformedInput(t *testing.T) {
-	for _, drop := range []string{"PROJECT_ID", "GITHUB_REPO", "XAI_API_KEY", "ELEVENLABS_API_KEY", "GOOGLE_API_KEY", "GOOGLE_SA_KEY_FILE"} {
+	// GITHUB_REPO is not in this list: when unset, the bootstrap derives it from gh or the origin remote.
+	for _, drop := range []string{"PROJECT_ID", "XAI_API_KEY", "ELEVENLABS_API_KEY", "GOOGLE_API_KEY", "GOOGLE_SA_KEY_FILE"} {
 		env := append(bootstrapEnv(t), drop+"=") // the later entry wins: this one variable is empty
 		out, err := runBootstrap(t, env)
 		if err == nil || !strings.Contains(out, drop+" is required") {

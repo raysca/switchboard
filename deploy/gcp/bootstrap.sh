@@ -101,9 +101,10 @@ put_secret() {
         gcloud secrets versions add "$name" --data-file=- --project "$PROJECT_ID" >/dev/null ;;
   esac
 }
-put_secret XAI_API_KEY env:XAI_API_KEY
-put_secret ELEVENLABS_API_KEY env:ELEVENLABS_API_KEY
-put_secret GOOGLE_API_KEY env:GOOGLE_API_KEY
+# Secret names are lowercase-hyphen (the Secret Manager convention); the env vars stay uppercase.
+put_secret xai-api-key env:XAI_API_KEY
+put_secret elevenlabs-api-key env:ELEVENLABS_API_KEY
+put_secret google-api-key env:GOOGLE_API_KEY
 put_secret GOOGLE_SA_KEY "file:${GOOGLE_SA_KEY_FILE}"
 put_secret TOKEN_SECRET random
 put_secret SWITCHBOARD_MANAGEMENT_API_KEY random   # mounted as GOVOICE_MANAGEMENT_API_KEY, the variable the server reads
@@ -119,7 +120,7 @@ for v in OPENAI_API_KEY DEEPGRAM_API_KEY CARTESIA_API_KEY NVIDIA_API_KEY; do
 done
 
 echo "== who may read what =="
-for s in XAI_API_KEY ELEVENLABS_API_KEY GOOGLE_API_KEY GOOGLE_SA_KEY TOKEN_SECRET SWITCHBOARD_MANAGEMENT_API_KEY SWITCHBOARD_DATABASE_DSN DENTAL_MCP_TOKEN $PROVIDER_SECRETS; do
+for s in xai-api-key elevenlabs-api-key google-api-key GOOGLE_SA_KEY TOKEN_SECRET SWITCHBOARD_MANAGEMENT_API_KEY SWITCHBOARD_DATABASE_DSN DENTAL_MCP_TOKEN $PROVIDER_SECRETS; do
   run gcloud secrets add-iam-policy-binding "$s" --member="serviceAccount:${RUNTIME_SA}" --role=roles/secretmanager.secretAccessor --project "$PROJECT_ID" --condition=None
 done
 # The public MCP service runs as its own account and reads only its bearer token.
