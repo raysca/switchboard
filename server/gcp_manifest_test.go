@@ -110,11 +110,13 @@ func TestVoiceServiceManifest(t *testing.T) {
 	for k, want := range map[string]string{
 		"autoscaling.knative.dev/minScale": "1", "autoscaling.knative.dev/maxScale": "1",
 		"run.googleapis.com/execution-environment": "gen2", "run.googleapis.com/cpu-throttling": "false",
-		"run.googleapis.com/cloudsql-instances": "demo-proj:us-central1:switchboard-db",
 	} {
 		if a[k] != want {
 			t.Errorf("annotation %s = %q, want %q", k, a[k], want)
 		}
+	}
+	if _, ok := a["run.googleapis.com/cloudsql-instances"]; ok {
+		t.Error("the SQLite demo mounts no Cloud SQL instance")
 	}
 	if spec.TimeoutSeconds != 3600 || spec.ContainerConcurrency != 20 || c.Resources.Limits["cpu"] != "2" || c.Resources.Limits["memory"] != "2Gi" {
 		t.Errorf("sizing: timeout=%d concurrency=%d limits=%v", spec.TimeoutSeconds, spec.ContainerConcurrency, c.Resources.Limits)
@@ -122,14 +124,14 @@ func TestVoiceServiceManifest(t *testing.T) {
 	if spec.ServiceAccountName != "switchboard-runtime@demo-proj.iam.gserviceaccount.com" {
 		t.Errorf("service account = %q", spec.ServiceAccountName)
 	}
-	if strings.Join(c.Args, " ") != "-- /opt/govoice/bin/server -config /etc/govoice/cloudrun.yaml" || len(c.Command) != 1 || c.Command[0] != "/usr/bin/tini" {
+	if strings.Join(c.Args, " ") != "-- /opt/govoice/bin/server -config /etc/govoice/cloudrun-sqlite.yaml" || len(c.Command) != 1 || c.Command[0] != "/usr/bin/tini" {
 		t.Errorf("command/args = %v %v", c.Command, c.Args)
 	}
 	if c.StartupProbe.HTTPGet.Path != "/health" || c.StartupProbe.HTTPGet.Port != 8080 || c.Ports[0].ContainerPort != 8080 {
 		t.Errorf("probe/port: %+v %+v", c.StartupProbe, c.Ports)
 	}
 	want := map[string]string{
-		"TOKEN_SECRET": "TOKEN_SECRET", "GOVOICE_MANAGEMENT_API_KEY": "SWITCHBOARD_MANAGEMENT_API_KEY", "GOVOICE_DATABASE_DSN": "SWITCHBOARD_DATABASE_DSN",
+		"TOKEN_SECRET": "TOKEN_SECRET", "GOVOICE_MANAGEMENT_API_KEY": "SWITCHBOARD_MANAGEMENT_API_KEY",
 		"XAI_API_KEY": "XAI_API_KEY", "ELEVENLABS_API_KEY": "ELEVENLABS_API_KEY", "GOOGLE_API_KEY": "GOOGLE_API_KEY",
 		"MCP_TOKEN_DENTAL": "DENTAL_MCP_TOKEN",
 	}
@@ -149,6 +151,9 @@ func TestVoiceServiceManifest(t *testing.T) {
 	}
 	if env["GOOGLE_APPLICATION_CREDENTIALS"] != "/secrets/google/key.json" {
 		t.Errorf("GOOGLE_APPLICATION_CREDENTIALS = %q", env["GOOGLE_APPLICATION_CREDENTIALS"])
+	}
+	if env["GOVOICE_DATABASE_DSN"] != "/tmp/switchboard.db" {
+		t.Errorf("the SQLite demo database is a tmpfs file, not a secret: GOVOICE_DATABASE_DSN = %q", env["GOVOICE_DATABASE_DSN"])
 	}
 	if len(spec.Volumes) != 1 || spec.Volumes[0].Secret.SecretName != "GOOGLE_SA_KEY" || c.VolumeMounts[0].MountPath != "/secrets/google" {
 		t.Errorf("the Google key must be a mounted secret file: %+v %+v", spec.Volumes, c.VolumeMounts)

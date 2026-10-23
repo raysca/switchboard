@@ -1,8 +1,10 @@
 # Switchboard on Cloud Run: ONE instance (live calls are in memory), CPU always allocated (a call
 # is a long-lived request that needs CPU between requests), 60-minute request timeout (a call is a
-# WebSocket request; the server caps a call at 20 minutes itself). Agents and call history live in
-# Cloud SQL (Postgres), so a deploy or a restart loses nothing. Sizing: max_sessions (config/cloudrun.yaml)
-# is below containerConcurrency on purpose, so admin and probe requests never wait behind calls.
+# WebSocket request; the server caps a call at 20 minutes itself). This is the SQLite demo: agents
+# and call history live in /tmp inside the container and are wiped on every deploy and cold start;
+# the dentistry demo reinstalls itself on every boot. Sizing: max_sessions
+# (config/cloudrun-sqlite.yaml) is below containerConcurrency on purpose, so admin and probe
+# requests never wait behind calls.
 # Rendered with envsubst by .github/workflows/deploy.yml; ${...} placeholders are checked by
 # server/gcp_manifest_test.go. The last env entry is the optional provider keys, built by deploy.yml.
 apiVersion: serving.knative.dev/v1
@@ -21,7 +23,6 @@ spec:
         run.googleapis.com/cpu-throttling: "false"
         run.googleapis.com/startup-cpu-boost: "true"
         run.googleapis.com/sessionAffinity: "true"
-        run.googleapis.com/cloudsql-instances: ${PROJECT_ID}:${REGION}:switchboard-db
     spec:
       serviceAccountName: switchboard-runtime@${PROJECT_ID}.iam.gserviceaccount.com
       containerConcurrency: 20
@@ -29,7 +30,7 @@ spec:
       containers:
         - image: ${IMAGE}
           command: ["/usr/bin/tini"]
-          args: ["--", "/opt/govoice/bin/server", "-config", "/etc/govoice/cloudrun.yaml"]
+          args: ["--", "/opt/govoice/bin/server", "-config", "/etc/govoice/cloudrun-sqlite.yaml"]
           ports:
             - containerPort: 8080
           resources:
@@ -46,18 +47,18 @@ spec:
           env:
             - {name: DENTAL_MCP_URL, value: "${DENTAL_MCP_URL}"}
             - {name: GOOGLE_APPLICATION_CREDENTIALS, value: /secrets/google/key.json}
-            - name: GOVOICE_DATABASE_DSN   # the variable the server reads; the secret is named for the product
-              valueFrom: {secretKeyRef: {name: SWITCHBOARD_DATABASE_DSN, key: latest}}
+            # SQLite demo: the database is a file in the container's writable tmpfs, not a secret.
+            - {name: GOVOICE_DATABASE_DSN, value: "/tmp/switchboard.db"}
             - name: TOKEN_SECRET
               valueFrom: {secretKeyRef: {name: TOKEN_SECRET, key: latest}}
             - name: GOVOICE_MANAGEMENT_API_KEY   # the variable the server reads
               valueFrom: {secretKeyRef: {name: SWITCHBOARD_MANAGEMENT_API_KEY, key: latest}}
             - name: XAI_API_KEY
-              valueFrom: {secretKeyRef: {name: XAI_API_KEY, key: latest}}
+              valueFrom: {secretKeyRef: {name: xai-api-key, key: latest}}
             - name: ELEVENLABS_API_KEY
-              valueFrom: {secretKeyRef: {name: ELEVENLABS_API_KEY, key: latest}}
+              valueFrom: {secretKeyRef: {name: elevenlabs-api-key, key: latest}}
             - name: GOOGLE_API_KEY
-              valueFrom: {secretKeyRef: {name: GOOGLE_API_KEY, key: latest}}
+              valueFrom: {secretKeyRef: {name: google-api-key, key: latest}}
             - name: MCP_TOKEN_DENTAL
               valueFrom: {secretKeyRef: {name: DENTAL_MCP_TOKEN, key: latest}}
             ${PROVIDER_ENV}
