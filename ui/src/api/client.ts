@@ -66,7 +66,7 @@ export const serverConfigSchema = z.object({
   secure: z.boolean(),
   audio: z.object({ backgrounds: z.array(z.string()), cues: z.array(z.string()), allow_agent_background: z.boolean(), background_default: z.string() }),
   idle: z.object({ user_timeout_ms: z.number(), max_prompts: z.number(), prompt_mode: z.string() }),
-  // The effective values a call uses when its flow says nothing (never a raw 0 for "default").
+  // The effective values a call uses when its agent says nothing (never a raw 0 for "default").
   turn: z.object({ manager: z.boolean(), min_words: z.number(), mute: z.array(z.string()), max_mute_ms: z.number(), speech_timeout_ms: z.number(), end_of_turn: z.string(), smart_turn_available: z.boolean(), smart_hold_ms: z.number() }),
 });
 export type ServerConfigDTO = z.infer<typeof serverConfigSchema>;
@@ -135,7 +135,7 @@ const providersEnvelope = z.object({
   data: z.array(providerStatusSchema),
 });
 
-// Flow schemas & types
+// Agent schemas & types
 export const toolSelectionSchema = z.object({
   mcp_server_id: z.string(),
   remote_name: z.string(),
@@ -188,7 +188,7 @@ export const agentSchema = z.object({
 export type AgentDTO = z.infer<typeof agentSchema>;
 
 const AGENT_PAGE = 100; // the server's max page (server/api/api.go ParsePagination)
-export const AGENT_PAGES_MAX = 10; // ponytail: 1000 flows, O(n²) de-dup is fine at that size; offsets can skip a flow deleted mid-walk until the next refetch; a server-side search replaces this if anyone gets near it
+export const AGENT_PAGES_MAX = 10; // ponytail: 1000 agents, O(n²) de-dup is fine at that size; offsets can skip an agent deleted mid-walk until the next refetch; a server-side search replaces this if anyone gets near it
 
 const agentsEnvelope = z.object({
   data: z.array(agentSchema),
@@ -323,7 +323,7 @@ export function spanAttrs(span: TraceSpanDTO): Record<string, unknown> {
 }
 
 /**
- * A route span's event ("preparing", "active", "failed") and the steps it joins, or null for other spans.
+ * A handoff span's event ("preparing", "active", "failed") and the steps it joins, or null for other spans.
  */
 export function handoffSpan(span: TraceSpanDTO): { event: string; from: string; to: string } | null {
   const event = /^handoff\.(\w+)$/.exec(span.name)?.[1];
@@ -561,20 +561,20 @@ export function createApiClient(
       (await request(`/providers/${encodeURIComponent(id)}/test`, z.object({ data: providerTestSchema }), { method: "POST" })).data,
     getProviders: async () =>
       (await request("/providers", providersEnvelope)).data,
-    // ponytail: one page of the server max (100); page through when someone has more flows.
-    // Includes archived flows (sessions still name them); list views filter them out.
+    // ponytail: one page of the server max (100); page through when someone has more agents.
+    // Includes archived agents (sessions still name them); list views filter them out.
     getAgents: async () => {
       const all: AgentDTO[] = [];
       for (let page = 0; page < AGENT_PAGES_MAX; page++) {
         const batch = (await request(`/agents?limit=${AGENT_PAGE}&offset=${page * AGENT_PAGE}`, agentsEnvelope)).data;
-        for (const f of batch) if (!all.some((g) => g.id === f.id)) all.push(f); // a flow created between pages shifts offsets
+        for (const f of batch) if (!all.some((g) => g.id === f.id)) all.push(f); // an agent created between pages shifts offsets
         if (batch.length < AGENT_PAGE) break;
       }
       return all;
     },
     getAgent: async (id: string) =>
       (await request(`/agents/${encodeURIComponent(id)}`, agentEnvelope)).data,
-    /** One earlier publish of a flow (config and tools), read-only: a rollback publishes it again. */
+    /** One earlier publish of an agent (config and tools), read-only: a rollback publishes it again. */
     getAgentVersion: async (id: string, number: number) =>
       (await request(`/agents/${encodeURIComponent(id)}/versions/${number}`, agentVersionEnvelope)).data,
     createAgent: async (input: CreateAgentInput) =>

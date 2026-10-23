@@ -39,9 +39,9 @@ const canonical = (v: unknown) => JSON.stringify(v, sortKeys);
 const canCall = (a: AgentDTO | null) => !!a && (a.readiness.state === "ready" || a.readiness.state === "ready_with_tool_warning");
 
 export type AgentEditorProps = {
-  /** The name a new flow starts with (from the New flow dialog). Ignored for a stored flow. */
+  /** The name a new agent starts with (from the New agent dialog). Ignored for a stored agent. */
   initialName?: string;
-  /** Open the Test call panel on arrival, when the flow can take calls. */
+  /** Open the Test call panel on arrival, when the agent can take calls. */
   initialPanel?: "call";
   agent: AgentDTO | null;
   providers: ProviderStatus[];
@@ -62,11 +62,11 @@ const sameTools = (a: ToolSelection[], b: ToolSelection[]) => {
   return norm(a) === norm(b);
 };
 
-/** One page for a flow: the flow stays put; steps, settings and test calls slide in from the right. */
+/** One page for an agent: the agent stays put; steps, settings and test calls slide in from the right. */
 export function AgentEditor({ agent, providers, client, keyValue, pending, onSubmit, onCancel, initialName, initialPanel, callsInProgress, serverConfig }: AgentEditorProps) {
   const publishedTools = useMemo(() => agent?.current_version?.mcp_tools ?? [], [agent]);
   const published = useMemo(() => (agent?.current_version ? fromAgentConfig(agent.current_version.config, publishedTools.map(toolKey)) : null), [agent, publishedTools]);
-  // The flow's MCP tool selection is part of the draft: it is published and tested with the config.
+  // The agent's MCP tool selection is part of the draft: it is published and tested with the config.
   const [tools, setTools] = useState<ToolSelection[]>(publishedTools);
   const agentTools = useMemo(() => tools.map(toolKey), [tools]);
   const toolsChanged = !sameTools(tools, publishedTools);
@@ -87,7 +87,7 @@ export function AgentEditor({ agent, providers, client, keyValue, pending, onSub
     if (call.live && call.sessionId) setTestedKey(draftKey);
   }, [call.live, call.sessionId, draftKey]);
   const opener = useRef<HTMLElement | null>(null);
-  // The latest flow, for a panel that closes because its step was deleted (React Flow drops the step's DOM a beat later).
+  // The latest agent, for a panel that closes because its step was deleted (React Flow drops the step's DOM a beat later).
   const graphNow = useRef(graph);
   graphNow.current = graph;
 
@@ -98,11 +98,11 @@ export function AgentEditor({ agent, providers, client, keyValue, pending, onSub
   const needSetup = graph.steps.filter((n) => stepIssues(graph, n.id).length > 0).length;
   const limits = serverConfig && { maxMuteMs: serverConfig.turn.max_mute_ms, maxCallSeconds: serverConfig.max_call_duration_seconds };
   const agentProblems = agentIssues(graph, limits);
-  const problems = [...(name.trim() ? [] : ["Give the flow a name in Flow settings."]), ...validate(graph, limits)];
+  const problems = [...(name.trim() ? [] : ["Give the agent a name in Agent settings."]), ...validate(graph, limits)];
   const callable = canCall(agent);
   // A test call runs what is on the canvas; changes that could not be published cannot be tested.
   const draft = unpublished && problems.length === 0 ? { config: toPayload(graph), ...(toolsChanged ? { mcp_tools: tools } : {}) } : undefined;
-  // The call runs the published version, or the canvas when it is a draft test, so the live view follows that flow.
+  // The call runs the published version, or the canvas when it is a draft test, so the live view follows that agent.
   const live = useCallView(draft ? graph : (published ?? graph), call, client);
   const activeStep = graph.steps.find((n) => live.view.steps[n.id]?.state === "active")?.name;
 
@@ -198,18 +198,18 @@ export function AgentEditor({ agent, providers, client, keyValue, pending, onSub
     setConfirming(false);
   };
 
-  const stageClass = ["flow-editor__stage", panel ? "flow-editor__stage--panel" : "", panel?.kind === "step" && wide ? "flow-editor__stage--wide" : ""]
+  const stageClass = ["agent-editor__stage", panel ? "agent-editor__stage--panel" : "", panel?.kind === "step" && wide ? "agent-editor__stage--wide" : ""]
     .join(" ")
     .trim();
 
   return (
-    <div className="flow-editor">
-      <header className="flow-editor__head">
-        <nav aria-label="Breadcrumb" className="flow-editor__crumb">
-          <Link to="/flows">Flows</Link> /
+    <div className="agent-editor">
+      <header className="agent-editor__head">
+        <nav aria-label="Breadcrumb" className="agent-editor__crumb">
+          <Link to="/agents">Agents</Link> /
         </nav>
-        <h1 id="flow-editor-title" tabIndex={-1}>
-          {name.trim() || "New flow"}
+        <h1 id="agent-editor-title" tabIndex={-1}>
+          {name.trim() || "New agent"}
         </h1>
         <span className="chip">{agent ? `v${version}${unpublished ? " · unpublished changes" : ""}` : "Never published"}</span>
         <Status tone={state.tone}>{state.text}</Status>
@@ -222,13 +222,13 @@ export function AgentEditor({ agent, providers, client, keyValue, pending, onSub
           title={call.live ? "End the test call first" : undefined}
           onClick={(e) => open({ kind: "settings" }, e.currentTarget)}
         >
-          Flow settings
+          Agent settings
         </button>
         <button
           type="button"
           className="action-button-small"
           disabled={!callable}
-          title={!agent ? "Publish once to test" : !callable ? "This flow is not ready to take calls" : undefined}
+          title={!agent ? "Publish once to test" : !callable ? "This agent is not ready to take calls" : undefined}
           onClick={(e) => open({ kind: "call" }, e.currentTarget)}
         >
           Test call
@@ -241,13 +241,13 @@ export function AgentEditor({ agent, providers, client, keyValue, pending, onSub
         </button>
       </header>
 
-      <div className="flow-editor__toolbar">
+      <div className="agent-editor__toolbar">
         {graph.steps.length > 0 && (
           <button
             type="button"
-            className="action-button-small flow-editor__add"
+            className="action-button-small agent-editor__add"
             disabled={graph.steps.length >= MAX_STEPS || call.live}
-            title={graph.steps.length >= MAX_STEPS ? `A flow has at most ${MAX_STEPS} steps` : undefined}
+            title={graph.steps.length >= MAX_STEPS ? `An agent has at most ${MAX_STEPS} steps` : undefined}
             onClick={addStep}
           >
             Add step
@@ -257,18 +257,18 @@ export function AgentEditor({ agent, providers, client, keyValue, pending, onSub
           {graph.steps.length} of {MAX_STEPS} steps
         </span>
         <span className="grow" />
-        {graph.steps.length > 0 && !call.live && <span className="subtext">Drag from the dot on a step's route to add a route</span>}
+        {graph.steps.length > 0 && !call.live && <span className="subtext">Drag from the dot on a step's handoff to add a handoff</span>}
       </div>
 
       <div className={stageClass}>
         {graph.steps.length === 0 ? (
-          <div className="flow-editor__blank">
-            <div className="flow-editor__blank-card">
-              <span className="flow-editor__plus" aria-hidden="true">
+          <div className="agent-editor__blank">
+            <div className="agent-editor__blank-card">
+              <span className="agent-editor__plus" aria-hidden="true">
                 +
               </span>
               <h3>Start with one step.</h3>
-              <p>A step answers the caller. Give it instructions, a model and a voice: that's enough to make a test call. Add more steps and routes when you need them.</p>
+              <p>A step answers the caller. Give it instructions, a model and a voice: that's enough to make a test call. Add more steps and handoffs when you need them.</p>
               <button type="button" className="action-button" onClick={addStep}>
                 Add first step
               </button>
@@ -308,7 +308,7 @@ export function AgentEditor({ agent, providers, client, keyValue, pending, onSub
             onChange={setGraph}
             onClose={close}
             returnFocusTo={() => (graphNow.current.steps.some((n) => n.id === panel.id) ? opener.current : null)}
-            fallbackFocusId="flow-editor-title"
+            fallbackFocusId="agent-editor-title"
           />
         )}
         {panel?.kind === "settings" && (
@@ -329,11 +329,11 @@ export function AgentEditor({ agent, providers, client, keyValue, pending, onSub
             onChange={setGraph}
             onClose={close}
             returnFocusTo={opener.current}
-            fallbackFocusId="flow-editor-title"
+            fallbackFocusId="agent-editor-title"
           />
         )}
         {panel?.kind === "call" && agent && (
-          <SidePanel title="Test call" tone="dark" onClose={close} returnFocusTo={opener.current} fallbackFocusId="flow-editor-title">
+          <SidePanel title="Test call" tone="dark" onClose={close} returnFocusTo={opener.current} fallbackFocusId="agent-editor-title">
             {draft && (
               <p role="note" className="note">
                 This call runs your unpublished changes. They are not saved or published.
@@ -362,7 +362,7 @@ export function AgentEditor({ agent, providers, client, keyValue, pending, onSub
           tested={agent ? testedKey === draftKey : undefined}
           firstVersion={!published}
           changes={[
-            ...(renamed ? [`Renamed the flow to ${name.trim()}`] : []),
+            ...(renamed ? [`Renamed the agent to ${name.trim()}`] : []),
             ...(redescribed ? ["Description changed"] : []),
             ...describeChanges(published, graph),
             ...describeToolChanges(publishedTools, tools),

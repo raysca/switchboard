@@ -17,13 +17,13 @@ const OUTCOMES: { id: OutcomeFilter; label: string }[] = [
   { id: "ended", label: "Ended" },
 ];
 
-/** Every call, newest first. Filters live in the URL so a link (from the Flows list) can open one. */
+/** Every call, newest first. Filters live in the URL so a link (from the Agents list) can open one. */
 export function CallsView({ client, keyValue }: CallsViewProps) {
   const [params, setParams] = useSearchParams();
   const pageNumber = Number(params.get("page"));
   // Shown to people as 1, 2, 3…; kept in the URL only from page 2, so Back and links land on the same page.
   const page = Number.isInteger(pageNumber) && pageNumber >= 2 ? pageNumber - 1 : 0;
-  const agentId = params.get("flow") ?? "";
+  const agentId = params.get("agent") ?? "";
   const raw = params.get("outcome");
   const outcomeId: OutcomeFilter = raw === "live" || raw === "ended" ? raw : "";
   const status = outcomeId === "live" ? "active" : outcomeId === "ended" ? "ended" : undefined;
@@ -45,7 +45,7 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
     const agent = next.agent ?? agentId;
     const out = next.outcome ?? outcomeId;
     const p = new URLSearchParams();
-    if (agent) p.set("flow", agent);
+    if (agent) p.set("agent", agent);
     if (out) p.set("outcome", out);
     setParams(p, { replace: true });
   };
@@ -79,9 +79,9 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
   }
 
   const agents = new Map<string, AgentDTO>((agentsQuery.data ?? []).map((f) => [f.id, f]));
-  // The live count follows the flow filter, like the table does.
+  // The live count follows the agent filter, like the table does.
   const liveNow = active.data?.filter((s) => !agentId || s.agent_id === agentId).length;
-  // The API returns at most LIVE_CAP live calls: at the cap the count is a floor, with or without a flow filter.
+  // The API returns at most LIVE_CAP live calls: at the cap the count is a floor, with or without an agent filter.
   const liveText = liveNow === undefined ? "" : (active.data?.length ?? 0) >= LIVE_CAP ? `${liveNow}+` : String(liveNow);
   const hasOlder = (calls.data?.length ?? 0) > PAGE;
   const filtered = agentId !== "" || outcomeId !== "";
@@ -90,11 +90,11 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
     <>
       {head(liveNow === undefined ? "Newest first" : `${liveText} live now`)}
       <div className="calls-toolbar">
-        <label className="form-field calls-flow" htmlFor="calls-flow">
-          <span>Flow</span>
-          <select id="calls-flow" value={agentId} onChange={(e) => setFilter({ agent: e.target.value })}>
-            <option value="">All flows</option>
-            {agentId !== "" && !agents.has(agentId) && <option value={agentId}>Unknown flow</option>}
+        <label className="form-field calls-agent" htmlFor="calls-agent">
+          <span>Agent</span>
+          <select id="calls-agent" value={agentId} onChange={(e) => setFilter({ agent: e.target.value })}>
+            <option value="">All agents</option>
+            {agentId !== "" && !agents.has(agentId) && <option value={agentId}>Unknown agent</option>}
             {[...agents.values()].map((f) => (
               <option key={f.id} value={f.id}>
                 {f.name}
@@ -138,10 +138,10 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
         ) : (
           <section className="message-panel">
             <h2>No calls yet.</h2>
-            <p>Calls appear here as soon as someone talks to a flow. Test one from the editor to see how this looks.</p>
+            <p>Calls appear here as soon as someone talks to an agent. Test one from the editor to see how this looks.</p>
             <p>
-              <Link to="/flows" className="action-button-small">
-                Go to Flows
+              <Link to="/agents" className="action-button-small">
+                Go to Agents
               </Link>
             </p>
           </section>
@@ -155,7 +155,7 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
                 <tr>
                   <th scope="col">Started</th>
                   <th scope="col">Caller</th>
-                  <th scope="col">Flow</th>
+                  <th scope="col">Agent</th>
                   <th scope="col" className="num">
                     Duration
                   </th>
@@ -179,7 +179,7 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
                       </td>
                       <td>{callerLabel(s.caller)}</td>
                       <td>
-                        {f?.name ?? "Unknown flow"} <span className="chip">{versionLabel(s, f)}</span>{s.draft && <> <span className="chip">Draft</span></>}
+                        {f?.name ?? "Unknown agent"} <span className="chip">{versionLabel(s, f)}</span>{s.draft && <> <span className="chip">Draft</span></>}
                       </td>
                       <td className="num">{clock(s.started_at, s.ended_at, now)}</td>
                       <td className="num">{s.turn_count}</td>

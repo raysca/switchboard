@@ -61,8 +61,8 @@ jobs:
         with:
           name: graph-e2e-report
           path: |
-            e2e/test-results-flows
-            e2e/playwright-report-flows
+            e2e/test-results-agents
+            e2e/playwright-report-agents
             e2e/evidence
           retention-days: 7
 

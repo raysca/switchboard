@@ -1,6 +1,6 @@
-import { test, expect, LIVE } from "../lib/flows-stack";
+import { test, expect, LIVE } from "../lib/agents-stack";
 import { step } from "../lib/evidence";
-import { api, botReplies, connectAdmin, openFlowTest, sendText, stage, startCall } from "../lib/flows-helpers";
+import { api, botReplies, connectAdmin, openAgentTest, sendText, stage, startCall } from "../lib/agents-helpers";
 
 // What a call leaves in the console: who called, how it ended, a median reply, a waterfall per reply, and
 // reply times in the Test call panel. Echo providers: free and deterministic.
@@ -18,7 +18,7 @@ const create = (stack: Parameters<typeof api>[0], name: string, extra: object = 
 test("a console test call shows reply times, then Calls shows who called and how it ended", async ({ page, stack }) => {
   await create(stack, PLAIN);
   await connectAdmin(page, stack);
-  await openFlowTest(page, PLAIN);
+  await openAgentTest(page, PLAIN);
   await startCall(page);
   await sendText(page, "Say hello");
   await expect(botReplies(page).first()).toBeVisible();
@@ -50,8 +50,8 @@ test("a console test call shows reply times, then Calls shows who called and how
 test("a caller who stays silent is recorded as having gone silent", async ({ page, stack }) => {
   await create(stack, QUIET, { idle: { user_timeout_ms: 1000, max_prompts: 1, prompt_mode: "say" } });
   await connectAdmin(page, stack);
-  await openFlowTest(page, QUIET);
-  await startCall(page); // nobody speaks: the flow's own wait ends the call
+  await openAgentTest(page, QUIET);
+  await startCall(page); // nobody speaks: the agent's own wait ends the call
   await expect(page.getByText("user_idle")).toBeVisible({ timeout: 30_000 });
   await page.getByRole("link", { name: "Calls", exact: true }).first().click();
   await expect(page.getByRole("row").nth(1)).toContainText("Ended · Caller went silent", { timeout: 15_000 });

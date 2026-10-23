@@ -75,7 +75,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
       <>
         <header className="section-heading">
           <h1 tabIndex={-1}>Dashboard</h1>
-          <p>Operational signals for voice sessions and flows.</p>
+          <p>Operational signals for voice sessions and agents.</p>
         </header>
         <EmptyState title="Connect to view operations">
           Enter a management key to inspect operational health, session telemetry, and provider readiness.
@@ -83,7 +83,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
         <div className="message-panel">
           <h2>First run</h2>
           <p>
-            Connect your first provider and configure a voice flow with the guided setup.
+            Connect your first provider and configure a voice agent with the guided setup.
           </p>
           <Link to="/onboarding" className="action-button-small">
             Start first run
@@ -98,7 +98,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
       <>
         <header className="section-heading">
           <h1 tabIndex={-1}>Dashboard</h1>
-          <p>Operational signals for voice sessions and flows.</p>
+          <p>Operational signals for voice sessions and agents.</p>
         </header>
         <LoadingState label="Loading operational signals" />
       </>
@@ -110,7 +110,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
       <>
         <header className="section-heading">
           <h1 tabIndex={-1}>Dashboard</h1>
-          <p>Operational signals for voice sessions and flows.</p>
+          <p>Operational signals for voice sessions and agents.</p>
         </header>
         <ErrorState
           reassure
@@ -154,7 +154,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
       <header className="dash-head">
         <div>
           <h1 tabIndex={-1}>Dashboard</h1>
-          <p>Operational signals for voice sessions and flows.</p>
+          <p>Operational signals for voice sessions and agents.</p>
         </div>
         <p className="health-pill" data-tone={tone} role="status">
           <span className="lamp" aria-hidden="true" />
@@ -189,7 +189,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
                 {agents.length > 0 ? "✓" : "2"}
               </span>
               <span>
-                <b>Create your first flow</b>
+                <b>Create your first agent</b>
                 <span className="subtext">Guided setup takes about three minutes.</span>
               </span>
               {agents.length === 0 && (
@@ -260,7 +260,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
 
           {recent.length === 0 ? (
             <EmptyState title="No recent calls">
-              No calls recorded yet. Test a flow to see one here.
+              No calls recorded yet. Test an agent to see one here.
             </EmptyState>
           ) : (
             <DataTable
@@ -291,13 +291,13 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
             <ul className="ledger" aria-label="Service readiness">
               <li className="ledger__row">
                 <span className="lamp" data-tone={readyAgentsCount > 0 ? "ok" : "idle"} aria-hidden="true" />
-                <span className="ledger__name">Flows</span>
+                <span className="ledger__name">Agents</span>
                 <span className="ledger__value">
                   {readyAgentsCount} of {totalAgents} ready
                 </span>
-                {totalAgents === 0 && <span className="subtext">No flows created yet.</span>}
-                <Link to="/flows" className="ledger__link">
-                  View flows
+                {totalAgents === 0 && <span className="subtext">No agents created yet.</span>}
+                <Link to="/agents" className="ledger__link">
+                  View agents
                 </Link>
               </li>
               <li className="ledger__row">

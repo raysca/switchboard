@@ -38,7 +38,7 @@ describe("deriveView", () => {
     expect(v.trail.map((t) => t.step)).toEqual(["front", "sales"]);
   });
 
-  it("a failed route leaves the old step active", () => {
+  it("a failed handoff leaves the old step active", () => {
     const spans = [
       span("preparing", "front", "sales", "2026-10-11T10:00:01Z"),
       span("failed", "front", "sales", "2026-10-11T10:00:02Z"),

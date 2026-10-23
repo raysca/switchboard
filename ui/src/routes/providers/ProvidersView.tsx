@@ -18,7 +18,7 @@ import {
 
 export type ProvidersViewProps = { client: ApiClient; keyValue: string | null };
 
-// GET /flows returns at most this many flows; a count that reaches it is a floor.
+// GET /agents returns at most this many agents; a count that reaches it is a floor.
 const AGENT_CAP = 100;
 
 const CIRCUIT_TEXT: Partial<Record<ProviderTest["results"][number]["circuit"], string>> = { open: "Circuit open", half_open: "Circuit half open" };
@@ -50,7 +50,7 @@ function ConnectionTest({ p, client }: { p: ProviderStatus; client: ApiClient })
       <div role="status" aria-live="polite">
         {test.data && (
           <>
-            <ul className="provider-flows" aria-label="Connection test results">
+            <ul className="provider-agents" aria-label="Connection test results">
               {test.data.results.map((r) => (
                 <li key={r.stage}>{resultText(r)}</li>
               ))}
@@ -74,7 +74,7 @@ function Panel({ p, agents, agentsCapped, client }: { p: ProviderStatus; agents:
         <h2 id="provider-title">{p.display_name}</h2>
         <p className="provider-panel__health">
           <span className="lamp" data-tone={cred.ok ? "ok" : undefined} aria-hidden="true" />
-          {cred.ok ? "Credential found in the server environment." : "No credential. Flows cannot use it yet."}
+          {cred.ok ? "Credential found in the server environment." : "No credential. Agents cannot use it yet."}
         </p>
       </div>
 
@@ -119,19 +119,19 @@ function Panel({ p, agents, agentsCapped, client }: { p: ProviderStatus; agents:
       <section aria-labelledby="provider-used-by">
         <h3 id="provider-used-by">Used by</h3>
         {using === undefined ? (
-          <p className="subtext">The flows could not be loaded, so which flows use this provider is unknown.</p>
+          <p className="subtext">The agents could not be loaded, so which agents use this provider is unknown.</p>
         ) : using.length === 0 ? (
-          <p className="subtext">{agentsCapped ? `No flow among the first ${AGENT_CAP} uses this provider; later flows were not checked.` : "No flow uses this provider yet."}</p>
+          <p className="subtext">{agentsCapped ? `No agent among the first ${AGENT_CAP} uses this provider; later agents were not checked.` : "No agent uses this provider yet."}</p>
         ) : (
           <>
-            <ul className="provider-flows">
+            <ul className="provider-agents">
               {using.map((f) => (
                 <li key={f.id}>
-                  <Link to={`/flows/${encodeURIComponent(f.id)}`}>{f.name}</Link>
+                  <Link to={`/agents/${encodeURIComponent(f.id)}`}>{f.name}</Link>
                 </li>
               ))}
             </ul>
-            {agentsCapped && <p className="subtext">Only the first {AGENT_CAP} flows were checked.</p>}
+            {agentsCapped && <p className="subtext">Only the first {AGENT_CAP} agents were checked.</p>}
           </>
         )}
       </section>
@@ -240,7 +240,7 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
                   <th scope="col">Services</th>
                   <th scope="col">Credential</th>
                   <th scope="col" className="num">
-                    Flows
+                    Agents
                   </th>
                 </tr>
               </thead>

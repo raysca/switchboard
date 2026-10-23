@@ -8,7 +8,7 @@ import { NewAgentDialog } from "./NewAgentDialog";
 import { canTest, liveCalls, readiness, reasonText, handoffCount, stepCount, toolCount } from "./agentStats";
 import { useActiveSessions } from "./useActiveSessions";
 
-/** getFlows reads at most this many flows (FLOW_PAGES_MAX pages of 100). */
+/** getAgents reads at most this many agents (AGENT_PAGES_MAX pages of 100). */
 const LIST_LIMIT = AGENT_PAGES_MAX * 100;
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
@@ -35,7 +35,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
       setActionError(null);
       refresh();
     },
-    onError: (err) => setActionError(asApiError(err, "Could not change whether the flow is enabled")),
+    onError: (err) => setActionError(asApiError(err, "Could not change whether the agent is enabled")),
   });
   const copyMutation = useMutation({
     mutationFn: ({ id, name }: { id: string; name?: string; open?: boolean }) => client.duplicateAgent(id, name ? { name } : undefined),
@@ -43,9 +43,9 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
       setActionError(null);
       setDialog(null);
       refresh();
-      // Hand the copy to the editor's cache first, or it would look for a flow the list has not got yet.
+      // Hand the copy to the editor's cache first, or it would look for an agent the list has not got yet.
       if (vars.open) queryClient.setQueryData(["agents", copy.id], copy);
-      if (vars.open) navigate(`/flows/${encodeURIComponent(copy.id)}`);
+      if (vars.open) navigate(`/agents/${encodeURIComponent(copy.id)}`);
     },
     onError: (err) => setActionError(asApiError(err, "Copy failed")),
   });
@@ -79,7 +79,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
   return (
     <>
       <header className="page-head">
-        <h1 tabIndex={-1}>Flows</h1>
+        <h1 tabIndex={-1}>Agents</h1>
         {agents.length > 0 && (
           <span className="subtext" role="status">
             {enabledCount} enabled · {notReady} not ready{onCalls > 0 ? ` · ${plural(onCalls, "call", "calls")} in progress` : ""}
@@ -88,31 +88,31 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
         <span className="grow" />
         {agents.length > 0 && (
           <>
-            <label className="form-field flows-filter" htmlFor="flows-filter">
-              <span className="visually-hidden">Filter flows</span>
-              <input id="flows-filter" type="search" placeholder="Filter by name" value={filter} onChange={(e) => setFilter(e.target.value)} />
+            <label className="form-field agents-filter" htmlFor="agents-filter">
+              <span className="visually-hidden">Filter agents</span>
+              <input id="agents-filter" type="search" placeholder="Filter by name" value={filter} onChange={(e) => setFilter(e.target.value)} />
             </label>
             <button type="button" className="action-button" onClick={() => openDialog({ kind: "new" })}>
-              New flow
+              New agent
             </button>
           </>
         )}
       </header>
 
       {!keyValue ? (
-        <EmptyState title="Connect to manage flows">Enter a management key above to configure voice flows.</EmptyState>
+        <EmptyState title="Connect to manage agents">Enter a management key above to configure voice agents.</EmptyState>
       ) : agentsQuery.isPending ? (
-        <LoadingState label="Loading flows" skeleton={6} />
+        <LoadingState label="Loading agents" skeleton={6} />
       ) : agentsQuery.isError && !agentsQuery.data ? (
-        <ErrorState title="Failed to load flows" error={agentsQuery.error as ApiError} onRetry={() => void agentsQuery.refetch()} reassure />
+        <ErrorState title="Failed to load agents" error={agentsQuery.error as ApiError} onRetry={() => void agentsQuery.refetch()} reassure />
       ) : agents.length === 0 ? (
-        <section aria-labelledby="no-flows" className="flows-empty">
-          <div className="flows-empty__lead">
-            <h2 id="no-flows">No flows yet.</h2>
-            <p>A flow is one voice line. Start with a single step that answers the phone; add more steps and routes when you need them.</p>
+        <section aria-labelledby="no-agents" className="agents-empty">
+          <div className="agents-empty__lead">
+            <h2 id="no-agents">No agents yet.</h2>
+            <p>An agent is one voice line. Start with a single step that answers the phone; add more steps and handoffs when you need them.</p>
             {providersQuery.isSuccess &&
               (readyLine ? (
-                <p className="subtext flows-empty__ready">
+                <p className="subtext agents-empty__ready">
                   <span className="lamp" data-tone="ok" aria-hidden="true" /> {readyLine}
                 </p>
               ) : (
@@ -122,38 +122,38 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
               ))}
             <div className="row">
               <button type="button" className="action-button" onClick={() => openDialog({ kind: "new" })}>
-                New flow
+                New agent
               </button>
               <Link to="/onboarding" className="action-button-small">
                 Use guided setup
               </Link>
             </div>
           </div>
-          <dl className="flows-empty__terms">
-            <div><dt>Flow</dt><dd>What callers reach. You create it, test it and publish it in versions.</dd></div>
-            <div><dt>Steps</dt><dd>Parts of one flow, like Reception or Billing. Each has its own instructions, model, voice and tools. Up to 8.</dd></div>
-            <div><dt>Routes</dt><dd>Plain-language conditions that move the caller from one step to another.</dd></div>
-            <div><dt>Flow settings</dt><dd>Shared by the whole call: listening, turn-taking, memory, recording.</dd></div>
+          <dl className="agents-empty__terms">
+            <div><dt>Agent</dt><dd>What callers reach. You create it, test it and publish it in versions.</dd></div>
+            <div><dt>Steps</dt><dd>Parts of one agent, like Reception or Billing. Each has its own instructions, model, voice and tools. Up to 8.</dd></div>
+            <div><dt>Handoffs</dt><dd>Plain-language conditions that move the caller from one step to another.</dd></div>
+            <div><dt>Agent settings</dt><dd>Shared by the whole call: listening, turn-taking, memory, recording.</dd></div>
           </dl>
         </section>
       ) : (
-        <div className="flows-view">
-          {actionError && !dialog && <ErrorState title="Flow action failed" error={actionError} onRetry={() => setActionError(null)} />}
-          {all.length >= LIST_LIMIT && <p className="subtext" role="note">Showing {agents.length} flows; the console lists at most {LIST_LIMIT}.</p>}
-          {shown.length === 0 && <p className="subtext">No flow matches “{filter.trim()}”.</p>}
+        <div className="agents-view">
+          {actionError && !dialog && <ErrorState title="Agent action failed" error={actionError} onRetry={() => setActionError(null)} />}
+          {all.length >= LIST_LIMIT && <p className="subtext" role="note">Showing {agents.length} agents; the console lists at most {LIST_LIMIT}.</p>}
+          {shown.length === 0 && <p className="subtext">No agent matches “{filter.trim()}”.</p>}
 
-          <ul className="flow-list">
+          <ul className="agent-list">
             {shown.map((f) => {
               const r = readiness(f);
               const live = liveCalls(sessions, f);
               return (
-                <li key={f.id} className="flow-row">
-                  <div className="flow-row__main">
-                    <div className="flow-row__title">
+                <li key={f.id} className="agent-row">
+                  <div className="agent-row__main">
+                    <div className="agent-row__title">
                       <span className="lamp" data-tone={r.tone === "idle" ? undefined : r.tone} aria-hidden="true" />
-                      <Link to={`/flows/${encodeURIComponent(f.id)}`}>{f.name}</Link>
+                      <Link to={`/agents/${encodeURIComponent(f.id)}`}>{f.name}</Link>
                       <span className="chip">v{f.current_version?.number ?? 1}</span>
-                      <span className="flow-row__state">{r.label}</span>
+                      <span className="agent-row__state">{r.label}</span>
                     </div>
                     {f.description && <p className="subtext">{f.description}</p>}
                     {f.enabled && f.readiness.reasons.length > 0 && (
@@ -171,21 +171,21 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
                       </div>
                     )}
                   </div>
-                  <div className="flow-row__figures">
+                  <div className="agent-row__figures">
                     <p>
-                      {plural(stepCount(f), "step", "steps")} · {plural(handoffCount(f), "route", "routes")} · {plural(toolCount(f), "tool", "tools")}
+                      {plural(stepCount(f), "step", "steps")} · {plural(handoffCount(f), "handoff", "handoffs")} · {plural(toolCount(f), "tool", "tools")}
                     </p>
                     {live.live > 0 && (
                       <p>
-                        <Link to={`/sessions?flow=${encodeURIComponent(f.id)}&outcome=live`}>
+                        <Link to={`/sessions?agent=${encodeURIComponent(f.id)}&outcome=live`}>
                           {plural(live.live, "call", "calls")} live{live.onOlderVersion > 0 ? `, ${live.onOlderVersion} on an earlier version` : ""}
                         </Link>
                       </p>
                     )}
                   </div>
-                  <div className="flow-row__actions">
+                  <div className="agent-row__actions">
                     {canTest(f) && (
-                      <Link to={`/flows/${encodeURIComponent(f.id)}?panel=test`} className="action-button-small" aria-label={`Test ${f.name}`}>
+                      <Link to={`/agents/${encodeURIComponent(f.id)}?panel=test`} className="action-button-small" aria-label={`Test ${f.name}`}>
                         Test
                       </Link>
                     )}
@@ -241,7 +241,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
           agents={agents.map((f) => ({ id: f.id, name: f.name }))}
           pending={copyMutation.isPending}
           error={actionError?.message ?? null}
-          onBlank={(name) => navigate(`/flows/new?name=${encodeURIComponent(name)}`)}
+          onBlank={(name) => navigate(`/agents/new?name=${encodeURIComponent(name)}`)}
           onCopy={(id, name) => copyMutation.mutate({ id, name, open: true })}
           onCancel={() => setDialog(null)}
         />

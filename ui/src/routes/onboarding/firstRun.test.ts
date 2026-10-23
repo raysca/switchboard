@@ -55,7 +55,7 @@ describe("stacksFrom", () => {
 
 describe("agentFor", () => {
   const [g] = stacksFrom([google]);
-  it("builds a flat flow from the stack's catalog defaults, the name and the job", () => {
+  it("builds a flat agent from the stack's catalog defaults, the name and the job", () => {
     expect(agentFor(g, { name: "  Front desk ", job: " Answer calls. ", voice: "puck" })).toEqual({
       name: "Front desk",
       description: "",

@@ -75,7 +75,7 @@ export function ConnectServerDialog(props: ConnectServerDialogProps) {
         {!server && (
           <label className="check-row" htmlFor={`${uid}-enabled`}>
             <input id={`${uid}-enabled`} type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-            Enabled for flows
+            Enabled for agents
           </label>
         )}
         <div className="dialog__actions">

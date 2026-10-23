@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { ArchiveAgentDialog } from "./ArchiveAgentDialog";
 
 describe("ArchiveAgentDialog", () => {
-  it("says what archiving does and confirms or keeps the flow", async () => {
+  it("says what archiving does and confirms or keeps the agent", async () => {
     const user = userEvent.setup();
     const onConfirm = vi.fn();
     const onCancel = vi.fn();
@@ -12,8 +12,8 @@ describe("ArchiveAgentDialog", () => {
     const dialog = screen.getByRole("dialog", { name: "Archive Front desk?" });
     expect(dialog).toHaveTextContent("stops taking calls");
     expect(dialog).toHaveTextContent("version history and past calls are kept");
-    await user.click(screen.getByRole("button", { name: "Keep flow" }));
-    await user.click(screen.getByRole("button", { name: "Archive flow" }));
+    await user.click(screen.getByRole("button", { name: "Keep agent" }));
+    await user.click(screen.getByRole("button", { name: "Archive agent" }));
     expect(onCancel).toHaveBeenCalledOnce();
     expect(onConfirm).toHaveBeenCalledOnce();
   });

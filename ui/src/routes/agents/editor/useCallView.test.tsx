@@ -23,7 +23,7 @@ const handedOff: SessionTracesDTO = {
 };
 
 describe("useCallView", () => {
-  it("clears the just-taken route after its beat even when the speaker changes meanwhile", async () => {
+  it("clears the just-taken handoff after its beat even when the speaker changes meanwhile", async () => {
     const getSessionTraces = vi.fn().mockResolvedValueOnce({ ...handedOff, spans: [] }).mockResolvedValue(handedOff);
     const client = { getSessionTraces } as unknown as ApiClient;
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -31,7 +31,7 @@ describe("useCallView", () => {
     const call = (userSpeaking: boolean): CallInfo => ({ sessionId: "s1", userSpeaking, botSpeaking: false, live: true });
     const { result, rerender } = renderHook(({ c }) => useCallView(graph, c, client, 20), { wrapper, initialProps: { c: call(false) } });
     await waitFor(() => expect(result.current.justHanded).toBe("e1"));
-    rerender({ c: call(true) }); // the caller starts speaking right after the route is taken
+    rerender({ c: call(true) }); // the caller starts speaking right after the handoff is taken
     await waitFor(() => expect(result.current.justHanded).toBeUndefined(), { timeout: 1500 });
   });
 });

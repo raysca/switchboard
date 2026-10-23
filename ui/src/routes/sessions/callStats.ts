@@ -14,7 +14,7 @@ export function outcome(s: SessionDTO): { label: string; live: boolean } {
   }
 }
 
-/** The API has no version list (spec S2): a version's number is known only while it is the flow's current one. */
+/** The API has no version list (spec S2): a version's number is known only while it is the agent's current one. */
 export function versionLabel(s: SessionDTO, agent: AgentDTO | undefined): string {
   const current = agent?.current_version;
   return current && current.id === s.agent_version_id ? `v${current.number}` : "earlier version";
@@ -38,18 +38,18 @@ type Steps = { names: Map<string, string>; start: string | undefined };
 
 /**
  * Like `steps`, but a call on an earlier version does not inherit the current start step: it may have
- * been a different step then, so such a call without routes is labelled with the flow's name instead.
+ * been a different step then, so such a call without handoffs is labelled with the agent's name instead.
  */
 export function stepsFor(s: SessionDTO, agent: AgentDTO | undefined): Steps {
   const st = steps(agent);
   return agent?.current_version?.id === s.agent_version_id ? st : { names: st.names, start: undefined };
 }
 
-// The server records its own prompts as turns: after a route that happens while the call is idle, and
+// The server records its own prompts as turns: after a handoff that happens while the call is idle, and
 // when the caller has been silent. They are not the caller's words.
 const SYSTEM_TURN = /^\[(async tool result|idle notice)/;
 
-/** Step names and the start step, from the flow's current version. Older calls may name steps that are gone. */
+/** Step names and the start step, from the agent's current version. Older calls may name steps that are gone. */
 export function steps(agent: AgentDTO | undefined): Steps {
   const cfg = agent?.current_version?.config as { start?: string; steps?: { id: string; name?: string }[] } | undefined;
   const names = new Map<string, string>();
@@ -57,9 +57,9 @@ export function steps(agent: AgentDTO | undefined): Steps {
   return { names, start: cfg?.start };
 }
 
-type Route = { at: number; from: string; to: string };
+type Handoff = { at: number; from: string; to: string };
 
-function spansNamed(traces: SessionTracesDTO | null | undefined, event: string): Route[] {
+function spansNamed(traces: SessionTracesDTO | null | undefined, event: string): Handoff[] {
   return (traces?.spans ?? [])
     .flatMap((s) => {
       const r = handoffSpan(s);
@@ -85,7 +85,7 @@ export type CallLine =
 
 /**
  * The words of a call, in order, each reply labelled with the step that was active when it was said.
- * A turn row does not name its step, so this uses the times of the route spans.
+ * A turn row does not name its step, so this uses the times of the handoff spans.
  */
 export function transcript(session: SessionDTO, turns: TurnDTO[], traces: SessionTracesDTO | null | undefined, st: Steps, fallback: string): CallLine[] {
   const start = Date.parse(session.started_at);
@@ -203,7 +203,7 @@ const END_WORDS: Record<string, string> = {
   caller_hung_up: "Caller hung up",
   silent_caller: "Caller went silent",
   agent_stuck: "Agent stopped responding",
-  ended_by_agent: "Ended by the flow",
+  ended_by_agent: "Ended by the agent",
   time_limit: "Reached the time limit",
   connection_lost: "Connection lost",
   server_shutdown: "Server shutting down",

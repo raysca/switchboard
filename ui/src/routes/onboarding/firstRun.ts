@@ -18,7 +18,7 @@ export const DEFAULT_JOB = "Answer calls politely. Greet the caller, find out wh
 
 const pick = (entries: Entry[] | undefined): Entry | undefined => entries?.find((e) => e.default) ?? entries?.[0];
 
-/** One provider for all three stages, with the catalog's defaults. Mixing providers is done in the flow editor. */
+/** One provider for all three stages, with the catalog's defaults. Mixing providers is done in the agent editor. */
 export function stacksFrom(providers: ProviderStatus[]): Stack[] {
   const stacks: Stack[] = [];
   for (const provider of providers) {
@@ -37,7 +37,7 @@ export function stacksFrom(providers: ProviderStatus[]): Stack[] {
     });
   }
   // Ready stacks first, the simulated one after the real ones: an operator who just clicks Continue
-	// must not end up with a flow on echo when real keys are set.
+	// must not end up with an agent on echo when real keys are set.
 	const simulated = (s: Stack) => Number(s.provider.id === "echo");
 	return stacks.sort((a, b) => Number(b.ready) - Number(a.ready) || simulated(a) - simulated(b) || a.provider.display_name.localeCompare(b.provider.display_name));
 }

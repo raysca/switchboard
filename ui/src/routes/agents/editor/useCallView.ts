@@ -11,8 +11,8 @@ export const NO_CALL: CallInfo = { sessionId: null, userSpeaking: false, botSpea
 const HANDOFF_MS = 450;
 
 /**
- * Which step holds the call, which it is preparing, and the routes taken,
- * from the server's route trace spans plus what the voice client hears.
+ * Which step holds the call, which it is preparing, and the handoffs taken,
+ * from the server's handoff trace spans plus what the voice client hears.
  */
 export function useCallView(graph: AgentDraft, call: CallInfo, client: ApiClient, pollMs = 500) {
   const { sessionId, userSpeaking, botSpeaking, live } = call;
@@ -39,7 +39,7 @@ export function useCallView(graph: AgentDraft, call: CallInfo, client: ApiClient
   );
   const traversedHandoffs = useMemo(() => view.traversed.flatMap((t) => (t.handoffId ? [t.handoffId] : [])), [view]);
 
-  // The route just taken is marked for a beat so the canvas can draw the cable.
+  // The handoff just taken is marked for a beat so the canvas can draw the cable.
   const [justHanded, setJustHanded] = useState<string | undefined>();
   const seen = useRef<number | null>(null);
   useEffect(() => {
@@ -50,7 +50,7 @@ export function useCallView(graph: AgentDraft, call: CallInfo, client: ApiClient
     setJustHanded(traversedHandoffs[count - 1]);
     const t = setTimeout(() => setJustHanded(undefined), HANDOFF_MS);
     return () => clearTimeout(t);
-    // Only a new route restarts the beat: the array is rebuilt whenever the speaker changes.
+    // Only a new handoff restarts the beat: the array is rebuilt whenever the speaker changes.
   }, [traversedHandoffs.length, live]);
 
   return { view, traversedHandoffs, justHanded };

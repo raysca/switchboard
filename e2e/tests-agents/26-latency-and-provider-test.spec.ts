@@ -1,6 +1,6 @@
-import { test, expect, LIVE } from "../lib/flows-stack";
+import { test, expect, LIVE } from "../lib/agents-stack";
 import { step } from "../lib/evidence";
-import { api, botReply, connectAdmin, openFlowTest, sendText, stage, startCall } from "../lib/flows-helpers";
+import { api, botReply, connectAdmin, openAgentTest, sendText, stage, startCall } from "../lib/agents-helpers";
 
 // Per-turn latency is stored and shown in Call detail; a provider is checked only when asked.
 test.skip(LIVE, "the labelled echo reply and the instant echo provider are echo-only");
@@ -14,7 +14,7 @@ test("a finished call shows how long the reply took", async ({ page, stack }) =>
     body: JSON.stringify({ name: NAME, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "LATENCY PROMPT" }), tts: stage({ voice: "frontvoice" }) } }),
   });
   await connectAdmin(page, stack);
-  await openFlowTest(page, NAME);
+  await openAgentTest(page, NAME);
   await startCall(page);
   await sendText(page, "hello");
   await expect(botReply(page, /LATENCY PROMPT/)).toBeVisible();

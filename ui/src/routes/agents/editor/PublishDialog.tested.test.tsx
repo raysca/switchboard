@@ -19,7 +19,7 @@ describe("PublishDialog test-call check", () => {
     expect(screen.getByText("Tested with a call on this draft")).toBeVisible();
   });
 
-  it("says nothing when the flow cannot be tested yet", () => {
+  it("says nothing when the agent cannot be tested yet", () => {
     dialog(undefined);
     expect(screen.queryByText(/tested/i)).toBeNull();
   });

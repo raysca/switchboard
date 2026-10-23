@@ -30,7 +30,7 @@ const session = (over: Partial<SessionDTO>): SessionDTO => ({
 });
 
 describe("agent figures", () => {
-  it("counts steps, routes and tools; a flat config is one step", () => {
+  it("counts steps, handoffs and tools; a flat config is one step", () => {
     expect(stepCount(agent())).toBe(1);
     const graph = agent({}, { start: "a", steps: [{ id: "a" }, { id: "b" }, { id: "c" }], handoffs: [{ id: "e1" }, { id: "e2" }] });
     expect([stepCount(graph), handoffCount(graph)]).toEqual([3, 2]);
@@ -50,13 +50,13 @@ describe("agent figures", () => {
     expect(readiness(agent({ enabled: false, readiness: { state: "not_ready", reasons: [] } }))).toEqual({ tone: "idle", label: "Disabled" });
   });
 
-  it("only offers a test call for an enabled, ready flow", () => {
+  it("only offers a test call for an enabled, ready agent", () => {
     expect(canTest(agent())).toBe(true);
     expect(canTest(agent({ enabled: false }))).toBe(false);
     expect(canTest(agent({ readiness: { state: "not_ready", reasons: [] } }))).toBe(false);
   });
 
-  it("counts a flow's active calls and the ones still on an earlier version", () => {
+  it("counts an agent's active calls and the ones still on an earlier version", () => {
     const sessions = [
       session({ id: "1" }),
       session({ id: "2", agent_version_id: "v1" }),

@@ -719,36 +719,36 @@ th {
 
 
 
-/* Flow canvas: steps are cards, routes are the cables a call runs along */
-.flow-canvas {
+/* Agent canvas: steps are cards, handoffs are the cables a call runs along */
+.agent-canvas {
   border-top: 1px solid var(--rule);
   border-bottom: 1px solid var(--rule);
   background: var(--surface);
 }
 /* React Flow's own stylesheet paints the controls light; override the buttons and the dot grid with tokens. */
-.flow-canvas .react-flow__controls-button {
+.agent-canvas .react-flow__controls-button {
   background: var(--surface-2);
   color: var(--ink);
   border-bottom-color: var(--rule);
 }
-.flow-canvas .react-flow__controls-button:hover {
+.agent-canvas .react-flow__controls-button:hover {
   background: var(--rule);
 }
-.flow-canvas .react-flow__controls-button svg {
+.agent-canvas .react-flow__controls-button svg {
   fill: currentColor;
 }
-.flow-canvas .react-flow__background pattern circle {
+.agent-canvas .react-flow__background pattern circle {
   fill: var(--rule);
 }
-.flow-canvas .react-flow__edge-path {
+.agent-canvas .react-flow__edge-path {
   stroke: var(--ink-2);
   stroke-width: 2;
 }
-.flow-canvas .react-flow__edge-text {
+.agent-canvas .react-flow__edge-text {
   fill: var(--ink-2);
   font-size: 12px;
 }
-.flow-canvas .react-flow__handle {
+.agent-canvas .react-flow__handle {
   width: 8px;
   height: 8px;
   background: var(--ink);
@@ -838,7 +838,7 @@ th {
 .step-node--visited .step-node__dot {
   background: var(--ink-2);
 }
-.route-edge--traversed .react-flow__edge-path {
+.handoff-edge--traversed .react-flow__edge-path {
   stroke: var(--ink);
   stroke-width: 3;
 }
@@ -866,7 +866,7 @@ th {
     grid-template-columns: minmax(0, 1fr);
   }
 }
-/* The route moment: the cable draws in and the new lamp lights. Motion only when allowed. */
+/* The handoff moment: the cable draws in and the new lamp lights. Motion only when allowed. */
 @keyframes cable-draw {
   from {
     stroke-dasharray: 800;
@@ -883,7 +883,7 @@ th {
   }
 }
 @media (prefers-reduced-motion: no-preference) {
-  .route-edge--just .react-flow__edge-path {
+  .handoff-edge--just .react-flow__edge-path {
     animation: cable-draw 400ms ease-out;
   }
   .step-node--active {
@@ -894,7 +894,7 @@ th {
   }
 }
 
-.flow-canvas .react-flow__edge-textbg {
+.agent-canvas .react-flow__edge-textbg {
   fill: var(--surface);
 }
 
@@ -1594,7 +1594,7 @@ legend {
   margin: 4px 0 0;
   font-family: "IBM Plex Mono", monospace;
 }
-.trace-item[data-route="true"] {
+.trace-item[data-handoff="true"] {
   border-left: 3px solid var(--lamp);
 }
 /* Side panel: slides over the right of a position: relative parent. */
@@ -1671,7 +1671,7 @@ legend {
 .step-node--incomplete .step-node__status {
   color: var(--bad);
 }
-.flow-canvas .route-edge--draft .react-flow__edge-path {
+.agent-canvas .handoff-edge--draft .react-flow__edge-path {
   stroke: var(--ink-2);
   stroke-dasharray: 5 4;
 }
@@ -1714,7 +1714,7 @@ legend {
   flex-direction: column;
   gap: 16px;
 }
-.route-list__item {
+.handoff-list__item {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1757,20 +1757,20 @@ legend {
   margin: 0;
 }
 /* The editor uses the whole workspace, like the canvas: a compact bar, a toolbar row, and the graph filling the rest. */
-main:has(.flow-editor) {
+main:has(.agent-editor) {
   max-width: none;
   padding: 0;
 }
-.flow-page--editor > .published-banner,
-.flow-page--editor > .message-panel {
+.agent-page--editor > .published-banner,
+.agent-page--editor > .message-panel {
   margin: 12px 24px 0;
 }
-.flow-editor {
+.agent-editor {
   display: flex;
   flex-direction: column;
   min-height: calc(100vh - 100px);
 }
-.flow-editor__head {
+.agent-editor__head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1780,38 +1780,38 @@ main:has(.flow-editor) {
 }
 @media (max-width: 760px) {
   /* The four header buttons share two even rows instead of leaving Close alone on a third. */
-  .flow-editor__head {
+  .agent-editor__head {
     padding: 12px 16px;
   }
-  .flow-editor__head .grow {
+  .agent-editor__head .grow {
     flex-basis: 100%;
     height: 0;
   }
-  .flow-editor__head > button {
+  .agent-editor__head > button {
     flex: 1 1 calc(50% - 8px);
     min-height: 44px;
   }
 }
-.flow-editor__crumb {
+.agent-editor__crumb {
   color: var(--ink-2);
   font-size: 0.875rem;
 }
-.flow-editor__crumb a {
+.agent-editor__crumb a {
   color: var(--ink-2);
 }
-.flow-editor__head h1 {
+.agent-editor__head h1 {
   margin: 0;
   font-size: 1.25rem;
   font-weight: 600;
   letter-spacing: -0.01em;
   line-height: 1.2;
 }
-.flow-editor__head .chip {
+.agent-editor__head .chip {
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.75rem;
   background: var(--surface);
 }
-.flow-editor__toolbar {
+.agent-editor__toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1819,30 +1819,30 @@ main:has(.flow-editor) {
   padding: 10px 20px;
   border-bottom: 1px solid var(--rule);
 }
-.flow-editor__add {
+.agent-editor__add {
   border-style: dashed;
   border-color: var(--ink-2);
   background: transparent;
   color: var(--ink);
 }
-.flow-editor__stage {
+.agent-editor__stage {
   position: relative;
   flex: 1;
   display: flex;
   min-height: 560px;
   overflow: hidden;
 }
-.flow-editor__stage > .flow-canvas {
+.agent-editor__stage > .agent-canvas {
   flex: 1;
   min-width: 0;
 }
-.flow-editor__stage--panel > .flow-canvas {
+.agent-editor__stage--panel > .agent-canvas {
   margin-right: min(440px, 100%);
 }
-.flow-editor__stage--wide > .flow-canvas {
+.agent-editor__stage--wide > .agent-canvas {
   margin-right: min(720px, 100%);
 }
-.flow-editor__blank {
+.agent-editor__blank {
   flex: 1;
   display: flex;
   align-items: center;
@@ -1851,7 +1851,7 @@ main:has(.flow-editor) {
   background-image: radial-gradient(var(--rule) 1px, transparent 1px);
   background-size: 20px 20px;
 }
-.flow-editor__blank-card {
+.agent-editor__blank-card {
   max-width: 440px;
   display: flex;
   flex-direction: column;
@@ -1863,19 +1863,19 @@ main:has(.flow-editor) {
   background: color-mix(in srgb, var(--surface) 85%, transparent);
   text-align: center;
 }
-.flow-editor__blank-card h3,
-.flow-editor__blank-card p {
+.agent-editor__blank-card h3,
+.agent-editor__blank-card p {
   margin: 0;
 }
-.flow-editor__blank-card h3 {
+.agent-editor__blank-card h3 {
   font-size: 1.375rem;
   font-weight: 600;
 }
-.flow-editor__blank-card p {
+.agent-editor__blank-card p {
   color: var(--ink-2);
   font-size: 0.875rem;
 }
-.flow-editor__plus {
+.agent-editor__plus {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1905,7 +1905,7 @@ main:has(.flow-editor) {
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
-.flows-filter {
+.agents-filter {
   width: 240px;
   max-width: 100%;
 }
@@ -1913,13 +1913,13 @@ main:has(.flow-editor) {
   .page-head .grow {
     display: none;
   }
-  .flows-filter {
+  .agents-filter {
     flex: 1 1 200px;
     width: auto;
     margin-left: 0;
   }
 }
-.flow-list {
+.agent-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -1927,7 +1927,7 @@ main:has(.flow-editor) {
   gap: 12px;
   margin-top: 24px;
 }
-.flow-row {
+.agent-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1937,10 +1937,10 @@ main:has(.flow-editor) {
   border: 1px solid var(--rule);
   border-radius: var(--radius-lg);
 }
-.flow-row {
+.agent-row {
   position: relative;
 }
-.flow-row .check-row input {
+.agent-row .check-row input {
   appearance: none;
   flex: none;
   width: 38px;
@@ -1951,7 +1951,7 @@ main:has(.flow-editor) {
   border: 1px solid var(--ink-2); /* keeps the switch visible in forced-colors mode */
   position: relative;
 }
-.flow-row .check-row input::after {
+.agent-row .check-row input::after {
   content: "";
   position: absolute;
   top: 3px;
@@ -1961,15 +1961,15 @@ main:has(.flow-editor) {
   border-radius: var(--radius);
   background: var(--ink-2);
 }
-.flow-row .check-row input:checked {
+.agent-row .check-row input:checked {
   background: var(--caller);
 }
-.flow-row .check-row input:checked::after {
+.agent-row .check-row input:checked::after {
   left: auto;
   right: 3px;
   background: var(--on-accent);
 }
-.flow-row .check-row input:disabled {
+.agent-row .check-row input:disabled {
   opacity: 0.5;
 }
 .row-menu {
@@ -2023,67 +2023,67 @@ main:has(.flow-editor) {
 .row-menu__panel .row-menu__danger {
   color: var(--bad);
 }
-.flow-row:hover {
+.agent-row:hover {
   border-color: var(--ink-2);
 }
-.flow-row__main {
+.agent-row__main {
   flex: 3 1 320px;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
-.flow-row__title {
+.agent-row__title {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
 }
-.flow-row__title a {
+.agent-row__title a {
   font-size: 19px;
   font-weight: 600;
   text-decoration: none;
 }
-.flow-row__title a:hover {
+.agent-row__title a:hover {
   text-decoration: underline;
 }
-.flow-row__state,
-.flow-row__figures {
+.agent-row__state,
+.agent-row__figures {
   color: var(--ink-2);
   font-size: 14px;
 }
-.flow-row__figures {
+.agent-row__figures {
   flex: 2 1 220px;
   min-width: 0;
   font-variant-numeric: tabular-nums;
 }
-.flow-row__figures p {
+.agent-row__figures p {
   margin: 0;
 }
-.flow-row__actions {
+.agent-row__actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
-.flows-empty {
+.agents-empty {
   display: flex;
   flex-wrap: wrap;
   gap: 40px;
   padding: 32px 0;
   border-top: 1px solid var(--ink-2);
 }
-.flows-empty__lead {
+.agents-empty__lead {
   flex: 1 1 360px;
   max-width: 520px;
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
-.flows-empty__lead h2 {
+.agents-empty__lead h2 {
   margin: 0;
 }
-.flows-empty__terms {
+.agents-empty__terms {
   flex: 1 1 400px;
   margin: 0;
   border: 1px solid var(--rule);
@@ -2091,20 +2091,20 @@ main:has(.flow-editor) {
   background: var(--surface);
   padding: 4px 20px;
 }
-.flows-empty__terms div {
+.agents-empty__terms div {
   display: grid;
   grid-template-columns: 120px 1fr;
   gap: 16px;
   padding: 14px 0;
   border-bottom: 1px solid var(--rule);
 }
-.flows-empty__terms div:last-child {
+.agents-empty__terms div:last-child {
   border-bottom: 0;
 }
-.flows-empty__terms dt {
+.agents-empty__terms dt {
   font-weight: 600;
 }
-.flows-empty__terms dd {
+.agents-empty__terms dd {
   margin: 0;
   color: var(--ink-2);
   font-size: 14px;
@@ -2147,7 +2147,7 @@ main:has(.flow-editor) {
   padding-bottom: 20px;
   border-bottom: 1px solid var(--rule);
 }
-.calls-flow {
+.calls-agent {
   min-width: 240px;
 }
 .chips {
@@ -2360,7 +2360,7 @@ main:has(.flow-editor) {
 .call-transcript__who--caller {
   color: var(--caller);
 }
-.call-transcript__route {
+.call-transcript__handoff {
   display: flex;
   gap: 8px;
   padding: 8px 0;
@@ -2462,7 +2462,7 @@ main:has(.providers-layout) {
   color: var(--ink-2);
 }
 .provider-env,
-.provider-flows {
+.provider-agents {
   list-style: none;
   margin: 0 0 8px;
   padding: 0;
@@ -2481,7 +2481,7 @@ main:has(.providers-layout) {
   padding: 8px 0;
   border-bottom: 1px solid var(--rule);
 }
-.provider-flows li {
+.provider-agents li {
   padding: 8px 0;
   border-bottom: 1px solid var(--rule);
 }
@@ -2560,12 +2560,12 @@ main:has(.providers-layout) {
 .drift-panel p {
   margin: 0;
 }
-.drift-flows {
+.drift-agents {
   list-style: none;
   margin: 0;
   padding: 0;
 }
-.drift-flows li {
+.drift-agents li {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2838,7 +2838,7 @@ main:has(.mcp-page) {
   display: block;
   font-weight: 600;
 }
-.flows-empty__ready {
+.agents-empty__ready {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -3209,7 +3209,7 @@ main:has(.mcp-page) {
   margin-top: 6px;
 }
 
-/* Settings a typical flow never touches */
+/* Settings a typical agent never touches */
 .advanced {
   margin: 16px 0;
 }
@@ -3360,7 +3360,7 @@ main:has(.mcp-page) {
   margin: 10px 22px 18px;
 }
 
-/* Rollback confirmation inside Flow settings */
+/* Rollback confirmation inside Agent settings */
 .restore-confirm {
   display: grid;
   gap: 12px;

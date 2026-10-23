@@ -41,9 +41,9 @@ function setup(client: Partial<ApiClient>, path: string, key: string | null = "k
       <MemoryRouter initialEntries={[path]}>
         <ReactFlowProvider>
           <Routes>
-            <Route path="/flows" element={<p>the list</p>} />
-            <Route path="/flows/new" element={<AgentPage client={full} keyValue={key} />} />
-            <Route path="/flows/:agentId" element={<AgentPage client={full} keyValue={key} />} />
+            <Route path="/agents" element={<p>the list</p>} />
+            <Route path="/agents/new" element={<AgentPage client={full} keyValue={key} />} />
+            <Route path="/agents/:agentId" element={<AgentPage client={full} keyValue={key} />} />
           </Routes>
         </ReactFlowProvider>
       </MemoryRouter>
@@ -54,37 +54,37 @@ function setup(client: Partial<ApiClient>, path: string, key: string | null = "k
 
 describe("AgentPage", () => {
   it("asks for a management key first", () => {
-    setup({}, "/flows/a1", null);
+    setup({}, "/agents/a1", null);
     expect(screen.getByText(/Enter a management key/)).toBeVisible();
   });
 
-  it("opens a stored flow in the editor under a breadcrumb back to the list", async () => {
-    setup({}, "/flows/a1");
+  it("opens a stored agent in the editor under a breadcrumb back to the list", async () => {
+    setup({}, "/agents/a1");
     expect(await screen.findByRole("heading", { name: "Front desk", level: 1 })).toBeVisible();
     const head = screen.getByRole("heading", { name: "Front desk", level: 1 }).closest("header") as HTMLElement;
-    expect(within(head).getByRole("link", { name: "Flows" })).toHaveAttribute("href", "/flows");
+    expect(within(head).getByRole("link", { name: "Agents" })).toHaveAttribute("href", "/agents");
   });
 
-  it("opens a new flow under the name it was given, exactly", async () => {
-    setup({}, "/flows/new?name=R%26D%20line%20%C3%B1");
+  it("opens a new agent under the name it was given, exactly", async () => {
+    setup({}, "/agents/new?name=R%26D%20line%20%C3%B1");
     expect(await screen.findByRole("heading", { name: "R&D line ñ", level: 1 })).toBeVisible();
     expect(screen.getByRole("button", { name: "Add first step" })).toBeVisible();
   });
 
-  it("says so, with a way back, for a flow that does not exist", async () => {
-    setup({}, "/flows/nope");
-    expect(await screen.findByText("That flow was not found.")).toBeVisible();
-    expect(screen.getByRole("link", { name: "Back to flows" })).toHaveAttribute("href", "/flows");
+  it("says so, with a way back, for an agent that does not exist", async () => {
+    setup({}, "/agents/nope");
+    expect(await screen.findByText("That agent was not found.")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Back to agents" })).toHaveAttribute("href", "/agents");
     expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
   });
 
-  it("treats an archived flow as not found", async () => {
-    setup({ getAgent: vi.fn().mockResolvedValue(agent({ archived: true })) }, "/flows/a1");
-    expect(await screen.findByText("That flow was not found.")).toBeVisible();
+  it("treats an archived agent as not found", async () => {
+    setup({ getAgent: vi.fn().mockResolvedValue(agent({ archived: true })) }, "/agents/a1");
+    expect(await screen.findByText("That agent was not found.")).toBeVisible();
   });
 
   it("opens on the test call panel for ?panel=test", async () => {
-    setup({}, "/flows/a1?panel=test");
+    setup({}, "/agents/a1?panel=test");
     expect(await screen.findByRole("complementary", { name: "Test call" })).toBeVisible();
   });
 
@@ -100,12 +100,12 @@ describe("AgentPage", () => {
           { id: "s1", agent_id: "a1", agent_version_id: "v1", config_hash: "h1", started_at: "", status: "active", turn_count: 0, safe_summary: "" },
         ]),
       },
-      "/flows/a1",
+      "/agents/a1",
     );
     await screen.findByRole("heading", { name: "Front desk", level: 1 });
     // A rename is a publishable change on its own.
-    await user.click(screen.getByRole("button", { name: "Flow settings" }));
-    await user.type(screen.getByLabelText("Flow name"), " line");
+    await user.click(screen.getByRole("button", { name: "Agent settings" }));
+    await user.type(screen.getByLabelText("Agent name"), " line");
     await user.click(screen.getByRole("button", { name: "Publish" }));
     await user.click(screen.getByRole("button", { name: "Publish v2" }));
     expect(updateAgent).toHaveBeenCalledWith("a1", expect.objectContaining({ name: "Front desk line" }));
@@ -117,77 +117,77 @@ describe("AgentPage", () => {
     expect(screen.queryByText(/Published v2/)).toBeNull();
   });
 
-  it("creates a new flow on first publish and moves to its own address without losing the editor", async () => {
+  it("creates a new agent on first publish and moves to its own address without losing the editor", async () => {
     const created = agent({ id: "n1", name: "After hours" });
     const createAgent = vi.fn().mockResolvedValue(created);
-    // The refetch after publishing never answers: the page must already know the new flow.
+    // The refetch after publishing never answers: the page must already know the new agent.
     const getAgent = vi.fn().mockImplementation(() => new Promise(() => {}));
-    const { user } = setup({ createAgent, getAgent }, "/flows/new?name=After%20hours");
+    const { user } = setup({ createAgent, getAgent }, "/agents/new?name=After%20hours");
     await user.click(await screen.findByRole("button", { name: "Add first step" }));
     await user.selectOptions(screen.getByLabelText("LLM provider"), "google");
     await user.selectOptions(screen.getByLabelText("TTS provider"), "google");
-    await user.click(screen.getByRole("button", { name: "Flow settings" }));
+    await user.click(screen.getByRole("button", { name: "Agent settings" }));
     await user.selectOptions(screen.getByLabelText("STT provider"), "google");
     await user.click(screen.getByRole("button", { name: "Publish" }));
     await user.click(screen.getByRole("button", { name: "Publish v1" }));
     await waitFor(() => expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({ name: "After hours" })));
     expect(await screen.findByRole("status", { name: "Publish confirmation" })).toHaveTextContent("Published v1.");
-    expect(screen.queryByText("That flow was not found.")).toBeNull();
+    expect(screen.queryByText("That agent was not found.")).toBeNull();
     expect(screen.getByRole("heading", { name: "After hours", level: 1 })).toBeVisible();
   });
 
   it("shows a failed publish with a way to dismiss it", async () => {
-    const { user } = setup({ updateAgent: vi.fn().mockRejectedValue(new ApiError("invalid flow config", "invalid_config", 422, "r")) }, "/flows/a1");
+    const { user } = setup({ updateAgent: vi.fn().mockRejectedValue(new ApiError("invalid agent config", "invalid_config", 422, "r")) }, "/agents/a1");
     await screen.findByRole("heading", { name: "Front desk", level: 1 });
-    await user.click(screen.getByRole("button", { name: "Flow settings" }));
-    await user.type(screen.getByLabelText("Flow name"), "!");
+    await user.click(screen.getByRole("button", { name: "Agent settings" }));
+    await user.type(screen.getByLabelText("Agent name"), "!");
     await user.click(screen.getByRole("button", { name: "Publish" }));
     await user.click(screen.getByRole("button", { name: "Publish v2" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("invalid flow config");
+    expect(await screen.findByRole("alert")).toHaveTextContent("invalid agent config");
   });
 
   it("closing the editor goes back to the list", async () => {
-    const { user } = setup({}, "/flows/a1");
+    const { user } = setup({}, "/agents/a1");
     await user.click(await screen.findByRole("button", { name: "Close" }));
     expect(screen.getByText("the list")).toBeVisible();
   });
 
-  it("opens a flow the 100-flow list would not contain, by asking for that flow", async () => {
+  it("opens an agent the 100-agent list would not contain, by asking for that agent", async () => {
     const getAgent = vi.fn().mockResolvedValue(agent({ id: "far", name: "Far down" }));
-    setup({ getAgent, getAgents: vi.fn().mockResolvedValue([]) }, "/flows/far");
+    setup({ getAgent, getAgents: vi.fn().mockResolvedValue([]) }, "/agents/far");
     expect(await screen.findByRole("heading", { name: "Far down", level: 1 })).toBeVisible();
     expect(getAgent).toHaveBeenCalledWith("far");
   });
 
   it("says not found only when the server says so; any other failure is a load error", async () => {
-    setup({ getAgent: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) }, "/flows/a1");
+    setup({ getAgent: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) }, "/agents/a1");
     expect(await screen.findByRole("alert")).toHaveTextContent("down");
-    expect(screen.queryByText("That flow was not found.")).toBeNull();
+    expect(screen.queryByText("That agent was not found.")).toBeNull();
   });
 
   it("keeps the editor, and the unsaved edit, when a background refresh fails", async () => {
     const updated = agent({ current_version: { id: "v2", number: 2, schema_version: 1, config: flat, config_hash: "h2", created_at: "", mcp_tools: [] } });
     const getAgent = vi.fn().mockResolvedValueOnce(agent()).mockRejectedValue(new ApiError("down", "internal", 500, "r"));
-    const { user } = setup({ getAgent, updateAgent: vi.fn().mockResolvedValue(updated) }, "/flows/a1");
+    const { user } = setup({ getAgent, updateAgent: vi.fn().mockResolvedValue(updated) }, "/agents/a1");
     await screen.findByRole("heading", { name: "Front desk", level: 1 });
-    await user.click(screen.getByRole("button", { name: "Flow settings" }));
-    await user.type(screen.getByLabelText("Flow name"), " line");
+    await user.click(screen.getByRole("button", { name: "Agent settings" }));
+    await user.type(screen.getByLabelText("Agent name"), " line");
     await user.click(screen.getByRole("button", { name: "Publish" }));
     await user.click(screen.getByRole("button", { name: "Publish v2" }));
     await screen.findByRole("status", { name: "Publish confirmation" });
     await waitFor(() => expect(getAgent).toHaveBeenCalledTimes(2));
-    expect(screen.queryByText("Failed to load the flow")).toBeNull();
+    expect(screen.queryByText("Failed to load the agent")).toBeNull();
     expect(screen.getByRole("heading", { level: 1 })).toBeVisible();
   });
 
   it("counts, in the Publish dialog, only the calls on the current version", async () => {
     const session = (id: string, version: string) => ({ id, agent_id: "a1", agent_version_id: version, config_hash: "h", started_at: "", status: "active", turn_count: 0, safe_summary: "" });
     const getSessions = vi.fn().mockResolvedValue([session("1", "v1"), session("2", "v1"), session("3", "old"), session("4", "old"), session("5", "old")]);
-    const { user } = setup({ getSessions }, "/flows/a1");
+    const { user } = setup({ getSessions }, "/agents/a1");
     await screen.findByRole("heading", { name: "Front desk", level: 1 });
     await waitFor(() => expect(getSessions).toHaveBeenCalled());
-    await user.click(screen.getByRole("button", { name: "Flow settings" }));
-    await user.type(screen.getByLabelText("Flow name"), "!");
+    await user.click(screen.getByRole("button", { name: "Agent settings" }));
+    await user.type(screen.getByLabelText("Agent name"), "!");
     await user.click(screen.getByRole("button", { name: "Publish" }));
     expect(await screen.findByText(/The 2 calls on v1 right now/)).toBeVisible();
   });

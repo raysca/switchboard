@@ -50,9 +50,9 @@ function setup(props: Partial<AgentEditorProps> = {}) {
 }
 
 describe("AgentEditor", () => {
-  it("starts a new flow blank and opens the first step's panel on Basics, name focused", async () => {
+  it("starts a new agent blank and opens the first step's panel on Basics, name focused", async () => {
     const { user } = setup();
-    expect(screen.getByRole("heading", { name: "New flow" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "New agent" })).toBeVisible();
     expect(screen.getByRole("status")).toHaveTextContent("No steps yet");
     await user.click(screen.getByRole("button", { name: "Add first step" }));
     expect(screen.getByRole("complementary", { name: "New step" })).toBeVisible();
@@ -60,12 +60,12 @@ describe("AgentEditor", () => {
     expect(screen.getByRole("status")).toHaveTextContent("1 step needs setup");
   });
 
-  it("cannot test a flow that was never published", () => {
+  it("cannot test an agent that was never published", () => {
     setup();
     expect(screen.getByRole("button", { name: "Test call" })).toBeDisabled();
   });
 
-  it("blocks publish until every step and the flow are set up, then sends the graph", async () => {
+  it("blocks publish until every step and the agent are set up, then sends the graph", async () => {
     const { user, onSubmit } = setup();
     await user.click(screen.getByRole("button", { name: "Add first step" }));
     await user.click(screen.getByRole("button", { name: "Publish" }));
@@ -77,8 +77,8 @@ describe("AgentEditor", () => {
     const step = screen.getByRole("complementary", { name: "New step" });
     await user.selectOptions(within(step).getByLabelText("LLM provider"), "google");
     await user.selectOptions(within(step).getByLabelText("TTS provider"), "google");
-    await user.click(screen.getByRole("button", { name: "Flow settings" }));
-    await user.type(screen.getByLabelText("Flow name"), "After hours");
+    await user.click(screen.getByRole("button", { name: "Agent settings" }));
+    await user.type(screen.getByLabelText("Agent name"), "After hours");
     await user.selectOptions(screen.getByLabelText("STT provider"), "google");
     await user.click(screen.getByRole("button", { name: "Publish" }));
     await user.click(screen.getByRole("button", { name: "Publish v1" }));
@@ -110,12 +110,12 @@ describe("AgentEditor", () => {
 
   it("will not test a draft that cannot be published yet", async () => {
     const { user } = setup({ agent });
-    await user.click(screen.getByRole("button", { name: "Flow settings" }));
-    await user.clear(screen.getByLabelText("Flow name"));
+    await user.click(screen.getByRole("button", { name: "Agent settings" }));
+    await user.clear(screen.getByLabelText("Agent name"));
     await user.click(screen.getByRole("button", { name: "Test call" }));
     const panel = screen.getByRole("complementary", { name: "Test call" });
     expect(within(panel).getByTestId("start-voice-test-btn")).toBeDisabled();
-    expect(within(panel).getByRole("note")).toHaveTextContent(/before you can test your changes: Give the flow a name/i);
+    expect(within(panel).getByRole("note")).toHaveTextContent(/before you can test your changes: Give the agent a name/i);
   });
 
   it("lists the changes since the published version in the publish dialog", async () => {
@@ -127,7 +127,7 @@ describe("AgentEditor", () => {
 });
 
 describe("AgentEditor payloads", () => {
-  it("keeps the flow's tools on the start step when a step is added", async () => {
+  it("keeps the agent's tools on the start step when a step is added", async () => {
     const withTools: AgentDTO = {
       ...agent,
       current_version: { ...agent.current_version!, mcp_tools: [{ mcp_server_id: "crm", remote_name: "lookup", schema_hash: "h", required: false }] },
@@ -150,7 +150,7 @@ describe("AgentEditor payloads", () => {
     expect(onSubmit.mock.calls[0][0]).not.toHaveProperty("mcp_tools");
   });
 
-  it("sends a plain one-step flow as a flat config", async () => {
+  it("sends a plain one-step agent as a flat config", async () => {
     const { user, onSubmit } = setup({ agent });
     await user.click(screen.getByRole("button", { name: "Publish" }));
     await user.click(screen.getByRole("button", { name: "Publish v2" }));
@@ -174,57 +174,57 @@ describe("AgentEditor focus and keyboard", () => {
 
   it("puts focus on a new step's name even when another panel was open", async () => {
     const { user } = setup({ agent });
-    await user.click(screen.getByRole("button", { name: "Flow settings" }));
+    await user.click(screen.getByRole("button", { name: "Agent settings" }));
     await user.click(screen.getByRole("button", { name: "Add step" }));
     expect(screen.getByLabelText("Step name")).toHaveFocus();
   });
 
-  it("counts renaming the flow as a change to publish", async () => {
+  it("counts renaming the agent as a change to publish", async () => {
     const { user } = setup({ agent });
-    await user.click(screen.getByRole("button", { name: "Flow settings" }));
-    await user.clear(screen.getByLabelText("Flow name"));
-    await user.type(screen.getByLabelText("Flow name"), "Main line");
+    await user.click(screen.getByRole("button", { name: "Agent settings" }));
+    await user.clear(screen.getByLabelText("Agent name"));
+    await user.type(screen.getByLabelText("Agent name"), "Main line");
     expect(screen.getByText("v1 · unpublished changes")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Publish" }));
-    expect(screen.getByRole("dialog")).toHaveTextContent("Renamed the flow to Main line");
+    expect(screen.getByRole("dialog")).toHaveTextContent("Renamed the agent to Main line");
   });
 });
 
 describe("AgentEditor start state", () => {
-  it("starts a new flow with the name it was given, exactly", () => {
+  it("starts a new agent with the name it was given, exactly", () => {
     setup({ initialName: "R&D line ñ" });
     expect(screen.getByRole("heading", { name: "R&D line ñ", level: 1 })).toBeVisible();
   });
 
-  it("ignores the starting name for a stored flow", () => {
+  it("ignores the starting name for a stored agent", () => {
     setup({ agent, initialName: "Other" });
     expect(screen.getByRole("heading", { name: "Front desk", level: 1 })).toBeVisible();
   });
 
-  it("opens the test call panel on arrival for a flow that can take calls", () => {
+  it("opens the test call panel on arrival for an agent that can take calls", () => {
     setup({ agent, initialPanel: "call" });
     expect(screen.getByRole("complementary", { name: "Test call" })).toBeVisible();
   });
 
-  it("does not open the test call panel for a flow that cannot take calls", () => {
+  it("does not open the test call panel for an agent that cannot take calls", () => {
     setup({ agent: { ...agent, readiness: { state: "not_ready", reasons: ["missing_configuration"] } }, initialPanel: "call" });
     expect(screen.queryByRole("complementary", { name: "Test call" })).toBeNull();
   });
 
-  it("shows the published version in Flow settings", async () => {
+  it("shows the published version in Agent settings", async () => {
     const { user } = setup({ agent });
-    await user.click(screen.getByRole("button", { name: "Flow settings" }));
+    await user.click(screen.getByRole("button", { name: "Agent settings" }));
     expect(screen.getByRole("group", { name: "Published version" })).toHaveTextContent("v1");
   });
 });
 
 describe("AgentEditor chrome", () => {
-  it("has the breadcrumb in its header bar, the step count and the route hint in the toolbar", () => {
+  it("has the breadcrumb in its header bar, the step count and the handoff hint in the toolbar", () => {
     setup({ agent });
     const head = screen.getByRole("heading", { name: "Front desk", level: 1 }).closest("header") as HTMLElement;
-    expect(within(head).getByRole("link", { name: "Flows" })).toHaveAttribute("href", "/flows");
+    expect(within(head).getByRole("link", { name: "Agents" })).toHaveAttribute("href", "/agents");
     expect(screen.getByText("1 of 8 steps")).toBeVisible();
-    expect(screen.getByText(/Drag from the dot on a step's route to add a route/)).toBeVisible();
+    expect(screen.getByText(/Drag from the dot on a step's handoff to add a handoff/)).toBeVisible();
   });
 
   it("explains the blank state with the canvas's words", () => {
@@ -235,12 +235,12 @@ describe("AgentEditor chrome", () => {
 
   it("refits the graph when a panel opens or closes, so the steps stay in view", async () => {
     const { user } = setup({ agent });
-    const canvas = screen.getByTestId("flow-canvas");
+    const canvas = screen.getByTestId("agent-canvas");
     const before = canvas.getAttribute("data-fit");
-    await user.click(screen.getByRole("button", { name: "Flow settings" }));
+    await user.click(screen.getByRole("button", { name: "Agent settings" }));
     expect(canvas.getAttribute("data-fit")).not.toBe(before);
     const open = canvas.getAttribute("data-fit");
-    await user.click(screen.getByRole("button", { name: "Close Flow settings" }));
+    await user.click(screen.getByRole("button", { name: "Close Agent settings" }));
     expect(canvas.getAttribute("data-fit")).not.toBe(open);
   });
 });
@@ -257,7 +257,7 @@ describe("AgentEditor MCP tools", () => {
     await user.click(screen.getByRole("tab", { name: /tools/i }));
   }
 
-  it("chooses a tool for the flow, which makes the draft unpublished and is published with it", async () => {
+  it("chooses a tool for the agent, which makes the draft unpublished and is published with it", async () => {
     const { user, onSubmit } = setup({ agent, client: withMCP });
     await openTools(user);
     await user.click(await screen.findByRole("checkbox", { name: /^echo/ }));
@@ -300,7 +300,7 @@ describe("AgentEditor MCP tools", () => {
     await user.click(await screen.findByRole("checkbox", { name: "Background: echo" }));
     expect(screen.getByText(/unpublished changes/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Publish" }));
-    expect(screen.getByRole("dialog")).toHaveTextContent("Flow settings: background tools changed");
+    expect(screen.getByRole("dialog")).toHaveTextContent("Agent settings: background tools changed");
     await user.click(screen.getByRole("button", { name: "Publish v2" }));
     expect((onSubmit.mock.calls[0][0].config as { async_tools?: string[] }).async_tools).toEqual(["crm/echo"]);
   });
@@ -324,7 +324,7 @@ describe("AgentEditor MCP tools", () => {
     const getAgentVersion = vi.fn().mockResolvedValue({ id: "v1", number: 1, schema_version: 1, config: legacy, config_hash: "h", created_at: "", mcp_tools: [] });
     const twice: AgentDTO = { ...agent, current_version: { ...agent.current_version!, number: 2 } };
     const { user, onSubmit } = setup({ agent: twice, client: { ...client, getAgentVersion } as unknown as ApiClient });
-    await user.click(screen.getByRole("button", { name: "Flow settings" }));
+    await user.click(screen.getByRole("button", { name: "Agent settings" }));
     await user.click(screen.getByRole("button", { name: "Restore v1…" }));
     await user.click(screen.getByRole("button", { name: "Restore v1" }));
     const sent = onSubmit.mock.calls[0][0] as { config: { steps: { id: string; config: { tts: Record<string, unknown>; failover?: unknown } }[] } };

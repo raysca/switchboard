@@ -4,11 +4,11 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { flowsStackFile, type Stack } from "./lib/stack";
+import { agentsStackFile, type Stack } from "./lib/stack";
 import { portOpen, start, waitFor } from "./lib/stack-proc";
 import { stopStack } from "./global-teardown";
 
-// Starts the stack for the flow suite. By default with the simulated echo provider
+// Starts the stack for the agent suite. By default with the simulated echo provider
 // (no secrets, no network, no cost; providers.echo in the server config); the echo LLM labels
 // each reply with its step's prompt and calls a step's transfer tool on "transfer
 // to <step>". With E2E_PROVIDER=xai it is the real server (go build -tags
@@ -17,7 +17,7 @@ import { stopStack } from "./global-teardown";
 const LIVE = process.env.E2E_PROVIDER === "xai";
 const PORTS = { public: 18581, admin: 19591, ui: 15174, mcp: 18595, mcpHole: 18596, dental: 18597 };
 const repo = path.resolve(__dirname, "..");
-const logDir = path.join(__dirname, "test-results-flows", "logs");
+const logDir = path.join(__dirname, "test-results-agents", "logs");
 
 function toneWav(rate: number, seconds: number, hz: number, amplitude: number): Buffer {
   const n = Math.round(rate * seconds);
@@ -74,15 +74,15 @@ export default async function globalSetup() {
     .replace(/^origin_allowlist:\n(?:\s+-.*\n)+/m, `origin_allowlist:\n${origins.map((o) => `  - "${o}"\n`).join("")}`)
     // Local test MCP servers; a short MCP timeout keeps the failure cases quick.
     .replace(/^  allow_local_http: true$/m, "  allow_local_http: true\n  timeout: 2s"));
-  // A route cue sound: a 0.4 s 440 Hz tone (PCM16 mono 24 kHz) the steps can name as "chime".
+  // A handoff cue sound: a 0.4 s 440 Hz tone (PCM16 mono 24 kHz) the steps can name as "chime".
   const chime = path.join(tmpDir, "chime.wav");
   fs.writeFileSync(chime, toneWav(24000, 0.4, 440, 12000));
-  // A background sound a flow can name as "office" (a quiet 1 s 220 Hz hum, looped).
+  // A background sound an agent can name as "office" (a quiet 1 s 220 Hz hum, looped).
   const office = path.join(tmpDir, "office.wav");
   fs.writeFileSync(office, toneWav(24000, 1, 220, 6000));
   const configPath = path.join(tmpDir, "server.yaml");
   // Quiet-caller handling is on by default; the suite switches it off server-wide so a spec that waits
-  // is not hung up on, and the call-behavior spec turns it on per flow.
+  // is not hung up on, and the call-behavior spec turns it on per agent.
   fs.writeFileSync(
     configPath,
     `${config}\naudio:\n  cues:\n    chime:\n      file: "${chime}"\n      gain_db: -20\n  backgrounds:\n    office:\n      file: "${office}"\n      gain_db: -30\nidle:\n  user_timeout: 0s\n`,
@@ -103,7 +103,7 @@ export default async function globalSetup() {
     mcpUrl: `http://127.0.0.1:${PORTS.mcp}`,
   };
   // The server reads provider secrets from its environment only. Echo needs none for the suite's own
-  // provider. The dentistry demo's flow names google, xai and elevenlabs stages, so placeholder keys
+  // provider. The dentistry demo's agent names google, xai and elevenlabs stages, so placeholder keys
   // for those make it creatable; nothing builds them (dental-helpers rewrites every stage to echo).
   // Live: the xAI key and nothing else.
   let providerEnv: Record<string, string>;
@@ -114,7 +114,7 @@ export default async function globalSetup() {
     providerEnv = { GOOGLE_API_KEY: "fake-google-key", GOOGLE_APPLICATION_CREDENTIALS: sa, XAI_API_KEY: "fake-xai-key", ELEVENLABS_API_KEY: "fake-elevenlabs-key" };
   }
 
-  const save = () => fs.writeFileSync(flowsStackFile, JSON.stringify(stack, null, 2), { mode: 0o600 });
+  const save = () => fs.writeFileSync(agentsStackFile, JSON.stringify(stack, null, 2), { mode: 0o600 });
   save();
 
   try {
@@ -145,7 +145,7 @@ export default async function globalSetup() {
     await waitFor(logDir, "dental-mcp", async () => (await fetch(`http://127.0.0.1:${PORTS.dental}/health`)).ok);
     await waitFor(logDir, "mcptest", async () => (await fetch(`${stack.mcpUrl}/_record`)).ok);
   } catch (err) {
-    stopStack(flowsStackFile);
+    stopStack(agentsStackFile);
     throw err;
   }
 }

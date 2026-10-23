@@ -50,7 +50,7 @@ describe("ConnectServerDialog", () => {
     await user.type(screen.getByLabelText("Endpoint URL"), "https://mcp.example.com/billing");
     await user.type(screen.getByLabelText("Description (optional)"), "Invoices");
     await user.type(screen.getByLabelText("Token variable (optional)"), "MCP_TOKEN_BILLING");
-    await user.click(screen.getByLabelText("Enabled for flows"));
+    await user.click(screen.getByLabelText("Enabled for agents"));
     await user.click(screen.getByRole("button", { name: "Connect" }));
     expect(onSubmit).toHaveBeenCalledWith({ name: "billing", description: "Invoices", endpoint: "https://mcp.example.com/billing", transport: "streamable-http", auth_env: "MCP_TOKEN_BILLING", enabled: false });
   });

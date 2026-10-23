@@ -110,7 +110,7 @@ interface ConnectOptions {
   wsBaseUrl?: string;
   /** Turns start and end on the hold-to-talk button instead of voice detection. */
   pushToTalk?: boolean;
-  /** An unpublished flow config to run instead of the published version (a test call). */
+  /** An unpublished agent config to run instead of the published version (a test call). */
   draft?: { config: unknown; mcp_tools?: ToolSelection[] };
   /** A text-only call (speech-to-text is `silence`): no microphone is requested and no audio is sent. */
   textOnly?: boolean;
@@ -214,7 +214,7 @@ export class VoiceClient {
     if (!agentId) {
       this.updateState({
         sessionState: "error",
-        error: { category: "token", message: "A flow is required to start a call.", fatal: true },
+        error: { category: "token", message: "An agent is required to start a call.", fatal: true },
       });
       return;
     }

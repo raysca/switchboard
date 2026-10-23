@@ -22,7 +22,7 @@ export function SidePanel({ title, onClose, children, footer, wide, onToggleWide
   const heading = useRef<HTMLHeadingElement>(null);
   const back = useRef(returnFocusTo);
   useEffect(() => {
-    // An autoFocus field inside (a route just drawn) keeps focus; otherwise start at the title.
+    // An autoFocus field inside (a handoff just drawn) keeps focus; otherwise start at the title.
     if (!panel.current?.contains(document.activeElement)) heading.current?.focus();
     const resolve = () => (typeof back.current === "function" ? back.current() : back.current);
     const fallback = fallbackFocusId;

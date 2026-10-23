@@ -18,7 +18,7 @@ const server = (turn: Partial<ServerConfigDTO["turn"]> = {}): ServerConfigDTO =>
   turn: { manager: true, min_words: 0, mute: [], max_mute_ms: 30000, speech_timeout_ms: 600, end_of_turn: "default", smart_turn_available: false, smart_hold_ms: 3000, ...turn },
 });
 
-/** Holds the config like FlowSettingsPanel: a null value removes the key. */
+/** Holds the config like AgentSettingsPanel: a null value removes the key. */
 function Harness({ initial = {}, serverConfig = server(), onSet = vi.fn() }: { initial?: StepConfig; serverConfig?: ServerConfigDTO; onSet?: (cfg: StepConfig) => void }) {
   const [cfg, setCfg] = useState<StepConfig>(initial);
   return (
@@ -173,7 +173,7 @@ describe("TurnFields", () => {
     expect(onSet).toHaveBeenLastCalledWith({}); // the whole turn object: end-of-turn members too
   });
 
-  it("offers nothing to remove when the flow has no turn settings", () => {
+  it("offers nothing to remove when the agent has no turn settings", () => {
     render(<Harness serverConfig={server({ manager: false })} />);
     expect(screen.getByRole("button", { name: "Remove these settings" })).toBeDisabled();
   });
@@ -183,24 +183,24 @@ describe("TurnFields", () => {
     expect(screen.queryByRole("button", { name: "Remove these settings" })).toBeNull();
   });
 
-  it("shows the effective choice: server mute always, server 3 words, flow mute without always -> after 3 words", () => {
+  it("shows the effective choice: server mute always, server 3 words, agent mute without always -> after 3 words", () => {
     render(<Harness initial={{ turn: { mute: ["function_call"] } }} serverConfig={server({ mute: ["always"], min_words: 3 })} />);
     expect(radio("After a number of words")).toBeChecked();
     expect(screen.getByRole("spinbutton", { name: "Words before the caller interrupts" })).toHaveValue(3);
   });
 
-  it("shows the effective choice: server mute always + flow min_words 3 is still muted", () => {
+  it("shows the effective choice: server mute always + agent min_words 3 is still muted", () => {
     render(<Harness initial={{ turn: { min_words: 3 } }} serverConfig={server({ mute: ["always"] })} />);
     expect(radio(/^Server setting \(not while the agent speaks\)/)).toBeChecked();
     expect(radio("After a number of words")).not.toBeChecked();
   });
 
-  it("shows the effective choice: server mute always, flow mute without always, no server words -> any time", () => {
+  it("shows the effective choice: server mute always, agent mute without always, no server words -> any time", () => {
     render(<Harness initial={{ turn: { mute: [] } }} serverConfig={server({ mute: ["always"] })} />);
     expect(radio("Any time")).toBeChecked();
   });
 
-  it("describes the server by the server's own mute list, not the flow's", () => {
+  it("describes the server by the server's own mute list, not the agent's", () => {
     render(<Harness initial={{ turn: { mute: ["always"] } }} serverConfig={server({ min_words: 4 })} />);
     expect(radio("Not while the agent speaks (up to the longest-mute limit)")).toBeChecked();
     expect(radio("Server setting (after 4 words)")).not.toBeChecked();

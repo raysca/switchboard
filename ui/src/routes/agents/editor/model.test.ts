@@ -92,7 +92,7 @@ describe("graph model", () => {
     expect(g.steps).toHaveLength(MAX_STEPS);
   });
 
-  it("removeStep drops incident routes and refuses the start step", () => {
+  it("removeStep drops incident handoffs and refuses the start step", () => {
     let g = insertStep(fromAgentConfig(flat), "Sales");
     const sales = g.steps[1].id;
     g = addDraftHandoff(g, g.start, sales);
@@ -141,10 +141,10 @@ describe("graph model", () => {
     expect(slug("Sales Team!")).toBe("sales_team");
   });
 
-  it("seeds a flat flow's start step with the flow's selected MCP tools", () => {
+  it("seeds a flat agent's start step with the agent's selected MCP tools", () => {
     const g = fromAgentConfig(flat, ["srv/lookup"]);
     expect(g.steps[0].tools).toEqual(["srv/lookup"]);
-    // a one-step flow still publishes as the flat config: it exposes every selected tool anyway
+    // a one-step agent still publishes as the flat config: it exposes every selected tool anyway
     expect(toPayload(g)).toEqual(flat);
     const two = insertStep(g, "Sales");
     const payload = toPayload(two) as { steps: { tools?: string[] }[] };
@@ -152,7 +152,7 @@ describe("graph model", () => {
     expect(payload.steps[1].tools).toBeUndefined();
   });
 
-  it("validate rejects a route sound name the server would reject", () => {
+  it("validate rejects a handoff sound name the server would reject", () => {
     const base = insertStep(fromAgentConfig(flat), "Sales");
     expect(validate({ ...base, handoff_cue: { name: "Bad Name" } }).join(" ")).toMatch(/sound name/);
     expect(validate({ ...base, handoff_cue: { name: "chime", after_ms: 20000 } }).join(" ")).toMatch(/after/);
@@ -172,7 +172,7 @@ describe("agent authoring", () => {
       handoffs: [],
     });
 
-  it("starts a blank flow with no steps, and the first step added becomes the start step", () => {
+  it("starts a blank agent with no steps, and the first step added becomes the start step", () => {
     const g = insertStep(emptyAgent(), "New step");
     expect(g.steps).toHaveLength(1);
     expect(g.start).toBe(g.steps[0].id);
@@ -185,7 +185,7 @@ describe("agent authoring", () => {
     expect(uniqueName(g, "New step")).toBe("New step 3");
   });
 
-  it("adds a draft route with an empty condition and refuses self, duplicate and unknown routes", () => {
+  it("adds a draft handoff with an empty condition and refuses self, duplicate and unknown handoffs", () => {
     const g = addDraftHandoff(two(), "a", "b");
     expect(g.handoffs).toEqual([expect.objectContaining({ from: "a", to: "b", condition: "" })]);
     expect(addDraftHandoff(g, "a", "b")).toBe(g);
@@ -200,7 +200,7 @@ describe("agent authoring", () => {
       { tab: "basics", message: "Choose a voice." },
     ]);
     const handedOff = addDraftHandoff(two(), "a", "b");
-    expect(stepIssues(handedOff, "a")).toEqual([{ tab: "handoffs", message: "Give the route to Billing a condition." }]);
+    expect(stepIssues(handedOff, "a")).toEqual([{ tab: "handoffs", message: "Give the handoff to Billing a condition." }]);
     expect(stepIssues(two(), "b")).toEqual([]);
   });
 
@@ -211,9 +211,9 @@ describe("agent authoring", () => {
     expect(stepIssues(unnamed, "b")).toContainEqual({ tab: "basics", message: "Give the step a name." });
   });
 
-  it("reports flow-level problems: speech-to-text and recording disclosure", () => {
+  it("reports agent-level problems: speech-to-text and recording disclosure", () => {
     const noStt = insertStep(emptyAgent(), "New step");
-    expect(agentIssues(noStt)).toEqual(["Choose speech-to-text in Flow settings."]);
+    expect(agentIssues(noStt)).toEqual(["Choose speech-to-text in Agent settings."]);
     const g = two();
     const rec = { ...g, steps: g.steps.map((n) => (n.id === "a" ? { ...n, config: { ...n.config, recording: { enabled: true, disclosure_confirmed: false } } } : n)) };
     expect(agentIssues(rec)).toEqual(["Confirm that callers are told the call is recorded."]);
@@ -221,19 +221,19 @@ describe("agent authoring", () => {
     expect(agentIssues(emptyAgent())).toEqual([]);
   });
 
-  it("knows which steps no route leads to", () => {
+  it("knows which steps no handoff leads to", () => {
     expect(isUnreachable(two(), "b")).toBe(true);
     expect(isUnreachable(two(), "a")).toBe(false);
     expect(isUnreachable(addDraftHandoff(two(), "a", "b"), "b")).toBe(false);
   });
 
-  it("blocks publishing while a route has no condition", () => {
-    expect(validate(addDraftHandoff(two(), "a", "b"))).toContain("The route from Reception to Billing needs a condition.");
+  it("blocks publishing while a handoff has no condition", () => {
+    expect(validate(addDraftHandoff(two(), "a", "b"))).toContain("The handoff from Reception to Billing needs a condition.");
   });
 });
 
 describe("server limits", () => {
-  it("counts a route condition in bytes, as the server does", () => {
+  it("counts a handoff condition in bytes, as the server does", () => {
     const ready = { llm: { provider: "google", model: "gemini" }, tts: { provider: "google", voice: "v" } };
     const g = fromAgentConfig({
       start: "a",
@@ -244,7 +244,7 @@ describe("server limits", () => {
       handoffs: [{ id: "e1", from: "a", to: "b", condition: "é".repeat(300) }],
     });
     expect("é".repeat(300).length).toBeLessThan(512);
-    expect(validate(g)).toContain("The route from Reception to Billing has a condition longer than 512 bytes.");
+    expect(validate(g)).toContain("The handoff from Reception to Billing has a condition longer than 512 bytes.");
   });
 });
 
@@ -444,7 +444,7 @@ describe("what the server will accept", () => {
     expect("end_call" in out.steps[1]).toBe(false);
   });
 
-  it("keeps end_call when deleting a step leaves a one-step flow", () => {
+  it("keeps end_call when deleting a step leaves a one-step agent", () => {
     const cfg = {
       start: "a",
       steps: [
@@ -458,7 +458,7 @@ describe("what the server will accept", () => {
     expect(out.steps[0].end_call).toBe(true);
   });
 
-  it("saves a one-step main flow with end_call in steps form, and flat without it", () => {
+  it("saves a one-step main agent with end_call in steps form, and flat without it", () => {
     const flat = { llm: { system_prompt: "p" }, tts: {} };
     const g = fromAgentConfig(flat);
     expect(toPayload(g)).toEqual(flat);
@@ -487,12 +487,12 @@ describe("applySelection", () => {
     const g = applySelection(two(), [sel("echo"), sel("lookup"), sel("other")]);
     expect(g.steps.map((s) => s.tools)).toEqual([["crm/echo", "crm/lookup"], ["crm/lookup"]]);
   });
-  it("leaves a lone named step's own choice alone: only a flat flow can call everything", () => {
+  it("leaves a lone named step's own choice alone: only a flat agent can call everything", () => {
     const g = fromAgentConfig({ start: "a", steps: [{ id: "a", name: "Greeter", tools: ["crm/lookup"], config: {} }], handoffs: [] });
     expect(applySelection(g, [sel("echo"), sel("lookup")]).steps[0].tools).toEqual(["crm/lookup"]);
     expect(applySelection(g, [sel("echo")]).steps[0].tools).toEqual([]);
   });
-  it("gives a lone step every selected tool, as a one-step flow can call them all", () => {
+  it("gives a lone step every selected tool, as a one-step agent can call them all", () => {
     const g = applySelection(fromAgentConfig(flat), [sel("echo"), sel("lookup")]);
     expect(g.steps).toHaveLength(1);
     expect(g.steps[0].tools).toEqual(["crm/echo", "crm/lookup"]);
@@ -519,7 +519,7 @@ describe("greeting", () => {
     expect(p.steps.map((s) => "greeting" in s.config)).toEqual([false, false]);
     expect((toPayload(fromAgentConfig({ ...flat, greeting: "  " })) as Record<string, unknown>)).not.toHaveProperty("greeting");
   });
-  it("stays at the top of a flat flow", () => {
+  it("stays at the top of a flat agent", () => {
     expect((toPayload(fromAgentConfig({ ...flat, greeting: "Hi!" })) as { greeting?: string }).greeting).toBe("Hi!");
   });
   it("is an issue past the server's byte limit, counted in bytes, and not for a blank one", () => {

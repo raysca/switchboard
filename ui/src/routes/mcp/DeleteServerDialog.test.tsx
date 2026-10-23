@@ -38,10 +38,10 @@ describe("DeleteServerDialog", () => {
     expect(onDelete).toHaveBeenCalledOnce();
   });
 
-  it("when the server is still in use, names the flows and needs a second, explicit confirmation", async () => {
+  it("when the server is still in use, names the agents and needs a second, explicit confirmation", async () => {
     const { onDetach, onDelete, user } = setup({ inUse: true, agents: [agent("f1", "Front desk"), agent("f2", "Support triage")] });
     expect(screen.getByRole("dialog", { name: "billing is still in use" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "Front desk" })).toHaveAttribute("href", "/flows/f1");
+    expect(screen.getByRole("link", { name: "Front desk" })).toHaveAttribute("href", "/agents/f1");
     expect(screen.getByRole("link", { name: "Support triage" })).toBeVisible();
     expect(screen.getByText(/need review before they take calls again/)).toBeVisible();
     expect(screen.queryByRole("button", { name: "Delete server" })).toBeNull();
@@ -50,10 +50,10 @@ describe("DeleteServerDialog", () => {
     expect(onDelete).not.toHaveBeenCalled();
   });
 
-  it("still explains a conflict caused by calls in progress when no flow is known to use it", () => {
+  it("still explains a conflict caused by calls in progress when no agent is known to use it", () => {
     setup({ inUse: true, agents: undefined });
     expect(screen.getByText(/calls in progress/)).toBeVisible();
-    expect(screen.getByText("Which flows use it could not be loaded.")).toBeVisible();
+    expect(screen.getByText("Which agents use it could not be loaded.")).toBeVisible();
   });
 
   it("shows an error inside the dialog, and disables the button while working", () => {

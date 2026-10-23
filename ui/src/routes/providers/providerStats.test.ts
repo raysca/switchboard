@@ -39,7 +39,7 @@ const agent = (id: string, config: Record<string, unknown>, archived = false): A
 });
 
 describe("serviceList and hasService", () => {
-  it("lists only the services the catalog has, in flow order", () => {
+  it("lists only the services the catalog has, in agent order", () => {
     expect(serviceList(google)).toBe("STT · LLM · TTS");
     expect(serviceList(xai)).toBe("STT · LLM");
     expect(hasService(xai, "tts")).toBe(false);
@@ -99,7 +99,7 @@ describe("agentsUsing", () => {
     ],
     handoffs: [],
   });
-  it("counts a flow once, whichever stage or step uses the provider", () => {
+  it("counts an agent once, whichever stage or step uses the provider", () => {
     expect(agentsUsing([flat, graph], "google").map((f) => f.id)).toEqual(["flat", "graph"]);
     expect(agentsUsing([flat, graph], "xai").map((f) => f.id)).toEqual(["graph"]);
   });
@@ -110,7 +110,7 @@ describe("agentsUsing", () => {
   it("survives a step that is not an object", () => {
     expect(agentsUsing([agent("n", { steps: [null, { config: { llm: { provider: "google" } } }] })], "google").map((x) => x.id)).toEqual(["n"]);
   });
-  it("never counts an archived flow, a flow with no version, or a malformed config", () => {
+  it("never counts an archived agent, an agent with no version, or a malformed config", () => {
     const gone = agent("gone", flat.current_version!.config, true);
     const bare = { ...agent("bare", {}), current_version: undefined } as AgentDTO;
     const odd = agent("odd", { steps: "nope", llm: "google" });

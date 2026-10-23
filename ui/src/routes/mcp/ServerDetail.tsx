@@ -12,10 +12,10 @@ import { ago, drifts, agentsUsingServer, agentsUsingTool, formatApiError, refere
 export type ServerDetailProps = {
   client: ApiClient;
   server: MCPServerDetailDTO;
-  /** `undefined` while the flow list loads, or when it could not be loaded (see `flowsFailed`). */
+  /** `undefined` while the agent list loads, or when it could not be loaded (see `agentsFailed`). */
   agents: AgentDTO[] | undefined;
   agentsFailed: boolean;
-  /** The flow list reached the API's page size, so some flows were not checked. */
+  /** The agent list reached the API's page size, so some agents were not checked. */
   agentsCapped: boolean;
   now: number;
   onDeleted: () => void;
@@ -53,7 +53,7 @@ export function ServerDetail({ client, server, agents, agentsFailed, agentsCappe
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
     void queryClient.invalidateQueries({ queryKey: ["mcp-server", server.id] });
-    // A sync can change schemas: the flows' readiness (drift) must be read again too.
+    // A sync can change schemas: the agents' readiness (drift) must be read again too.
     void queryClient.invalidateQueries({ queryKey: ["agents"] });
   };
   const action = (mutationFn: () => Promise<unknown>, fallback: string) => ({
@@ -142,12 +142,12 @@ export function ServerDetail({ client, server, agents, agentsFailed, agentsCappe
                 {users === undefined ? (
                   agentsFailed ? "—" : "…"
                 ) : users.length === 0 ? (
-                  agentsCapped ? "No flow among the first 100" : "No flow yet"
+                  agentsCapped ? "No agent among the first 100" : "No agent yet"
                 ) : (
                   users.map((f, i) => (
                     <Fragment key={f.id}>
                       {i > 0 && ", "}
-                      <Link to={`/flows/${encodeURIComponent(f.id)}`}>{f.name}</Link>
+                      <Link to={`/agents/${encodeURIComponent(f.id)}`}>{f.name}</Link>
                     </Fragment>
                   ))
                 )}
@@ -198,8 +198,8 @@ export function ServerDetail({ client, server, agents, agentsFailed, agentsCappe
       {beingRemoved && <p role="note" className="call-note">Removal is waiting for calls in progress to finish.</p>}
 
       {actionError && <ErrorState title="That did not work" error={new ApiError(actionError, "action_failed", 0, "")} onRetry={() => setActionError(null)} />}
-      {agentsFailed && <p className="subtext" role="note">The flows could not be loaded, so which flows use this server, and whether any schema changed, is unknown.</p>}
-      {agentsCapped && <p className="subtext" role="note">Only the first 100 flows were checked, so some changed schemas may not be shown.</p>}
+      {agentsFailed && <p className="subtext" role="note">The agents could not be loaded, so which agents use this server, and whether any schema changed, is unknown.</p>}
+      {agentsCapped && <p className="subtext" role="note">Only the first 100 agents were checked, so some changed schemas may not be shown.</p>}
 
       {[...changedTools].map((name) => (
         <DriftPanel key={name} client={client} tool={name} schema={tools.find((t) => t.remote_name === name)?.input_schema} items={drift.filter((d) => d.kind === "changed" && d.dep.remote_name === name)} />
@@ -221,7 +221,7 @@ export function ServerDetail({ client, server, agents, agentsFailed, agentsCappe
                 <th scope="col">What the model sees</th>
                 <th scope="col">Schema</th>
                 <th scope="col" className="num">
-                  Flows
+                  Agents
                 </th>
                 <th scope="col">
                   <span className="visually-hidden">Actions</span>

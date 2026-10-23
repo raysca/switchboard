@@ -8,7 +8,7 @@ export type ArchiveAgentDialogProps = {
   onCancel: () => void;
 };
 
-/** Archiving hides a flow and stops it taking calls; its history stays. */
+/** Archiving hides an agent and stops it taking calls; its history stays. */
 export function ArchiveAgentDialog({ name, pending, error, onConfirm, onCancel }: ArchiveAgentDialogProps) {
   return (
     <Modal title={`Archive ${name}?`} onCancel={onCancel}>
@@ -22,10 +22,10 @@ export function ArchiveAgentDialog({ name, pending, error, onConfirm, onCancel }
       )}
       <div className="row row--end">
         <button type="button" className="action-button-small" onClick={onCancel}>
-          Keep flow
+          Keep agent
         </button>
         <button type="button" className="action-button action-button-danger" disabled={pending} onClick={onConfirm}>
-          {pending ? "Archiving…" : "Archive flow"}
+          {pending ? "Archiving…" : "Archive agent"}
         </button>
       </div>
     </Modal>

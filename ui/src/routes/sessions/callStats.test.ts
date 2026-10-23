@@ -53,7 +53,7 @@ describe("outcome", () => {
 });
 
 describe("versionLabel", () => {
-  it("names the version only when it is the flow's current one", () => {
+  it("names the version only when it is the agent's current one", () => {
     expect(versionLabel(session(), agent())).toBe("v7");
     expect(versionLabel(session({ agent_version_id: "v6" }), agent())).toBe("earlier version");
     expect(versionLabel(session(), undefined)).toBe("earlier version");
@@ -79,7 +79,7 @@ describe("steps", () => {
     expect(st.names.get("b")).toBe("Billing");
     expect(st.start).toBe("r");
   });
-  it("is empty for a flat flow or an unknown one", () => {
+  it("is empty for a flat agent or an unknown one", () => {
     expect(steps(agent({ llm: {} })).names.size).toBe(0);
     expect(steps(undefined).names.size).toBe(0);
   });
@@ -90,7 +90,7 @@ describe("path", () => {
   it("lists the steps in the order the call visited them", () => {
     expect(path(traces(toBilling), st, "Front desk")).toEqual(["Reception", "Billing"]);
   });
-  it("is the start step when there was no route, or the fallback when it is unknown", () => {
+  it("is the start step when there was no handoff, or the fallback when it is unknown", () => {
     expect(path(traces(), st, "Front desk")).toEqual(["Reception"]);
     expect(path(null, steps(undefined), "Front desk")).toEqual(["Front desk"]);
   });
@@ -101,7 +101,7 @@ describe("path", () => {
 });
 
 describe("failedHandoffs", () => {
-  it("returns the step ids of routes that failed", () => {
+  it("returns the step ids of handoffs that failed", () => {
     const failed = span("handoff.failed", "2026-10-12T14:00:30Z", { from_step: "r", to_step: "b" });
     expect(failedHandoffs(traces(failed, toBilling))).toEqual([{ from: "r", to: "b" }]);
     expect(failedHandoffs(null)).toEqual([]);
@@ -116,7 +116,7 @@ describe("transcript", () => {
     turn(3, "2026-10-12T14:00:43Z", "2026-10-12T14:00:45Z", "Put it back on?", "Let me check", true),
   ];
 
-  it("labels each reply with the step that was active, and marks the route where it happened", () => {
+  it("labels each reply with the step that was active, and marks the handoff where it happened", () => {
     const lines = transcript(session(), turns, traces(toBilling), st, "Front desk");
     expect(lines).toEqual([
       { kind: "say", who: "step", label: "Reception", at: "00:01", text: "Hi, you're through. How can I help?", interrupted: false },
@@ -133,12 +133,12 @@ describe("transcript", () => {
     expect(lines.filter((l) => l.kind === "say").map((l) => (l as { at: string }).at)).toEqual(["00:01", "00:06", "00:09", "00:43", "00:45"]);
   });
 
-  it("falls back to the flow's name when no step is known, and skips lines with no words", () => {
+  it("falls back to the agent's name when no step is known, and skips lines with no words", () => {
     const lines = transcript(session(), [turn(1, "2026-10-12T14:00:01Z", "2026-10-12T14:00:02Z", "  ", "Hello"), turn(2, "2026-10-12T14:00:05Z", "2026-10-12T14:00:05Z", "", "")], null, steps(undefined), "Front desk");
     expect(lines).toEqual([{ kind: "say", who: "step", label: "Front desk", at: "00:02", text: "Hello", interrupted: false }]);
   });
 
-  it("keeps a route that happened after the last turn", () => {
+  it("keeps a handoff that happened after the last turn", () => {
     const late = span("handoff.active", "2026-10-12T14:03:00Z", { from_step: "b", to_step: "r" });
     const lines = transcript(session(), turns, traces(toBilling, late), st, "Front desk");
     expect(lines.at(-1)).toEqual({ kind: "handoff", at: "03:00", from: "Billing", to: "Reception" });
@@ -278,12 +278,12 @@ describe("callerLabel", () => {
 });
 
 describe("endReasonText", () => {
-  it("has words for every reason the server records, and names the step for a flow that ended the call", () => {
+  it("has words for every reason the server records, and names the step for an agent that ended the call", () => {
     const words: Record<string, string> = {
       caller_hung_up: "Caller hung up",
       silent_caller: "Caller went silent",
       agent_stuck: "Agent stopped responding",
-      ended_by_agent: "Ended by the flow",
+      ended_by_agent: "Ended by the agent",
       time_limit: "Reached the time limit",
       connection_lost: "Connection lost",
       server_shutdown: "Server shutting down",
@@ -292,7 +292,7 @@ describe("endReasonText", () => {
       server_restart: "Ended when the server restarted",
     };
     for (const [reason, text] of Object.entries(words)) expect(endReasonText(reason)).toBe(text);
-    expect(endReasonText("ended_by_agent", "Billing")).toBe("Ended by the flow (Billing)");
+    expect(endReasonText("ended_by_agent", "Billing")).toBe("Ended by the agent (Billing)");
     expect(endReasonText("")).toBe("Ended");
     expect(endReasonText("something_new")).toBe("Ended");
   });

@@ -50,7 +50,7 @@ export function catalogLines(p: ProviderStatus): { service: Service; text: strin
 type Stage = { provider?: unknown; fallbacks?: unknown };
 type Block = Partial<Record<Service, Stage>>;
 
-/** The provider each stage names, and its fallbacks: in a flat config, or in every step of a flow. */
+/** The provider each stage names, and its fallbacks: in a flat config, or in every step of an agent. */
 function stageProviders(config: unknown): string[] {
   const root = (config ?? {}) as { steps?: { config?: Block }[] } & Block;
   const blocks: Block[] = Array.isArray(root.steps) ? root.steps.map((n) => n?.config ?? {}) : [root];
@@ -60,7 +60,7 @@ function stageProviders(config: unknown): string[] {
     .filter((p): p is string => typeof p === "string" && p !== "");
 }
 
-/** Flows whose current version uses the provider in any stage or step. Archived flows never count. */
+/** Agents whose current version uses the provider in any stage or step. Archived agents never count. */
 export function agentsUsing(agents: AgentDTO[], providerId: string): AgentDTO[] {
   return agents.filter((f) => !f.archived && stageProviders(f.current_version?.config).includes(providerId));
 }

@@ -1,12 +1,12 @@
 import type { Page } from "@playwright/test";
-import { expect, LIVE, PROVIDER, type Stack } from "./flows-stack";
-import { flowsStackFile, readStack } from "./stack";
+import { expect, LIVE, PROVIDER, type Stack } from "./agents-stack";
+import { agentsStackFile, readStack } from "./stack";
 
-// Shared by the flow specs (tests-flows/): the stack's admin API, the admin UI's navigation, the
-// flow editor and the Test call panel. The dealership flow (FLOW) is created by the lifecycle
+// Shared by the agent specs (tests-agents/): the stack's admin API, the admin UI's navigation, the
+// agent editor and the Test call panel. The dealership agent (AGENT) is created by the lifecycle
 // spec's first test; later specs rely on it and on the files running in order.
 
-export const FLOW = "E2E Dealership";
+export const AGENT = "E2E Dealership";
 // The sales step must say "catalogue" in every reply: the marker that sales is talking.
 // (In the fake, the label is the whole prompt, so the marker is there too.)
 export const FRONT_PROMPT =
@@ -26,7 +26,7 @@ export type ProviderStatus = { id: string; display_name: string; detected: boole
 export const providers: ProviderStatus[] = [];
 export async function loadProviders() {
   if (LIVE && !process.env.E2E_XAI_SECRET) return; // skipped run: no stack
-  providers.splice(0, providers.length, ...(await api<{ data: ProviderStatus[] }>(readStack(flowsStackFile), "/providers")).data);
+  providers.splice(0, providers.length, ...(await api<{ data: ProviderStatus[] }>(readStack(agentsStackFile), "/providers")).data);
 }
 export const catalogDefault = (kind: "stt" | "llm" | "tts") => {
   const svc = providers.find((p) => p.id === PROVIDER)?.services[kind];
@@ -63,25 +63,25 @@ export async function connectAdmin(page: Page, stack: Stack) {
   await expect(page.getByText("Key in memory")).toBeVisible();
 }
 
-export async function openFlowsList(page: Page) {
-  await page.getByRole("link", { name: "Flows", exact: true }).first().click();
-  await expect(page.getByRole("heading", { name: "Flows", level: 1 })).toBeVisible();
+export async function openAgentsList(page: Page) {
+  await page.getByRole("link", { name: "Agents", exact: true }).first().click();
+  await expect(page.getByRole("heading", { name: "Agents", level: 1 })).toBeVisible();
 }
 
-// Opens a flow in the editor from the list (or leaves it open if it already is).
-export async function openFlow(page: Page, name: string) {
+// Opens an agent in the editor from the list (or leaves it open if it already is).
+export async function openAgent(page: Page, name: string) {
   const heading = page.getByRole("heading", { name, level: 1 });
   if (await heading.isVisible()) return;
-  await openFlowsList(page);
+  await openAgentsList(page);
   await page.getByRole("link", { name, exact: true }).click();
   await expect(heading).toBeVisible();
 }
 
 // The editor's Test call panel, where the voice test lives.
-export async function openFlowTest(page: Page, name: string) {
-  await openFlow(page, name);
+export async function openAgentTest(page: Page, name: string) {
+  await openAgent(page, name);
   await page.getByRole("button", { name: "Test call" }).click();
-  await expect(page.getByTestId("flow-readiness")).toHaveText(/^ready/);
+  await expect(page.getByTestId("agent-readiness")).toHaveText(/^ready/);
 }
 
 // The bot's reply is final in the transcript, or still streaming.
@@ -95,7 +95,7 @@ export function botReply(page: Page, text: RegExp) {
 export async function startCall(page: Page) {
   await page.getByTestId("start-voice-test-btn").click();
   await expect(page.getByTestId("connection-state")).toHaveText(/ready/i, { timeout: 30_000 });
-  // The fake microphone loops; mute it so only typed turns reach the flow.
+  // The fake microphone loops; mute it so only typed turns reach the agent.
   await page.getByTestId("mute-btn").click();
 }
 
@@ -120,18 +120,18 @@ export const stage = (extra: object = {}) => ({ provider: PROVIDER, ...extra });
 
 export async function openDesigner(page: Page, stack: Stack) {
   await connectAdmin(page, stack);
-  await openFlowsList(page);
-  await page.getByRole("button", { name: "New flow" }).click();
-  await page.getByLabel("Name").fill("Main flow");
+  await openAgentsList(page);
+  await page.getByRole("button", { name: "New agent" }).click();
+  await page.getByLabel("Name").fill("Main agent");
   await page.getByRole("button", { name: "Create and open editor" }).click();
-  await expect(page.getByRole("heading", { name: "Main flow", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Main agent", level: 1 })).toBeVisible();
   await page.getByRole("button", { name: "Add first step" }).click();
   await page.getByLabel("Step name").fill("Main agent");
 }
 
 // A step on the React Flow canvas: clicking it opens its panel.
 export const stepCard = (page: Page, name: string) => page.locator(".react-flow__node").filter({ hasText: name });
-export const openFlowSettings = (page: Page) => page.getByRole("button", { name: "Flow settings" }).click();
+export const openAgentSettings = (page: Page) => page.getByRole("button", { name: "Agent settings" }).click();
 
 // The call page in a second tab of the same browser. The key lives in each tab's memory (a full load
 // drops it, 40-layout.spec.ts:25), so this tab loads the call URL first and signs in there.

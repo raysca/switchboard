@@ -1,6 +1,6 @@
-import { test, expect, LIVE } from "../lib/flows-stack";
+import { test, expect, LIVE } from "../lib/agents-stack";
 import { step } from "../lib/evidence";
-import { api, botReply, connectAdmin, openCallPage, openFlowTest, sendText, stage, startCall } from "../lib/flows-helpers";
+import { api, botReply, connectAdmin, openCallPage, openAgentTest, sendText, stage, startCall } from "../lib/agents-helpers";
 
 // The call page's "Guide this call": an operator note and a reply request reach a running call held in
 // another tab, and the page refreshes the transcript when the call ends. Echo providers only: the echo
@@ -16,7 +16,7 @@ test("an operator note and a reply request from the call page reach the running 
     body: JSON.stringify({ name: NAME, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }) } }),
   });
   await connectAdmin(page, stack);
-  await openFlowTest(page, NAME);
+  await openAgentTest(page, NAME);
   await startCall(page);
   await sendText(page, "hello");
   await expect(botReply(page, /hello/)).toBeVisible();

@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
-import { expect, type Stack } from "./flows-stack";
-import { api, stage } from "./flows-helpers";
+import { expect, type Stack } from "./agents-stack";
+import { api, stage } from "./agents-helpers";
 
 // MCP integration against the local test MCP servers (cmd/mcptest, started by the global setup).
 export async function connectMCPServer(page: Page, name: string, endpoint: string, tokenVariable = "") {
@@ -16,12 +16,12 @@ export async function connectMCPServer(page: Page, name: string, endpoint: strin
 }
 
 
-// Registers an MCP server on the test servers, syncs it, and creates a flow with the named
+// Registers an MCP server on the test servers, syncs it, and creates an agent with the named
 // tools attached (each tool's schema hash comes from the discovery).
-export async function mcpFlow(stack: Stack, flow: string, path: string, tools: string[], authEnv = "") {
+export async function mcpAgent(stack: Stack, agent: string, path: string, tools: string[], authEnv = "") {
   const server = await api<{ data: { id: string } }>(stack, "/mcp-servers", {
     method: "POST",
-    body: JSON.stringify({ name: `${flow} server`, endpoint: `${stack.mcpUrl}${path}`, auth_env: authEnv, enabled: true }),
+    body: JSON.stringify({ name: `${agent} server`, endpoint: `${stack.mcpUrl}${path}`, auth_env: authEnv, enabled: true }),
   });
   const id = server.data.id;
   await api(stack, `/mcp-servers/${id}/validate`, { method: "POST" });
@@ -30,7 +30,7 @@ export async function mcpFlow(stack: Stack, flow: string, path: string, tools: s
   await api(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({
-      name: flow,
+      name: agent,
       config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You use tools." }), tts: stage({ voice: "v" }) },
       mcp_tools: tools.map((t) => ({ mcp_server_id: id, remote_name: t, schema_hash: hash(t), required: false })),
     }),

@@ -10,7 +10,7 @@ import { drifts, formatApiError } from "./mcpStats";
 
 export type MCPViewProps = { client: ApiClient; keyValue: string | null };
 
-// GET /flows returns at most this many flows; a list that reaches it may be missing some.
+// GET /agents returns at most this many agents; a list that reaches it may be missing some.
 const AGENT_CAP = 100;
 
 /** MCP servers on the left, the selected one on the right: its tools, and a review of changed schemas. */
@@ -43,7 +43,7 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
   const head = (
     <header className="page-head">
       <h1 tabIndex={-1}>MCP tools</h1>
-      <span className="subtext">Remote servers whose tools flows can call mid-conversation.</span>
+      <span className="subtext">Remote servers whose tools agents can call mid-conversation.</span>
       <span className="grow" />
       {keyValue && (
         <button
@@ -83,7 +83,7 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
     return page(
       <section className="message-panel">
         <h2>No MCP servers yet.</h2>
-        <p>Connect a remote MCP server by its endpoint to let flows call its tools. Tokens are read only from MCP_TOKEN_* environment variables.</p>
+        <p>Connect a remote MCP server by its endpoint to let agents call its tools. Tokens are read only from MCP_TOKEN_* environment variables.</p>
       </section>,
     );
   }
@@ -103,7 +103,7 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
         </nav>
         <div className="mcp-main">
           {!selected ? (
-            <section className="flow-missing">
+            <section className="agent-missing">
               <p role="status">That MCP server was not found.</p>
               <Link to="/mcp-servers" className="action-button-small">
                 Back to MCP tools

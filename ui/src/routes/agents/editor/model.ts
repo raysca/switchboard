@@ -1,4 +1,4 @@
-// Pure flow-editing rules for the flow designer. They mirror the server's
+// Pure agent-editing rules for the agent designer. They mirror the server's
 // validation (server/agent/definition.go): the server stays the authority, this
 // keeps the canvas from offering what it would reject.
 
@@ -11,7 +11,7 @@ export const MAX_GREETING_BYTES = 500;
 export const MAX_SUMMARY_PROMPT_BYTES = 2048;
 export const STT_P99_RANGE = [100, 10000] as const;
 const DEFAULT_MAX_TOKENS = 4000;
-/** The server's limits for a flow's quiet-caller and audio settings (server/agent/call_behavior.go). */
+/** The server's limits for an agent's quiet-caller and audio settings (server/agent/call_behavior.go). */
 export const IDLE_RANGE = { timeoutMs: [1000, 300000], prompts: [1, 10], textBytes: 200 } as const;
 export const TURN_RANGE = { minWords: [1, 10], maxMuteS: [1, 60], speechTimeoutMs: [200, 3000], smartHoldMs: [500, 5000] } as const;
 /** `max_call_duration_seconds`: 0 or unset is the server's limit. */
@@ -76,7 +76,7 @@ const asRecord = (v: unknown): Record<string, unknown> =>
 export type StepTab = "basics" | "handoffs" | "tools" | "advanced";
 type StepIssue = { tab: StepTab; message: string };
 
-/** A flow with no steps yet: the editor shows "Start with one step." */
+/** An agent with no steps yet: the editor shows "Start with one step." */
 export function emptyAgent(): AgentDraft {
   return { start: "", steps: [], handoffs: [] };
 }
@@ -103,7 +103,7 @@ export function stepIssues(g: AgentDraft, id: string): StepIssue[] {
   if (blank(asRecord(n.config.tts).provider)) issues.push({ tab: "basics", message: "Choose a voice." });
   if (byteLength(String(n.config.greeting ?? "").trim()) > MAX_GREETING_BYTES) issues.push({ tab: "basics", message: `Greeting is over ${MAX_GREETING_BYTES} bytes.` });
   for (const e of g.handoffs)
-    if (e.from === id && blank(e.condition)) issues.push({ tab: "handoffs", message: `Give the route to ${nameIn(g, e.to)} a condition.` });
+    if (e.from === id && blank(e.condition)) issues.push({ tab: "handoffs", message: `Give the handoff to ${nameIn(g, e.to)} a condition.` });
   for (const [cap, what] of [["llm", "model"], ["tts", "voice"], ["stt", "listening"]] as const) {
     const stage = asRecord(n.config[cap]);
     const fallbacks = Array.isArray(stage.fallbacks) ? stage.fallbacks.map(asRecord) : [];
@@ -133,16 +133,16 @@ export const FAILOVER_CLASSES = [
 export const DEFAULT_FAILOVER: readonly string[] = ["timeout", "server_error", "circuit_open"];
 const SUMMARIZING = new Set(["google", "echo", "nvidia", "openai", "xai"]);
 
-/** What the server caps, when it is known: a flow may only tighten it. */
+/** What the server caps, when it is known: an agent may only tighten it. */
 type ServerLimits = { maxMuteMs?: number; maxCallSeconds?: number };
 
-/** Problems that belong to the whole flow (header state line and Flow settings). */
+/** Problems that belong to the whole agent (header state line and Agent settings). */
 export function agentIssues(g: AgentDraft, limits?: ServerLimits): string[] {
   if (g.steps.length === 0) return [];
   const start = g.steps.find((n) => n.id === g.start);
   if (!start) return ["Choose a start step."];
   const out: string[] = [];
-  if (blank(asRecord(start.config.stt).provider)) out.push("Choose speech-to-text in Flow settings.");
+  if (blank(asRecord(start.config.stt).provider)) out.push("Choose speech-to-text in Agent settings.");
   const rec = asRecord(start.config.recording);
   if (rec.enabled === true && rec.disclosure_confirmed !== true) out.push("Confirm that callers are told the call is recorded.");
   // Ranges from server/agent/config.go: 0 or unset means the server default.
@@ -202,7 +202,7 @@ function callBehaviorIssues(config: StepConfig, limits?: ServerLimits): string[]
   return out;
 }
 
-/** A step no route leads to; callers can never reach it. The start step is always reachable. */
+/** A step no handoff leads to; callers can never reach it. The start step is always reachable. */
 export function isUnreachable(g: AgentDraft, id: string): boolean {
   return id !== g.start && !g.handoffs.some((e) => e.to === id);
 }
@@ -218,7 +218,7 @@ export function unreachableSteps(g: AgentDraft): string[] {
   return g.steps.filter((n) => !seen.has(n.id)).map((n) => n.name || "Untitled step");
 }
 
-/** A route drawn on the flow: no condition yet, the step panel asks for one. */
+/** A handoff drawn on the agent: no condition yet, the step panel asks for one. */
 export function addDraftHandoff(g: AgentDraft, from: string, to: string): AgentDraft {
   const known = (id: string) => g.steps.some((n) => n.id === id);
   if (from === to || !known(from) || !known(to) || g.handoffs.length >= MAX_HANDOFFS) return g;
@@ -227,8 +227,8 @@ export function addDraftHandoff(g: AgentDraft, from: string, to: string): AgentD
 }
 
 /**
- * Reads a stored flow config, flat or flow, as a draft. A flat flow exposes
- * every MCP tool selected on its version; as a flow's start step it must list
+ * Reads a stored agent config, flat or agent, as a draft. A flat agent exposes
+ * every MCP tool selected on its version; as an agent's start step it must list
  * them (selectedTools, "<mcp_server_id>/<remote_name>"), or adding a second
  * step would silently remove its tools.
  */
@@ -274,16 +274,16 @@ function withoutBlankGreeting(config: StepConfig): StepConfig {
   return rest;
 }
 
-/** A stored flat flow opens as one step named "main" and goes back flat; a step the user has named needs the flow form. */
+/** A stored flat agent opens as one step named "main" and goes back flat; a step the user has named needs the agent form. */
 function isFlat(g: AgentDraft): boolean {
   const only = g.steps[0];
   return g.steps.length === 1 && g.handoffs.length === 0 && !g.handoff_cue && only.id === "main" && only.name === "main" && !only.end_call;
 }
 
-/** The config to send: the flat form for a plain one-step flow, else the flow. */
+/** The config to send: the flat form for a plain one-step agent, else the agent. */
 export function toPayload(g: AgentDraft): unknown {
-  // A stored flat flow opens as one step named "main" (fromFlowConfig) and goes back flat, exposing
-  // every selected tool. A step the user has named needs the flow form, or its name is lost.
+  // A stored flat agent opens as one step named "main" (fromAgentConfig) and goes back flat, exposing
+  // every selected tool. A step the user has named needs the agent form, or its name is lost.
   if (isFlat(g)) return withoutBlankGreeting(g.steps[0].config);
   return {
     start: g.start,
@@ -302,9 +302,9 @@ export function toPayload(g: AgentDraft): unknown {
 const toolKey = (t: ToolSelection) => `${t.mcp_server_id}/${t.remote_name}`;
 
 /**
- * The flow's tool selection changed: a tool no longer selected comes off every step that listed it
- * (the server refuses a step tool the flow has not selected), and a flat flow's only step can call every selected tool.
- * A flow in steps form keeps what each step chose; a new tool is not added to any of them.
+ * The agent's tool selection changed: a tool no longer selected comes off every step that listed it
+ * (the server refuses a step tool the agent has not selected), and a flat agent's only step can call every selected tool.
+ * An agent in steps form keeps what each step chose; a new tool is not added to any of them.
  */
 export function applySelection(g: AgentDraft, next: ToolSelection[]): AgentDraft {
   const keys = next.map(toolKey);
@@ -392,11 +392,11 @@ export function setStart(g: AgentDraft, id: string): AgentDraft {
 /** Problems the server would reject, in plain words. Empty means publishable. */
 export function validate(g: AgentDraft, limits?: ServerLimits): string[] {
   const errors: string[] = [];
-  if (g.steps.length === 0 || g.steps.length > MAX_STEPS) errors.push(`A flow has 1 to ${MAX_STEPS} steps.`);
+  if (g.steps.length === 0 || g.steps.length > MAX_STEPS) errors.push(`An agent has 1 to ${MAX_STEPS} steps.`);
   if (!g.steps.some((n) => n.id === g.start)) errors.push("Choose a start step.");
   const cue = g.handoff_cue;
-  if (cue && !/^[a-z0-9_-]{1,32}$/.test(cue.name)) errors.push("The route sound name uses lower-case letters, digits, _ and - (up to 32).");
-  if (cue?.after_ms !== undefined && (cue.after_ms < 0 || cue.after_ms > 10000)) errors.push("The route sound starts after 0 to 10000 ms.");
+  if (cue && !/^[a-z0-9_-]{1,32}$/.test(cue.name)) errors.push("The handoff sound name uses lower-case letters, digits, _ and - (up to 32).");
+  if (cue?.after_ms !== undefined && (cue.after_ms < 0 || cue.after_ms > 10000)) errors.push("The handoff sound starts after 0 to 10000 ms.");
   const slugs = new Set<string>();
   for (const n of g.steps) {
     const label = n.name.trim() || n.id;
@@ -420,10 +420,10 @@ export function validate(g: AgentDraft, limits?: ServerLimits): string[] {
   for (const n of g.steps)
     for (const i of stepIssues(g, n.id)) if (i.tab === "advanced") errors.push(`${nameIn(g, n.id)}: ${i.message}`);
   for (const e of g.handoffs) {
-    if (blank(e.condition)) errors.push(`The route from ${nameIn(g, e.from)} to ${nameIn(g, e.to)} needs a condition.`);
+    if (blank(e.condition)) errors.push(`The handoff from ${nameIn(g, e.from)} to ${nameIn(g, e.to)} needs a condition.`);
     // The server counts bytes (server/agent/definition.go), not characters.
     else if (new TextEncoder().encode(e.condition).length > MAX_CONDITION)
-      errors.push(`The route from ${nameIn(g, e.from)} to ${nameIn(g, e.to)} has a condition longer than ${MAX_CONDITION} bytes.`);
+      errors.push(`The handoff from ${nameIn(g, e.from)} to ${nameIn(g, e.to)} has a condition longer than ${MAX_CONDITION} bytes.`);
   }
   errors.push(...agentIssues(g, limits).filter((m) => !m.startsWith("Choose speech-to-text")));
   return errors;

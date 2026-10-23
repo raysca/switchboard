@@ -148,41 +148,41 @@ describe("StepPanel", () => {
     expect(screen.getByRole("tab", { name: /basics.*needs attention/i })).toBeInTheDocument();
   });
 
-  it("adds a route from the keyboard, focuses its condition, and flags it until filled", async () => {
+  it("adds a handoff from the keyboard, focuses its condition, and flags it until filled", async () => {
     const user = userEvent.setup();
     render(<Harness stepId="a" initialTab="handoffs" />);
-    await user.selectOptions(screen.getByLabelText("Route to"), "b");
-    await user.click(screen.getByRole("button", { name: "Add route" }));
-    const condition = screen.getByLabelText("Condition for the route to Billing");
+    await user.selectOptions(screen.getByLabelText("Hand off to"), "b");
+    await user.click(screen.getByRole("button", { name: "Add handoff" }));
+    const condition = screen.getByLabelText("Condition for the handoff to Billing");
     expect(condition).toHaveFocus();
-    expect(screen.getByRole("tab", { name: /routes.*needs attention/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /handoffs.*needs attention/i })).toBeInTheDocument();
     await user.type(condition, "asks about an invoice");
-    expect(screen.getByRole("tab", { name: /routes/i })).not.toHaveAccessibleName(/needs attention/i);
-    await user.click(screen.getByRole("button", { name: "Remove the route to Billing" }));
-    expect(screen.queryByLabelText("Condition for the route to Billing")).toBeNull();
+    expect(screen.getByRole("tab", { name: /handoffs/i })).not.toHaveAccessibleName(/needs attention/i);
+    await user.click(screen.getByRole("button", { name: "Remove the handoff to Billing" }));
+    expect(screen.queryByLabelText("Condition for the handoff to Billing")).toBeNull();
   });
 
-  it("routes to a brand-new step in one go", async () => {
+  it("hands off to a brand-new step in one go", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness stepId="a" initialTab="handoffs" onChange={onChange} />);
-    await user.click(screen.getByRole("button", { name: "Route to a new step" }));
+    await user.click(screen.getByRole("button", { name: "Hand off to a new step" }));
     const g = lastGraph(onChange);
     expect(g.steps.map((n) => n.name)).toEqual(["Reception", "Billing", "New step"]);
     expect(g.handoffs).toEqual([expect.objectContaining({ from: "a", condition: "" })]);
-    expect(screen.getByLabelText("Condition for the route to New step")).toHaveFocus();
+    expect(screen.getByLabelText("Condition for the handoff to New step")).toHaveFocus();
   });
 
-  it("shows the flow's tool picker above the step's own choice, and says when no tool is chosen yet", () => {
+  it("shows the agent's tool picker above the step's own choice, and says when no tool is chosen yet", () => {
     render(<Harness stepId="a" initialTab="tools" toolPicker={<p>PICKER</p>} />);
-    const section = screen.getByRole("group", { name: "Flow tools" });
+    const section = screen.getByRole("group", { name: "Agent tools" });
     expect(within(section).getByText("PICKER")).toBeVisible();
     expect(within(section).getByText(/Shared by every step/)).toBeVisible();
-    expect(screen.getByText("No tools are chosen for this flow yet.")).toBeVisible();
-    expect(screen.queryByText(/Choose MCP tools for the flow first/)).toBeNull();
+    expect(screen.getByText("No tools are chosen for this agent yet.")).toBeVisible();
+    expect(screen.queryByText(/Choose MCP tools for the agent first/)).toBeNull();
   });
 
-  it("chooses which of the flow's tools a step can call", async () => {
+  it("chooses which of the agent's tools a step can call", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness stepId="a" initialTab="tools" agentTools={["crm/lookup", "crm/verify"]} onChange={onChange} />);
@@ -200,7 +200,7 @@ describe("StepPanel", () => {
     expect(screen.getByRole("tab", { name: /tools/i })).toHaveTextContent("1");
   });
 
-  it("lets a one-step flow's only step end the call", async () => {
+  it("lets a one-step agent's only step end the call", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     const one = fromAgentConfig({ start: "a", steps: [{ id: "a", name: "Reception", config: {} }], handoffs: [] });
@@ -212,14 +212,14 @@ describe("StepPanel", () => {
     expect(lastGraph(onChange).steps[0].end_call).toBe(true);
   });
 
-  it("does not offer a per-step tool list on a one-step flow: it can call every flow tool", () => {
+  it("does not offer a per-step tool list on a one-step agent: it can call every agent tool", () => {
     const one = fromAgentConfig({ start: "a", steps: [{ id: "a", name: "Reception", config: {} }], handoffs: [] });
     render(<Harness initial={one} stepId="a" initialTab="tools" agentTools={["crm/lookup"]} />);
     expect(screen.queryByText("Tools this step can call")).toBeNull();
-    expect(screen.getByText(/can call every tool of the flow/i)).toBeVisible();
+    expect(screen.getByText(/can call every tool of the agent/i)).toBeVisible();
   });
 
-  it("shows end_call checked on a one-step flow that carries the flag", () => {
+  it("shows end_call checked on a one-step agent that carries the flag", () => {
     const one = fromAgentConfig({ start: "a", steps: [{ id: "a", name: "Reception", end_call: true, config: {} }], handoffs: [] });
     render(<Harness initial={one} stepId="a" initialTab="tools" />);
     expect(screen.getByRole("checkbox", { name: /can end the call/i })).toBeChecked();
@@ -235,7 +235,7 @@ describe("StepPanel", () => {
     expect(screen.getByRole("button", { name: "Make start step" })).toBeVisible();
   });
 
-  it("moves the flow settings when another step becomes the start", async () => {
+  it("moves the agent settings when another step becomes the start", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness stepId="b" onChange={onChange} />);
@@ -246,7 +246,7 @@ describe("StepPanel", () => {
     expect(g.steps.find((n) => n.id === "a")!.config.stt).toBeUndefined();
   });
 
-  it("focuses the condition of a route drawn on the graph", () => {
+  it("focuses the condition of a handoff drawn on the graph", () => {
     const g = addDraftHandoff(start(), "a", "b");
     function Drawn() {
       const [graph, setGraph] = useState(g);
@@ -257,7 +257,7 @@ describe("StepPanel", () => {
       );
     }
     render(<Drawn />);
-    expect(screen.getByLabelText("Condition for the route to Billing")).toHaveFocus();
+    expect(screen.getByLabelText("Condition for the handoff to Billing")).toHaveFocus();
     expect(within(screen.getByRole("complementary")).getByRole("heading", { name: "Reception" })).toBeInTheDocument();
   });
 });

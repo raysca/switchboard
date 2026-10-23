@@ -1,7 +1,7 @@
-import { test, expect } from "../lib/flows-stack";
-import { FLOW, api, connectAdmin, openFlow } from "../lib/flows-helpers";
+import { test, expect } from "../lib/agents-stack";
+import { AGENT, api, connectAdmin, openAgent } from "../lib/agents-helpers";
 
-// Demo-path screens must not scroll sideways at phone width. Uses the flow and the call the
+// Demo-path screens must not scroll sideways at phone width. Uses the agent and the call the
 // lifecycle spec left behind.
 test.describe.configure({ mode: "serial" });
 
@@ -39,11 +39,11 @@ test("layout: demo-path screens do not scroll sideways at 390px", async ({ page,
   await go("/sessions");
   await expect(page.getByRole("heading", { name: "Calls", level: 1 })).toBeVisible();
   await noSideways("calls");
-  await go("/flows");
-  await expect(page.getByRole("heading", { name: "Flows", level: 1 })).toBeVisible();
-  await noSideways("flows");
-  await openFlow(page, FLOW);
-  await noSideways("flow editor");
+  await go("/agents");
+  await expect(page.getByRole("heading", { name: "Agents", level: 1 })).toBeVisible();
+  await noSideways("agents");
+  await openAgent(page, AGENT);
+  await noSideways("agent editor");
   const sessions = await api<{ data: { id: string }[] }>(stack, "/sessions?limit=1");
   if (sessions.data.length > 0) {
     await go(`/sessions/${sessions.data[0].id}`);

@@ -1,7 +1,7 @@
 import { test as base, expect } from "@playwright/test";
-import { flowsStackFile, readStack, type Stack } from "./stack";
+import { agentsStackFile, readStack, type Stack } from "./stack";
 
-// The flow suite runs against the echo provider (free, offline) or, with
+// The agent suite runs against the echo provider (free, offline) or, with
 // E2E_PROVIDER=xai, against live xAI (make e2e-xai; spends API credit).
 export const LIVE = process.env.E2E_PROVIDER === "xai";
 export const PROVIDER = LIVE ? "xai" : "echo";
@@ -12,7 +12,7 @@ export const test = base.extend<{ stack: Stack; _requireKey: void }>({
     info.skip(LIVE && !process.env.E2E_XAI_SECRET, SKIP_LIVE_REASON);
     await use();
   }, { auto: true }],
-  stack: async ({}, use) => use(readStack(flowsStackFile)),
+  stack: async ({}, use) => use(readStack(agentsStackFile)),
 });
 export { expect };
 export type { Stack };

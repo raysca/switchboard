@@ -17,7 +17,7 @@ describe("PublishedBanner", () => {
     const banner = screen.getByRole("status", { name: "Publish confirmation" });
     expect(banner).toHaveTextContent("Published v8. Front desk now answers new calls with it.");
     expect(banner).not.toHaveTextContent("finishing");
-    expect(screen.getByRole("link", { name: "Watch calls" })).toHaveAttribute("href", "/sessions?flow=f1&outcome=live");
+    expect(screen.getByRole("link", { name: "Watch calls" })).toHaveAttribute("href", "/sessions?agent=f1&outcome=live");
   });
 
   it("counts the calls still finishing on an earlier version", () => {

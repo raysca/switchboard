@@ -141,7 +141,7 @@ describe("management client", () => {
     expect(out.results[1].latency_ms).toBeUndefined();
   });
 
-  it("sends a flow's MCP tool selection with a create or update, and with a draft token", async () => {
+  it("sends an agent's MCP tool selection with a create or update, and with a draft token", async () => {
     const bodies: Record<string, unknown>[] = [];
     const agentBody = { data: { id: "f", name: "n", description: "", enabled: true, archived: false, current_version: null, readiness: { state: "ready", reasons: [] }, created_at: "", updated_at: "" } };
     const fetcher = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
@@ -250,7 +250,7 @@ describe("management client", () => {
   });
 
   describe("agents API", () => {
-    it("handles flow CRUD, duplicate, and archive", async () => {
+    it("handles agent CRUD, duplicate, and archive", async () => {
       const agent = {
         id: "agent-1",
         name: "Customer Support",
@@ -636,7 +636,7 @@ describe("getAgents follows the server's pages", () => {
     expect(urls(fetcher)).toEqual(["/api/v1/agents?limit=100&offset=0", "/api/v1/agents?limit=100&offset=100"]);
   });
 
-  it("asks once more after exactly 100 flows, and gets an empty page", async () => {
+  it("asks once more after exactly 100 agents, and gets an empty page", async () => {
     const { fetcher, client } = clientFor((o) => ok(o === 0 ? ids(0, 100) : []));
     await expect(client.getAgents()).resolves.toHaveLength(100);
     expect(fetcher).toHaveBeenCalledTimes(2);
@@ -648,7 +648,7 @@ describe("getAgents follows the server's pages", () => {
     expect(fetcher).toHaveBeenCalledTimes(AGENT_PAGES_MAX);
   });
 
-  it("lists a flow once when pages overlap", async () => {
+  it("lists an agent once when pages overlap", async () => {
     const { client } = clientFor((o) => ok(o === 0 ? ids(0, 100) : ids(99, 2)));
     const agents = await client.getAgents();
     expect(agents).toHaveLength(101);

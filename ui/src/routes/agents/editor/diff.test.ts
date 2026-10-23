@@ -21,7 +21,7 @@ describe("describeChanges", () => {
   it("names the quiet-caller and audio settings when they change", () => {
     const start = base.start;
     const g = updateStep(updateStep(base, start, { config: { ...base.steps[0].config, idle: { user_timeout_ms: 8000 } } }), start, { config: { ...base.steps[0].config, idle: { user_timeout_ms: 8000 }, audio: { output_gain_db: -3 } } });
-    expect(describeChanges(base, g)).toEqual(["Flow settings: silent-caller behavior changed", "Flow settings: audio changed"]);
+    expect(describeChanges(base, g)).toEqual(["Agent settings: silent-caller behavior changed", "Agent settings: audio changed"]);
   });
 
   it("names a changed sampling setting as an advanced change", () => {
@@ -29,7 +29,7 @@ describe("describeChanges", () => {
     expect(describeChanges(base, g)).toEqual(["Billing: advanced settings changed"]);
   });
 
-  it("names step, model, voice, instruction and route changes", () => {
+  it("names step, model, voice, instruction and handoff changes", () => {
     let g = updateStep(base, "b", { name: "Accounts", config: { ...ready, llm: { ...ready.llm, model: "flash", system_prompt: "Bills." }, tts: { provider: "google", voice: "puck" } } });
     g = updateHandoff(g, "e1", "asks about a bill");
     g = insertStep(g, "Support");
@@ -41,16 +41,16 @@ describe("describeChanges", () => {
       "Accounts: model gemini → flash",
       "Accounts: voice aoede → puck",
       "Accounts: instructions changed",
-      "Route Reception → Accounts: condition changed",
-      "New route Reception → Support",
+      "Handoff Reception → Accounts: condition changed",
+      "New handoff Reception → Support",
     ]);
   });
 
-  it("reports removed steps and routes, a new start step and flow settings", () => {
+  it("reports removed steps and handoffs, a new start step and agent settings", () => {
     let g: AgentDraft = { ...base, handoffs: [] };
     g = updateStep(g, "a", { config: { ...g.steps[0].config, vad_stop_ms: 480 } });
     g = setStart(g, "b");
-    expect(describeChanges(base, g)).toEqual(["Removed route Reception → Billing", "Start step is now Billing", "Flow settings: turn-taking changed"]);
+    expect(describeChanges(base, g)).toEqual(["Removed handoff Reception → Billing", "Start step is now Billing", "Agent settings: turn-taking changed"]);
   });
 
   it("reports the end-call toggle", () => {

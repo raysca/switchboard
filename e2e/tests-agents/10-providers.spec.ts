@@ -1,9 +1,9 @@
-import { test, expect, LIVE, PROVIDER } from "../lib/flows-stack";
+import { test, expect, LIVE, PROVIDER } from "../lib/agents-stack";
 import { step } from "../lib/evidence";
-import { api, connectAdmin, loadProviders, openDesigner, openFlowSettings, openFlowsList, providers, stage, type ProviderStatus } from "../lib/flows-helpers";
+import { api, connectAdmin, loadProviders, openDesigner, openAgentSettings, openAgentsList, providers, stage, type ProviderStatus } from "../lib/agents-helpers";
 
 // Provider detection in the admin UI: the suite's provider is detected, only detected providers
-// are offered, and a missing STT provider is explained. No flow is created here.
+// are offered, and a missing STT provider is explained. No agent is created here.
 test.describe.configure({ mode: "serial" });
 
 test.beforeAll(loadProviders);
@@ -12,13 +12,13 @@ test("providers: the suite's provider is detected and only detected providers ar
   // The server reads provider secrets from its environment (global setup); none goes through the API.
   expect(providers.find((p) => p.id === PROVIDER)?.detected).toBe(true);
   await openDesigner(page, stack);
-  // Model and voice are on the step panel; speech-to-text is in Flow settings.
+  // Model and voice are on the step panel; speech-to-text is in Agent settings.
   for (const kind of ["llm", "tts", "stt"] as const) {
-    if (kind === "stt") await openFlowSettings(page);
+    if (kind === "stt") await openAgentSettings(page);
     const offered = await page.getByLabel(`${kind.toUpperCase()} provider`).locator("option").evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value));
     const available = providers.filter((p) => p.services[kind]?.available).map((p) => p.id);
     expect(offered, `${kind} provider options`).toEqual(["", ...available]);
-    // The echo stack also gets placeholder google, xai and elevenlabs keys (global setup) so the dentistry demo's flow can be created (60-dental); only those three are tolerated.
+    // The echo stack also gets placeholder google, xai and elevenlabs keys (global setup) so the dentistry demo's agent can be created (60-dental); only those three are tolerated.
     // `silence` (text-only speech) is keyless and always available, so it is offered on every stack.
     const keyless = ["silence"];
     const demoOnly = LIVE ? keyless : [...keyless, "google", "xai", "elevenlabs"];
@@ -38,7 +38,7 @@ test("providers: with no STT provider available the designer names the variables
     await route.fulfill({ response: res, json: body });
   });
   await openDesigner(page, stack);
-  await openFlowSettings(page);
+  await openAgentSettings(page);
   const note = page.getByRole("note").filter({ hasText: "No STT provider is available" });
   await expect(note).toContainText("E2E_MISSING_STT_KEY");
   await expect(page.getByLabel("STT provider").locator("option")).toHaveCount(1);
@@ -60,8 +60,8 @@ test("providers page: the detected provider is listed with where its credential 
   await step(page, "providers page");
 });
 
-test("flows list names the variables a not-ready flow is missing", async ({ page, stack }) => {
-  // The suite's flow does not exist yet (spec 20 creates it), so this test makes its own; the echo stack
+test("agents list names the variables a not-ready agent is missing", async ({ page, stack }) => {
+  // The suite's agent does not exist yet (spec 20 creates it), so this test makes its own; the echo stack
   // is always ready, so only this row's readiness is altered in the response (route-mocked, R7).
   const NAME = "E2E Not Ready";
   const created = await api<{ data: { id: string } }>(stack, "/agents", {
@@ -78,12 +78,12 @@ test("flows list names the variables a not-ready flow is missing", async ({ page
       await route.fulfill({ response: res, json: body });
     });
     await connectAdmin(page, stack);
-    await openFlowsList(page);
+    await openAgentsList(page);
     const row = page.getByRole("listitem").filter({ has: page.getByRole("link", { name: NAME, exact: true }) });
     await expect(row).toContainText("missing_credential_llm");
     await expect(row.getByText("E2E_MISSING_LLM_KEY")).toHaveCount(1);
     await expect(row).toContainText("Set E2E_MISSING_LLM_KEY");
-    await step(page, "flows list: missing variables");
+    await step(page, "agents list: missing variables");
   } finally {
     // archived even when an assertion fails, so a failed run leaves no live "E2E Not Ready" for later specs
     await api(stack, `/agents/${created.data.id}/archive`, { method: "POST" });

@@ -14,21 +14,21 @@ function setup(over: Partial<NewAgentDialogProps> = {}) {
 }
 
 describe("NewAgentDialog", () => {
-  it("creates a blank flow with the typed name", async () => {
+  it("creates a blank agent with the typed name", async () => {
     const { props, user } = setup();
     const create = screen.getByRole("button", { name: "Create and open editor" });
     expect(create).toBeDisabled();
-    await user.type(screen.getByLabelText("Name"), "After hours");
+    await user.type(screen.getByLabelText("Name your agent"), "After hours");
     await user.click(create);
     expect(props.onBlank).toHaveBeenCalledWith("After hours");
     expect(props.onCopy).not.toHaveBeenCalled();
   });
 
-  it("copies the chosen flow under a new name", async () => {
+  it("copies the chosen agent under a new name", async () => {
     const { props, user } = setup();
-    await user.click(screen.getByRole("radio", { name: /Copy an existing flow/ }));
-    await user.selectOptions(screen.getByLabelText("Flow to copy"), "a2");
-    await user.type(screen.getByLabelText("Name"), "Night line");
+    await user.click(screen.getByRole("radio", { name: /Copy an existing agent/ }));
+    await user.selectOptions(screen.getByLabelText("Agent to copy"), "a2");
+    await user.type(screen.getByLabelText("Name your agent"), "Night line");
     await user.click(screen.getByRole("button", { name: "Copy and open editor" }));
     expect(props.onCopy).toHaveBeenCalledWith("a2", "Night line");
     expect(props.onBlank).not.toHaveBeenCalled();
@@ -36,16 +36,16 @@ describe("NewAgentDialog", () => {
 
   it("submits with Enter, and not while the name is blank or a request is running", async () => {
     const { props, user } = setup();
-    await user.type(screen.getByLabelText("Name"), "   {Enter}");
+    await user.type(screen.getByLabelText("Name your agent"), "   {Enter}");
     expect(props.onBlank).not.toHaveBeenCalled();
-    await user.clear(screen.getByLabelText("Name"));
-    await user.type(screen.getByLabelText("Name"), "X{Enter}");
+    await user.clear(screen.getByLabelText("Name your agent"));
+    await user.type(screen.getByLabelText("Name your agent"), "X{Enter}");
     expect(props.onBlank).toHaveBeenCalledWith("X");
   });
 
   it("cannot copy when there is nothing to copy", () => {
     setup({ agents: [] });
-    expect(screen.getByRole("radio", { name: /Copy an existing flow/ })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: /Copy an existing agent/ })).toBeDisabled();
   });
 
   it("shows a failed copy in the dialog and locks the button while it works", () => {
@@ -66,8 +66,8 @@ describe("NewAgentDialog", () => {
     const { user } = setup();
     const blank = screen.getByRole("radio", { name: /Blank/ });
     expect(blank.closest(".option-card")).toHaveAttribute("data-selected", "true");
-    await user.click(screen.getByRole("radio", { name: /Copy an existing flow/ }));
-    expect(screen.getByRole("radio", { name: /Copy an existing flow/ }).closest(".option-card")).toHaveAttribute("data-selected", "true");
+    await user.click(screen.getByRole("radio", { name: /Copy an existing agent/ }));
+    expect(screen.getByRole("radio", { name: /Copy an existing agent/ }).closest(".option-card")).toHaveAttribute("data-selected", "true");
     expect(blank.closest(".option-card")).not.toHaveAttribute("data-selected");
   });
 });

@@ -76,7 +76,7 @@ describe("AgentSettingsPanel", () => {
   it("says so when the server's limit is under a minute, and flags 0 or a negative number", async () => {
     const user = userEvent.setup();
     const { unmount } = render(<Harness serverConfig={{ ...limitServer, max_call_duration_seconds: 45 }} />);
-    expect(screen.getByText(/server allows at most 45 seconds, so no per-flow limit can be set/i)).toBeInTheDocument();
+    expect(screen.getByText(/server allows at most 45 seconds, so no per-agent limit can be set/i)).toBeInTheDocument();
     expect(screen.getByRole("spinbutton", { name: "Longest call (minutes)" })).toBeDisabled();
     unmount();
     render(<Harness serverConfig={limitServer} />);
@@ -95,7 +95,7 @@ describe("AgentSettingsPanel", () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
-    expect(screen.getByRole("note")).toHaveTextContent("Choose speech-to-text in Flow settings.");
+    expect(screen.getByRole("note")).toHaveTextContent("Choose speech-to-text in Agent settings.");
     await user.selectOptions(screen.getByLabelText("STT provider"), "deepgram");
     expect(startCfg(onChange).stt).toEqual({ provider: "deepgram", model: "nova-3", language: "en" });
     expect(screen.queryByRole("note")).toBeNull();
@@ -144,13 +144,13 @@ describe("AgentSettingsPanel", () => {
     expect(startCfg(onChange).tts).toMatchObject({ clean_text: false });
     await user.click(clean);
     expect(startCfg(onChange).tts).not.toHaveProperty("clean_text");
-    // a stored flow that set them opens Advanced on load
+    // a stored agent that set them opens Advanced on load
     const stored = fromAgentConfig({ llm: { provider: "g", model: "m" }, tts: { provider: "g", clean_text: false }, failover: { on: ["client_error"] } });
     render(<Harness initial={stored} />);
     expect(screen.getAllByText("Advanced · 2 set")).toHaveLength(1);
   });
 
-  describe("route sound", () => {
+  describe("handoff sound", () => {
     const cueServer: ServerConfigDTO = {
       profile: "development",
       max_sessions: 10,
@@ -163,11 +163,11 @@ describe("AgentSettingsPanel", () => {
       turn: { manager: true, min_words: 0, mute: [], max_mute_ms: 30000, speech_timeout_ms: 600, end_of_turn: "default", smart_turn_available: false, smart_hold_ms: 3000 },
     };
 
-    it("is a choice among the server's cues, only when the flow has routes", async () => {
+    it("is a choice among the server's cues, only when the agent has handoffs", async () => {
       const user = userEvent.setup();
       const onChange = vi.fn();
       render(<Harness onChange={onChange} serverConfig={cueServer} />);
-      const select = screen.getByRole("combobox", { name: "Route sound" });
+      const select = screen.getByRole("combobox", { name: "Handoff sound" });
       expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["None", "chime", "ding"]);
       await user.selectOptions(select, "chime");
       await user.type(screen.getByLabelText("Start after (ms)"), "50");
@@ -178,24 +178,24 @@ describe("AgentSettingsPanel", () => {
 
     it("keeps a stored name selected while the server's list has not loaded", () => {
       render(<Harness initial={{ ...two, handoff_cue: { name: "chime" } }} />);
-      expect(screen.getByRole("combobox", { name: "Route sound" })).toHaveValue("chime");
+      expect(screen.getByRole("combobox", { name: "Handoff sound" })).toHaveValue("chime");
     });
 
     it("shows a stored name the server lacks as selected and not on this server", () => {
       render(<Harness initial={{ ...two, handoff_cue: { name: "chimes" } }} serverConfig={cueServer} />);
-      expect(screen.getByRole("combobox", { name: "Route sound" })).toHaveValue("chimes");
+      expect(screen.getByRole("combobox", { name: "Handoff sound" })).toHaveValue("chimes");
       expect(screen.getByRole("option", { name: "chimes (not on this server)" })).toBeInTheDocument();
     });
   });
 
-  it("asks for a step first on an empty flow, and renames the flow", async () => {
+  it("asks for a step first on an empty agent, and renames the agent", async () => {
     const user = userEvent.setup();
     render(<Harness initial={emptyAgent()} />);
     expect(screen.getByText("Add a step first; these settings live on the start step.")).toBeVisible();
-    expect(screen.queryByLabelText("Route sound")).toBeNull();
-    await user.clear(screen.getByLabelText("Flow name"));
-    await user.type(screen.getByLabelText("Flow name"), "After hours");
-    expect(screen.getByLabelText("Flow name")).toHaveValue("After hours");
+    expect(screen.queryByLabelText("Handoff sound")).toBeNull();
+    await user.clear(screen.getByLabelText("Agent name"));
+    await user.type(screen.getByLabelText("Agent name"), "After hours");
+    expect(screen.getByLabelText("Agent name")).toHaveValue("After hours");
   });
 });
 
@@ -242,9 +242,9 @@ describe("AgentSettingsPanel footer", () => {
     expect(screen.getByRole("region", { name: "Explain Memory limits" })).toHaveTextContent("20 messages and 4000 tokens");
   });
 
-  it("explains the route sound once a route exists", () => {
+  it("explains the handoff sound once a handoff exists", () => {
     render(<Harness />);
-    expect(screen.getByRole("button", { name: "Explain Route sound" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Explain Handoff sound" })).toBeInTheDocument();
   });
 
   describe("Basic and Advanced", () => {
@@ -256,15 +256,15 @@ describe("AgentSettingsPanel footer", () => {
       });
     const advanced = () => screen.getByText(/^Advanced/).closest("details")!;
 
-    it("keeps the essentials up front and the rest under a closed Advanced for a default flow", () => {
+    it("keeps the essentials up front and the rest under a closed Advanced for a default agent", () => {
       render(<Harness />);
-      expect(screen.getByLabelText("Flow name")).toBeVisible();
+      expect(screen.getByLabelText("Agent name")).toBeVisible();
       expect(screen.getByLabelText("Record calls")).toBeVisible();
       expect(screen.getByLabelText("STT provider")).toBeVisible();
       expect(advanced()).not.toHaveAttribute("open");
       expect(advanced()).toContainElement(screen.getByLabelText("Wait after the caller stops (ms)"));
       expect(advanced()).toContainElement(screen.getByLabelText("Max messages"));
-      expect(advanced()).toContainElement(screen.getByLabelText("Route sound"));
+      expect(advanced()).toContainElement(screen.getByLabelText("Handoff sound"));
       expect(advanced()).not.toContainElement(screen.getByLabelText("Record calls"));
       expect(screen.getByText(/^Advanced/)).toHaveTextContent(/^Advanced$/);
     });
@@ -346,7 +346,7 @@ describe("AgentSettingsPanel footer", () => {
       expect(screen.queryByLabelText("Keep the latest turns")).toBeNull();
     });
 
-    it("opens a stored flow showing its values", () => {
+    it("opens a stored agent showing its values", () => {
       render(<Harness initial={stored} />);
       expect(screen.getByLabelText("Summarise when history reaches (tokens)")).toHaveValue(900);
       expect(screen.getByLabelText("Keep the latest turns")).toHaveValue(2);
@@ -372,7 +372,7 @@ describe("AgentSettingsPanel footer", () => {
       }
     });
 
-    it("does not count a route sound the flow has no routes to show", () => {
+    it("does not count a handoff sound the agent has no handoffs to show", () => {
       const g = fromAgentConfig({ start: "a", steps: [{ id: "a", name: "Reception", config: { stt: { provider: "deepgram" } } }], handoffs: [] });
       render(<Harness initial={{ ...g, handoff_cue: { name: "chime" } }} />);
       expect(screen.getByText(/^Advanced/)).toHaveTextContent(/^Advanced$/);
@@ -418,7 +418,7 @@ describe("AgentSettingsPanel footer", () => {
       expect(startCfg(onChange)).not.toHaveProperty("idle");
     });
 
-    it("unticking the box turns it off for this flow with an explicit 0, and ticking it again goes back to the server's", async () => {
+    it("unticking the box turns it off for this agent with an explicit 0, and ticking it again goes back to the server's", async () => {
       const user = userEvent.setup();
       const onChange = vi.fn();
       render(<Harness serverConfig={server} onChange={onChange} />);
@@ -541,7 +541,7 @@ describe("AgentSettingsPanel footer", () => {
       expect(screen.queryByText(/is not a sound on this server/)).toBeNull();
     });
 
-    it("shows the server's own question count and wording mode until the flow sets its own", async () => {
+    it("shows the server's own question count and wording mode until the agent sets its own", async () => {
       const user = userEvent.setup();
       const onChange = vi.fn();
       render(<Harness serverConfig={{ ...server, idle: { user_timeout_ms: 15000, max_prompts: 4, prompt_mode: "say" } }} onChange={onChange} />);
@@ -552,12 +552,12 @@ describe("AgentSettingsPanel footer", () => {
       expect(startCfg(onChange).idle).toEqual({ prompt_mode: "llm" });
     });
 
-    it("disables the sound with the reason when the server does not let flows choose one", async () => {
+    it("disables the sound with the reason when the server does not let agents choose one", async () => {
       const user = userEvent.setup();
       render(<Harness serverConfig={{ ...server, audio: { backgrounds: ["office"], cues: [], allow_agent_background: false, background_default: "" } }} />);
       await openAdvanced(user);
       expect(screen.getByLabelText("Background sound")).toBeDisabled();
-      expect(screen.getByText("This server does not allow flow background sounds.")).toBeVisible();
+      expect(screen.getByText("This server does not allow agent background sounds.")).toBeVisible();
     });
 
     it("names a stored sound the server no longer has", () => {
@@ -566,7 +566,7 @@ describe("AgentSettingsPanel footer", () => {
       expect(screen.getByText('"gone" is not a sound on this server.')).toBeVisible();
     });
 
-    it("opens a stored flow showing every value, and counts the two advanced groups", () => {
+    it("opens a stored agent showing every value, and counts the two advanced groups", () => {
       const stored = {
         idle: { user_timeout_ms: 8000, max_prompts: 3, prompt: "Hello?", prompt_mode: "say", goodbye: "Bye." },
         audio: { denoise: { strength: 0.8 }, output_gain_db: -3, background: { name: "office", gain_db: -20, loop: false } },

@@ -20,7 +20,7 @@ describe("PublishDialog", () => {
   });
 
   it("blocks publishing while there are problems", () => {
-    render(<PublishDialog {...props} problems={["The route from Reception to Billing needs a condition."]} />);
+    render(<PublishDialog {...props} problems={["The handoff from Reception to Billing needs a condition."]} />);
     expect(screen.getByRole("alert")).toHaveTextContent("needs a condition");
     expect(screen.getByRole("button", { name: "Publish v8" })).toBeDisabled();
   });
@@ -61,7 +61,7 @@ describe("PublishDialog", () => {
 
   it("says when this is the first version", () => {
     render(<PublishDialog {...props} version={1} firstVersion changes={[]} />);
-    expect(screen.getByText("This is the first version of this flow.")).toBeVisible();
+    expect(screen.getByText("This is the first version of this agent.")).toBeVisible();
   });
 
   it("says how many calls are in progress on the current version, and only when there are some", () => {
@@ -74,7 +74,7 @@ describe("PublishDialog", () => {
   });
 
   it("counts the changes in the heading, and lists the checks when nothing blocks publishing", () => {
-    render(<PublishDialog {...props} changes={["Renamed the flow to X", "Description changed"]} />);
+    render(<PublishDialog {...props} changes={["Renamed the agent to X", "Description changed"]} />);
     expect(screen.getByRole("heading", { name: "What changes · 2", level: 3 })).toBeVisible();
     expect(screen.getByText("Every step is set up")).toBeVisible();
     expect(screen.getByText("Every step is reachable from the start step")).toBeVisible();

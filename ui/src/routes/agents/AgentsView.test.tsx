@@ -44,9 +44,9 @@ function setup(client: Partial<ApiClient>, key: string | null = "k") {
   const full = { getAgents: vi.fn().mockResolvedValue([agent({}, graph)]), getSessions: vi.fn().mockResolvedValue([]), getProviders: vi.fn().mockResolvedValue([]), ...client } as unknown as ApiClient;
   render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={["/flows"]}>
+      <MemoryRouter initialEntries={["/agents"]}>
         <Routes>
-          <Route path="/flows" element={<AgentsView client={full} keyValue={key} />} />
+          <Route path="/agents" element={<AgentsView client={full} keyValue={key} />} />
           <Route path="*" element={<Where />} />
         </Routes>
       </MemoryRouter>
@@ -61,7 +61,7 @@ describe("AgentsView", () => {
     expect(screen.getByText(/Enter a management key/)).toBeVisible();
   });
 
-  it("lists flows with status, version, figures and live calls", async () => {
+  it("lists agents with status, version, figures and live calls", async () => {
     setup({
       getSessions: vi.fn().mockResolvedValue([session({ id: "1" }), session({ id: "2", agent_version_id: "v1" })]),
       getAgents: vi.fn().mockResolvedValue([
@@ -72,18 +72,18 @@ describe("AgentsView", () => {
     const row = (await screen.findByRole("link", { name: "Front desk" })).closest("li") as HTMLElement;
     expect(within(row).getByText("v2")).toBeVisible();
     expect(within(row).getByText("Ready")).toBeVisible();
-    expect(within(row).getByText("4 steps · 3 routes · 0 tools")).toBeVisible();
+    expect(within(row).getByText("4 steps · 3 handoffs · 0 tools")).toBeVisible();
     await waitFor(() => expect(within(row).getByText("2 calls live, 1 on an earlier version")).toBeVisible());
-    expect(within(row).getByRole("link", { name: "2 calls live, 1 on an earlier version" })).toHaveAttribute("href", "/sessions?flow=a1&outcome=live");
+    expect(within(row).getByRole("link", { name: "2 calls live, 1 on an earlier version" })).toHaveAttribute("href", "/sessions?agent=a1&outcome=live");
     const second = screen.getByRole("link", { name: "Appointments" }).closest("li") as HTMLElement;
     expect(within(second).getByText("Disabled")).toBeVisible();
-    expect(within(second).getByText("1 step · 0 routes · 0 tools")).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Flows", level: 1 })).toBeVisible();
-    // A disabled flow is not "not ready": it is switched off.
+    expect(within(second).getByText("1 step · 0 handoffs · 0 tools")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Agents", level: 1 })).toBeVisible();
+    // A disabled agent is not "not ready": it is switched off.
     expect(screen.getByText("1 enabled · 0 not ready · 2 calls in progress")).toBeVisible();
   });
 
-  it("keeps listing flows when the live-calls query fails", async () => {
+  it("keeps listing agents when the live-calls query fails", async () => {
     setup({ getSessions: vi.fn().mockRejectedValue(new ApiError("boom", "internal", 500, "r")) });
     const row = (await screen.findByRole("link", { name: "Front desk" })).closest("li") as HTMLElement;
     expect(within(row).getByText("Ready")).toBeVisible();
@@ -91,7 +91,7 @@ describe("AgentsView", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("shows why a flow is not ready, and offers Test only to a ready one", async () => {
+  it("shows why an agent is not ready, and offers Test only to a ready one", async () => {
     setup({
       getAgents: vi.fn().mockResolvedValue([
         agent(),
@@ -99,7 +99,7 @@ describe("AgentsView", () => {
       ]),
     });
     const ready = (await screen.findByRole("link", { name: "Front desk" })).closest("li") as HTMLElement;
-    expect(within(ready).getByRole("link", { name: "Test Front desk" })).toHaveAttribute("href", "/flows/a1?panel=test");
+    expect(within(ready).getByRole("link", { name: "Test Front desk" })).toHaveAttribute("href", "/agents/a1?panel=test");
     const broken = screen.getByRole("link", { name: "Broken" }).closest("li") as HTMLElement;
     expect(within(broken).getByText("missing_configuration")).toBeVisible();
     expect(within(broken).queryByRole("link", { name: /^Test/ })).toBeNull();
@@ -128,15 +128,15 @@ describe("AgentsView", () => {
   it("filters by name", async () => {
     const { user } = setup({ getAgents: vi.fn().mockResolvedValue([agent(), agent({ id: "a2", name: "Appointments" })]) });
     await screen.findByRole("link", { name: "Front desk" });
-    await user.type(screen.getByLabelText("Filter flows"), "appoint");
+    await user.type(screen.getByLabelText("Filter agents"), "appoint");
     expect(screen.queryByRole("link", { name: "Front desk" })).toBeNull();
     expect(screen.getByRole("link", { name: "Appointments" })).toBeVisible();
-    await user.clear(screen.getByLabelText("Filter flows"));
-    await user.type(screen.getByLabelText("Filter flows"), "zzz");
-    expect(screen.getByText("No flow matches “zzz”.")).toBeVisible();
+    await user.clear(screen.getByLabelText("Filter agents"));
+    await user.type(screen.getByLabelText("Filter agents"), "zzz");
+    expect(screen.getByText("No agent matches “zzz”.")).toBeVisible();
   });
 
-  it("copies a flow from its row and stays on the list", async () => {
+  it("copies an agent from its row and stays on the list", async () => {
     const duplicateAgent = vi.fn().mockResolvedValue(agent({ id: "a9", name: "Front desk copy" }));
     const { user } = setup({ duplicateAgent });
     await user.click(await screen.findByRole("button", { name: "Duplicate Front desk" }));
@@ -163,7 +163,7 @@ describe("AgentsView", () => {
 
     it("closes when focus moves to a control outside it", async () => {
       const { user, menu } = await open();
-      await user.click(screen.getByLabelText("Filter flows"));
+      await user.click(screen.getByLabelText("Filter agents"));
       expect(menu.open).toBe(false);
     });
 
@@ -185,52 +185,52 @@ describe("AgentsView", () => {
     const { user } = setup({ archiveAgent });
     await user.click(await screen.findByRole("button", { name: "Archive Front desk" }));
     expect(archiveAgent).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Archive flow" }));
+    await user.click(screen.getByRole("button", { name: "Archive agent" }));
     expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent("busy");
-    await user.click(screen.getByRole("button", { name: "Archive flow" }));
+    await user.click(screen.getByRole("button", { name: "Archive agent" }));
     await waitFor(() => expect(archiveAgent).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  it("opens the editor on a blank flow, carrying a name with spaces and &", async () => {
+  it("opens the editor on a blank agent, carrying a name with spaces and &", async () => {
     const { user } = setup({});
-    await user.click(await screen.findByRole("button", { name: "New flow" }));
-    await user.type(screen.getByLabelText("Name"), "R&D line ñ");
+    await user.click(await screen.findByRole("button", { name: "New agent" }));
+    await user.type(screen.getByLabelText("Name your agent"), "R&D line ñ");
     await user.click(screen.getByRole("button", { name: "Create and open editor" }));
-    expect(screen.getByTestId("where")).toHaveTextContent("/flows/new?name=R%26D%20line%20%C3%B1");
+    expect(screen.getByTestId("where")).toHaveTextContent("/agents/new?name=R%26D%20line%20%C3%B1");
   });
 
   it("copies from the dialog and opens the copy", async () => {
     const duplicateAgent = vi.fn().mockResolvedValue(agent({ id: "a9", name: "Night line" }));
     const { user } = setup({ duplicateAgent });
-    await user.click(await screen.findByRole("button", { name: "New flow" }));
-    await user.click(screen.getByRole("radio", { name: /Copy an existing flow/ }));
-    await user.type(screen.getByLabelText("Name"), "Night line");
+    await user.click(await screen.findByRole("button", { name: "New agent" }));
+    await user.click(screen.getByRole("radio", { name: /Copy an existing agent/ }));
+    await user.type(screen.getByLabelText("Name your agent"), "Night line");
     await user.click(screen.getByRole("button", { name: "Copy and open editor" }));
     expect(duplicateAgent).toHaveBeenCalledWith("a1", { name: "Night line" });
-    expect(await screen.findByTestId("where")).toHaveTextContent("/flows/a9");
+    expect(await screen.findByTestId("where")).toHaveTextContent("/agents/a9");
   });
 
-  it("teaches the vocabulary when there are no flows yet", async () => {
+  it("teaches the vocabulary when there are no agents yet", async () => {
     setup({ getAgents: vi.fn().mockResolvedValue([]) });
-    expect(await screen.findByRole("heading", { name: "No flows yet." })).toBeVisible();
-    for (const term of ["Flow", "Steps", "Routes", "Flow settings"]) expect(screen.getByText(term, { selector: "dt" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "No agents yet." })).toBeVisible();
+    for (const term of ["Agent", "Steps", "Handoffs", "Agent settings"]) expect(screen.getByText(term, { selector: "dt" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Use guided setup" })).toHaveAttribute("href", "/onboarding");
-    // One label for the action in both states, so it is always "New flow".
-    expect(screen.getByRole("button", { name: "New flow" })).toBeVisible();
+    // One label for the action in both states, so it is always "New agent".
+    expect(screen.getByRole("button", { name: "New agent" })).toBeVisible();
   });
 
-  it("hides archived flows, and says the list was cut only at the page cap", async () => {
-    const many = Array.from({ length: AGENT_PAGES_MAX * 100 }, (_, i) => agent({ id: `f${i}`, name: `Flow ${i}` }));
+  it("hides archived agents, and says the list was cut only at the page cap", async () => {
+    const many = Array.from({ length: AGENT_PAGES_MAX * 100 }, (_, i) => agent({ id: `f${i}`, name: `Agent ${i}` }));
     many[0] = agent({ id: "f0", name: "Gone", archived: true });
     setup({ getAgents: vi.fn().mockResolvedValue(many) });
-    expect(await screen.findByText("Showing 999 flows; the console lists at most 1000.")).toBeVisible();
+    expect(await screen.findByText("Showing 999 agents; the console lists at most 1000.")).toBeVisible();
     expect(screen.queryByRole("link", { name: "Gone" })).toBeNull();
   });
 
   it("has no cut-off note for a list the pages covered", async () => {
-    setup({ getAgents: vi.fn().mockResolvedValue(Array.from({ length: 101 }, (_, i) => agent({ id: `f${i}`, name: `Flow ${i}` }))) });
-    expect(await screen.findByRole("link", { name: "Flow 100" })).toBeVisible();
+    setup({ getAgents: vi.fn().mockResolvedValue(Array.from({ length: 101 }, (_, i) => agent({ id: `f${i}`, name: `Agent ${i}` }))) });
+    expect(await screen.findByRole("link", { name: "Agent 100" })).toBeVisible();
     expect(screen.queryByText(/the console lists at most/)).toBeNull();
   });
 
@@ -257,9 +257,9 @@ describe("AgentsView", () => {
   it("hands the copy to the editor's cache before opening it, so it never flashes as missing", async () => {
     const copy = agent({ id: "a9", name: "Night line" });
     const { user, queryClient } = setup({ duplicateAgent: vi.fn().mockResolvedValue(copy) });
-    await user.click(await screen.findByRole("button", { name: "New flow" }));
-    await user.click(screen.getByRole("radio", { name: /Copy an existing flow/ }));
-    await user.type(screen.getByLabelText("Name"), "Night line");
+    await user.click(await screen.findByRole("button", { name: "New agent" }));
+    await user.click(screen.getByRole("radio", { name: /Copy an existing agent/ }));
+    await user.type(screen.getByLabelText("Name your agent"), "Night line");
     await user.click(screen.getByRole("button", { name: "Copy and open editor" }));
     await screen.findByTestId("where");
     expect(queryClient.getQueryData(["agents", "a9"])).toEqual(copy);
@@ -271,22 +271,22 @@ describe("AgentsView", () => {
     await user.click(await screen.findByRole("checkbox", { name: "Front desk enabled" }));
     await waitFor(() => expect(getAgents).toHaveBeenCalledTimes(2));
     expect(screen.getByRole("link", { name: "Front desk" })).toBeVisible();
-    expect(screen.queryByText("Failed to load flows")).toBeNull();
+    expect(screen.queryByText("Failed to load agents")).toBeNull();
   });
 
-  it("does not repeat 'disabled' as a reason chip for a flow that is switched off", async () => {
+  it("does not repeat 'disabled' as a reason chip for an agent that is switched off", async () => {
     setup({ getAgents: vi.fn().mockResolvedValue([agent({ enabled: false, readiness: { state: "not_ready", reasons: ["disabled"] } })]) });
     const row = (await screen.findByRole("link", { name: "Front desk" })).closest("li") as HTMLElement;
     expect(within(row).getByText("Disabled")).toBeVisible();
     expect(within(row).queryByText("disabled")).toBeNull();
   });
 
-  it("puts the summary beside the heading, with the filter and New flow in the same header", async () => {
+  it("puts the summary beside the heading, with the filter and New agent in the same header", async () => {
     setup({});
-    const head = (await screen.findByRole("heading", { name: "Flows", level: 1 })).closest("header") as HTMLElement;
+    const head = (await screen.findByRole("heading", { name: "Agents", level: 1 })).closest("header") as HTMLElement;
     expect(await within(head).findByText("1 enabled · 0 not ready")).toBeVisible();
-    expect(within(head).getByLabelText("Filter flows")).toBeVisible();
-    expect(within(head).getByRole("button", { name: "New flow" })).toBeVisible();
+    expect(within(head).getByLabelText("Filter agents")).toBeVisible();
+    expect(within(head).getByRole("button", { name: "New agent" })).toBeVisible();
   });
 
   it("names the providers that are ready in the empty state", async () => {
@@ -303,7 +303,7 @@ describe("AgentsView", () => {
 
   it("leaves the provider line out when providers cannot be loaded", async () => {
     setup({ getAgents: vi.fn().mockResolvedValue([]), getProviders: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) });
-    await screen.findByRole("heading", { name: "No flows yet." });
+    await screen.findByRole("heading", { name: "No agents yet." });
     expect(screen.queryByText(/ready to use|No provider is set up/)).toBeNull();
   });
 });

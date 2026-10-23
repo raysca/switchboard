@@ -9,7 +9,7 @@ export type PublishDialogProps = {
   callsInProgress?: number;
   /** Steps no path from the start step reaches; they are named instead of ticking the reachability check. */
   unreachable?: string[];
-  /** Whether a test call has run on exactly this draft. Absent when the flow cannot be tested yet (never published). */
+  /** Whether a test call has run on exactly this draft. Absent when the agent cannot be tested yet (never published). */
   tested?: boolean;
   firstVersion: boolean;
   changes: string[];
@@ -25,7 +25,7 @@ export function PublishDialog({ agentName, version, currentVersion, callsInProgr
   const checksId = useId();
   const blocked = problems.length > 0;
   return (
-    <Modal title={`Publish ${agentName.trim() || "this flow"} v${version}?`} onCancel={onCancel}>
+    <Modal title={`Publish ${agentName.trim() || "this agent"} v${version}?`} onCancel={onCancel}>
       <p>
         New calls get v{version} straight away.{" "}
         {callsInProgress > 0 && currentVersion !== undefined ? (
@@ -51,7 +51,7 @@ export function PublishDialog({ agentName, version, currentVersion, callsInProgr
       ) : (
         <>
           {firstVersion ? (
-            <p className="subtext">This is the first version of this flow.</p>
+            <p className="subtext">This is the first version of this agent.</p>
           ) : changes.length ? (
             <section aria-labelledby={changesId}>
               <h3 id={changesId}>What changes · {changes.length}</h3>

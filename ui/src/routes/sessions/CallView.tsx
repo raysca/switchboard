@@ -59,7 +59,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
   // The heading and the way back are always there, so focus and the page's outline never depend on loading.
   const top = (state?: ReactNode, status?: ReactNode) => (
     <div className="call-page">
-      <nav aria-label="Breadcrumb" className="flow-page__crumb">
+      <nav aria-label="Breadcrumb" className="agent-page__crumb">
         <Link to="/sessions">Calls</Link>
       </nav>
       <header className="call-bar">
@@ -76,7 +76,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
     const err = sessionQuery.error as ApiError;
     if (err.status === 404) {
       return top(
-        <section className="flow-missing">
+        <section className="agent-missing">
           <p role="status">That call was not found.</p>
           <Link to="/sessions" className="action-button-small">
             Back to calls
@@ -111,9 +111,9 @@ export function CallView({ client, keyValue }: CallViewProps) {
     <>
       <dl className="call-figures">
         <div>
-          <dt>Flow</dt>
+          <dt>Agent</dt>
           <dd>
-            {agent && !agent.archived ? <Link to={`/flows/${encodeURIComponent(agent.id)}`}>{agent.name}</Link> : <span>{agent ? `${agent.name} (archived)` : "Unknown flow"}</span>}{" "}
+            {agent && !agent.archived ? <Link to={`/agents/${encodeURIComponent(agent.id)}`}>{agent.name}</Link> : <span>{agent ? `${agent.name} (archived)` : "Unknown agent"}</span>}{" "}
             <span className="chip">{versionLabel(s, agent)}</span>
             {s.draft && <> <span className="chip">Draft</span></>}
           </dd>
@@ -154,10 +154,10 @@ export function CallView({ client, keyValue }: CallViewProps) {
 
       {failed.map((f, i) => (
         <p key={i} role="note" className="call-note">
-          A route to {label(f.to)} failed. The caller stayed with {label(f.from)}.
+          A handoff to {label(f.to)} failed. The caller stayed with {label(f.from)}.
         </p>
       ))}
-      {tracesQuery.isError && <p role="note" className="call-note">Steps and routes could not be loaded, so the transcript is not labelled by step.</p>}
+      {tracesQuery.isError && <p role="note" className="call-note">Steps and handoffs could not be loaded, so the transcript is not labelled by step.</p>}
 
       {s.status === "active" && <LiveCallControls key={sessionId} client={client} sessionId={sessionId} onEnded={() => void sessionQuery.refetch()} />}
 

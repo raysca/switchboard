@@ -7,7 +7,7 @@ import { formatApiError, repin, type Drift } from "./mcpStats";
 
 const short = (hash: string | undefined) => (hash ?? "").slice(0, 8);
 
-/** A tool whose input schema changed: what it means for each flow that pinned the old one, and a way to accept the new one. */
+/** A tool whose input schema changed: what it means for each agent that pinned the old one, and a way to accept the new one. */
 export function DriftPanel({ client, tool, schema, items }: { client: ApiClient; tool: string; schema: unknown; items: Drift[] }) {
   const titleId = useId();
   const queryClient = useQueryClient();
@@ -20,7 +20,7 @@ export function DriftPanel({ client, tool, schema, items }: { client: ApiClient;
       if (!selection) throw new Error("The server's current schema is unknown, so there is nothing to accept.");
       // Every update publishes the config it is sent, so re-read it: a cached copy could revert someone's newer edit.
       const fresh = await client.getAgent(d.agent.id);
-      if (!fresh.current_version) throw new Error("This flow has no published version to re-pin.");
+      if (!fresh.current_version) throw new Error("This agent has no published version to re-pin.");
       return client.updateAgent(d.agent.id, { config: fresh.current_version.config, mcp_tools: selection });
     },
     onSuccess: () => {
@@ -34,11 +34,11 @@ export function DriftPanel({ client, tool, schema, items }: { client: ApiClient;
   return (
     <section aria-labelledby={titleId} className="drift-panel">
       <h3 id={titleId}>{tool} changed its input schema</h3>
-      <p>Flows that require it need your review before they take calls again. Flows that use it optionally keep working without it.</p>
-      <ul className="drift-flows">
+      <p>Agents that require it need your review before they take calls again. Agents that use it optionally keep working without it.</p>
+      <ul className="drift-agents">
         {items.map((d) => (
           <li key={d.agent.id}>
-            <Link to={`/flows/${encodeURIComponent(d.agent.id)}`}>{d.agent.name}</Link>
+            <Link to={`/agents/${encodeURIComponent(d.agent.id)}`}>{d.agent.name}</Link>
             <span className="subtext">{d.dep.required ? "requires it" : "uses it optionally"}</span>
             <code>
               {short(d.dep.selected_schema_hash)} → {short(d.dep.current_schema_hash)}
@@ -93,7 +93,7 @@ export function DriftPanel({ client, tool, schema, items }: { client: ApiClient;
   );
 }
 
-/** Pinned tools the server no longer offers. Nothing to accept: the flows need a different tool. */
+/** Pinned tools the server no longer offers. Nothing to accept: the agents need a different tool. */
 export function MissingTools({ items }: { items: Drift[] }) {
   const names = [...new Set(items.map((d) => d.dep.remote_name))];
   return (
@@ -101,13 +101,13 @@ export function MissingTools({ items }: { items: Drift[] }) {
       {names.map((name) => (
         <section key={name} className="drift-panel" aria-label={`${name} is no longer offered`}>
           <h3>{name} is no longer offered by this server</h3>
-          <p>Flows that require it need your review before they take calls again. Change the step that uses it, then publish.</p>
-          <ul className="drift-flows">
+          <p>Agents that require it need your review before they take calls again. Change the step that uses it, then publish.</p>
+          <ul className="drift-agents">
             {items
               .filter((d) => d.dep.remote_name === name)
               .map((d) => (
                 <li key={d.agent.id}>
-                  <Link to={`/flows/${encodeURIComponent(d.agent.id)}`}>{d.agent.name}</Link>
+                  <Link to={`/agents/${encodeURIComponent(d.agent.id)}`}>{d.agent.name}</Link>
                   <span className="subtext">{d.dep.required ? "requires it" : "uses it optionally"}</span>
                 </li>
               ))}

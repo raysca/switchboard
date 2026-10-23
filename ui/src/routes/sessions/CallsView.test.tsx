@@ -77,7 +77,7 @@ describe("CallsView", () => {
     expect(screen.getByText(/Enter a management key/)).toBeVisible();
   });
 
-  it("lists calls with flow, version, duration, turns and outcome", async () => {
+  it("lists calls with agent, version, duration, turns and outcome", async () => {
     setup({
       getSessions: listOnly([
         call(),
@@ -118,7 +118,7 @@ describe("CallsView", () => {
     });
     const rows = await screen.findAllByRole("row");
     const header = within(rows[0]).getAllByRole("columnheader").map((h) => h.textContent);
-    expect(header).toEqual(["Started", "Caller", "Flow", "Duration", "Turns", "Median reply", "Outcome"]);
+    expect(header).toEqual(["Started", "Caller", "Agent", "Duration", "Turns", "Median reply", "Outcome"]);
     expect(within(rows[1]).getByText("Console test")).toBeVisible();
     expect(within(rows[1]).getByText("612 ms")).toBeVisible();
     expect(within(rows[1]).getByText("Ended · Caller hung up")).toBeVisible();
@@ -154,12 +154,12 @@ describe("CallsView", () => {
     expect(screen.getByRole("button", { name: "Live" })).toBeVisible();
   });
 
-  it("filters by flow and keeps the choice in the URL", async () => {
+  it("filters by agent and keeps the choice in the URL", async () => {
     const { client, user } = setup({});
     await screen.findByRole("table");
-    await user.selectOptions(screen.getByLabelText("Flow"), "a2");
+    await user.selectOptions(screen.getByLabelText("Agent"), "a2");
     await waitFor(() => expect(client.getSessions).toHaveBeenLastCalledWith(expect.objectContaining({ agent_id: "a2", limit: 26, offset: 0 })));
-    expect(screen.getByTestId("where")).toHaveTextContent("/sessions?flow=a2");
+    expect(screen.getByTestId("where")).toHaveTextContent("/sessions?agent=a2");
   });
 
   it("filters Live and Ended with pressed buttons", async () => {
@@ -175,7 +175,7 @@ describe("CallsView", () => {
   });
 
   it("starts from the filters in the URL, and ignores a garbage outcome", async () => {
-    const { client } = setup({}, "/sessions?flow=a1&outcome=live");
+    const { client } = setup({}, "/sessions?agent=a1&outcome=live");
     await waitFor(() => expect(client.getSessions).toHaveBeenCalledWith(expect.objectContaining({ agent_id: "a1", status: "active", limit: 26 })));
     expect(screen.getByRole("button", { name: /^Live/ })).toHaveAttribute("aria-pressed", "true");
   });
@@ -213,7 +213,7 @@ describe("CallsView", () => {
   it("says there are no calls yet, with the way to make one", async () => {
     setup({ getSessions: listOnly([]) });
     expect(await screen.findByRole("heading", { name: "No calls yet." })).toBeVisible();
-    expect(screen.getByRole("link", { name: "Go to Flows" })).toHaveAttribute("href", "/flows");
+    expect(screen.getByRole("link", { name: "Go to Agents" })).toHaveAttribute("href", "/agents");
   });
 
   it("says nothing matches a filter, and clears it", async () => {
@@ -229,16 +229,16 @@ describe("CallsView", () => {
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
   });
 
-  it("lists calls with an unknown flow when the flow list fails", async () => {
+  it("lists calls with an unknown agent when the agent list fails", async () => {
     setup({ getAgents: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) });
-    expect(await screen.findByText("Unknown flow")).toBeVisible();
+    expect(await screen.findByText("Unknown agent")).toBeVisible();
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("keeps a flow filter from the URL even when that flow is not in the list", async () => {
-    setup({}, "/sessions?flow=gone");
+  it("keeps an agent filter from the URL even when that agent is not in the list", async () => {
+    setup({}, "/sessions?agent=gone");
     await screen.findByRole("table");
-    expect(screen.getByLabelText("Flow")).toHaveValue("gone");
+    expect(screen.getByLabelText("Agent")).toHaveValue("gone");
   });
 
   it("keeps the page in the URL, so Back and links land on the same page", async () => {
@@ -278,8 +278,8 @@ describe("CallsView", () => {
     expect(screen.getByRole("button", { name: "Older" })).toHaveFocus();
   });
 
-  it("counts live calls of the chosen flow only", async () => {
-    setup({ getSessions: listOnly([call()], [call({ status: "active" }), call({ id: "x", status: "active", agent_id: "a2" }), call({ id: "y", status: "active", agent_id: "a2" })]) }, "/sessions?flow=a2");
+  it("counts live calls of the chosen agent only", async () => {
+    setup({ getSessions: listOnly([call()], [call({ status: "active" }), call({ id: "x", status: "active", agent_id: "a2" }), call({ id: "y", status: "active", agent_id: "a2" })]) }, "/sessions?agent=a2");
     expect(await screen.findByText("2 live now")).toBeVisible();
     expect(screen.getByRole("button", { name: "Live · 2" })).toBeVisible();
   });
@@ -288,7 +288,7 @@ describe("CallsView", () => {
     setup({ getSessions: listOnly([call()], [call({ status: "active" })]) });
     await screen.findByRole("table");
     expect(screen.getByRole("heading", { level: 1, name: "Calls" }).parentElement).toHaveTextContent("1 live now");
-    expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Started", "Caller", "Flow", "Duration", "Turns", "Median reply", "Outcome"]);
+    expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Started", "Caller", "Agent", "Duration", "Turns", "Median reply", "Outcome"]);
     const row = screen.getAllByRole("row")[1];
     expect(within(row).getByText("04:12").closest("td")).toHaveClass("num");
     expect(within(row).getByText("6").closest("td")).toHaveClass("num");

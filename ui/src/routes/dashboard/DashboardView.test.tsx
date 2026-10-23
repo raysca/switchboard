@@ -119,7 +119,7 @@ describe("DashboardView", () => {
     expect(screen.getByText("4.0 per call")).toBeVisible();
 
     // Readiness Summary
-    expect(screen.getByRole("link", { name: "View flows" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "View agents" })).toBeVisible();
     expect(await screen.findByText("1 of 2 ready")).toBeVisible();
     expect(screen.getByRole("link", { name: "View providers" })).toBeVisible();
     expect(await screen.findByText("1 of 2 detected")).toBeVisible();
@@ -182,7 +182,7 @@ describe("DashboardView setup checklist", () => {
     expect(screen.getByText("Google is ready.")).toBeVisible();
   });
 
-  it("shows no checklist once a provider is detected and a flow exists", async () => {
+  it("shows no checklist once a provider is detected and an agent exists", async () => {
     show({});
     await screen.findByRole("heading", { name: /Recent calls/ });
     expect(screen.queryByRole("heading", { name: /to your first call/ })).toBeNull();

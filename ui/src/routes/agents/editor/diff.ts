@@ -47,20 +47,20 @@ export function describeChanges(before: AgentDraft | null, after: AgentDraft): s
   const newHandoffs = new Map(after.handoffs.map((e) => [key(e), e]));
   for (const e of after.handoffs) {
     const o = oldHandoffs.get(key(e));
-    if (!o) out.push(`New route ${nameIn(after, e.from)} → ${nameIn(after, e.to)}`);
-    else if (o.condition !== e.condition) out.push(`Route ${nameIn(after, e.from)} → ${nameIn(after, e.to)}: condition changed`);
+    if (!o) out.push(`New handoff ${nameIn(after, e.from)} → ${nameIn(after, e.to)}`);
+    else if (o.condition !== e.condition) out.push(`Handoff ${nameIn(after, e.from)} → ${nameIn(after, e.to)}: condition changed`);
   }
-  for (const e of before.handoffs) if (!newHandoffs.has(key(e))) out.push(`Removed route ${nameIn(before, e.from)} → ${nameIn(before, e.to)}`);
+  for (const e of before.handoffs) if (!newHandoffs.has(key(e))) out.push(`Removed handoff ${nameIn(before, e.from)} → ${nameIn(before, e.to)}`);
 
   if (before.start !== after.start) out.push(`Start step is now ${nameIn(after, after.start)}`);
   const oldStart = rec(old.get(before.start)?.config);
   const newStart = rec(now.get(after.start)?.config);
-  for (const [k, label] of AGENT_SETTINGS) if (!same(oldStart[k], newStart[k])) out.push(`Flow settings: ${label} changed`);
-  if (!same(before.handoff_cue, after.handoff_cue)) out.push("Flow settings: route sound changed");
+  for (const [k, label] of AGENT_SETTINGS) if (!same(oldStart[k], newStart[k])) out.push(`Agent settings: ${label} changed`);
+  if (!same(before.handoff_cue, after.handoff_cue)) out.push("Agent settings: handoff sound changed");
   return out;
 }
 
-/** Tools added to or removed from the flow, and tools that became required or optional. */
+/** Tools added to or removed from the agent, and tools that became required or optional. */
 export function describeToolChanges(before: ToolSelection[], after: ToolSelection[]): string[] {
   const name = (t: ToolSelection) => `${t.mcp_server_id}/${t.remote_name}`;
   const was = new Map(before.map((t) => [name(t), t]));

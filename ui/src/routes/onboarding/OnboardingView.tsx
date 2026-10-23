@@ -11,7 +11,7 @@ export type OnboardingViewProps = { client: ApiClient; keyValue: string | null }
 
 const STEPS = [
   { name: "Voice stack", sub: "Providers for each stage" },
-  { name: "Flow", sub: "Name, job, voice" },
+  { name: "Agent", sub: "Name, job, voice" },
   { name: "Test call", sub: "Talk to it in the browser" },
   { name: "Connect", sub: "Token and web client" },
 ];
@@ -44,7 +44,7 @@ function Snippet({ label, title, text }: { label: string; title: string; text: s
   );
 }
 
-/** First run: pick a voice stack, make a flow, call it, connect a client. The step lives in the URL, so a reload resumes. */
+/** First run: pick a voice stack, make an agent, call it, connect a client. The step lives in the URL, so a reload resumes. */
 export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
   const queryClient = useQueryClient();
   const [params, setParams] = useSearchParams();
@@ -64,9 +64,9 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
       setCreateError(null);
       setCreated(agent);
       void queryClient.invalidateQueries({ queryKey: ["agents"] });
-      setParams({ step: "3", flow: agent.id });
+      setParams({ step: "3", agent: agent.id });
     },
-    onError: (err) => setCreateError(asApiError(err, "Failed to create flow")),
+    onError: (err) => setCreateError(asApiError(err, "Failed to create agent")),
   });
 
   const head = (
@@ -102,7 +102,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
   const stacks = stacksFrom(providers);
   const ready = stacks.filter((s) => s.ready);
   const stack = stacks.find((s) => s.provider.id === stackId && s.ready) ?? ready[0];
-  const agentId = params.get("flow");
+  const agentId = params.get("agent");
   const agent = (created && created.id === agentId ? created : agents.find((f) => f.id === agentId)) ?? null;
 
   const raw = params.get("step");
@@ -110,7 +110,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
   let step = asked !== null && Number.isInteger(asked) && asked >= 1 && asked <= 4 ? asked : asked === null ? (agents.length > 0 && detected.length > 0 ? 0 : 1) : 1;
   if (step >= 3 && !agent) step = ready.length > 0 ? 2 : 1;
   if (step === 2 && !stack) step = 1;
-  const go = (n: number, keep?: boolean) => setParams(keep && agent ? { step: String(n), flow: agent.id } : { step: String(n) });
+  const go = (n: number, keep?: boolean) => setParams(keep && agent ? { step: String(n), agent: agent.id } : { step: String(n) });
 
   const nav = (
     <nav aria-label="Setup steps" className="setup-steps">
@@ -144,7 +144,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
             <section className="message-panel" role="status">
               <h2>System configured and ready</h2>
               <p>
-                {detected.length} detected {detected.length === 1 ? "provider" : "providers"} and {agents.length} {agents.length === 1 ? "flow" : "flows"}.
+                {detected.length} detected {detected.length === 1 ? "provider" : "providers"} and {agents.length} {agents.length === 1 ? "agent" : "agents"}.
               </p>
             </section>
             <div className="first-run__summary">
@@ -160,7 +160,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
                 </Link>
               </section>
               <section>
-                <h3>Flows ({agents.length})</h3>
+                <h3>Agents ({agents.length})</h3>
                 <ul>
                   {agents.map((f) => (
                     <li key={f.id}>
@@ -169,13 +169,13 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
                   ))}
                 </ul>
                 <div className="row">
-                  <Link to="/flows" className="action-button-small">
-                    Manage flows
+                  <Link to="/agents" className="action-button-small">
+                    Manage agents
                   </Link>
-                  <Link to={`/onboarding?step=3&flow=${encodeURIComponent(agents[0].id)}`} className="action-button-small">
-                    Test a flow
+                  <Link to={`/onboarding?step=3&agent=${encodeURIComponent(agents[0].id)}`} className="action-button-small">
+                    Test an agent
                   </Link>
-                  <Link to={`/onboarding?step=4&flow=${encodeURIComponent(agents[0].id)}`} className="action-button-small">
+                  <Link to={`/onboarding?step=4&agent=${encodeURIComponent(agents[0].id)}`} className="action-button-small">
                     Connect a client
                   </Link>
                 </div>
@@ -203,7 +203,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
           {step === 1 && (
             <section aria-labelledby="fr-title" className="first-run__step">
               <p className="subtext">Step 1 of 4</p>
-              <h2 id="fr-title">Choose how your flow hears, thinks and speaks.</h2>
+              <h2 id="fr-title">Choose how your agent hears, thinks and speaks.</h2>
               {stacks.length === 0 ? (
                 <p>
                   No provider on this server covers speech-to-text, a language model and text-to-speech yet. Setting a key will not change that: this build has no full stack. <Link to="/providers">See providers</Link>
@@ -241,11 +241,11 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
             <form onSubmit={submitAgent} className="first-run__step" aria-labelledby="fr-title" noValidate={false}>
               <p className="subtext">Step 2 of 4</p>
               <h2 id="fr-title">Tell it what job it's doing.</h2>
-              <p>Plain sentences are enough. This becomes the flow's first step, using {stack.provider.display_name}.</p>
-              {createError && <ErrorState title="Failed to create flow" error={createError} onRetry={() => setCreateError(null)} />}
+              <p>Plain sentences are enough. This becomes the agent's first step, using {stack.provider.display_name}.</p>
+              {createError && <ErrorState title="Failed to create agent" error={createError} onRetry={() => setCreateError(null)} />}
               <div className="first-run__fields">
                 <label className="form-field" htmlFor="fr-name">
-                  <span>Name</span>
+                  <span>Name your agent</span>
                   <input id="fr-name" type="text" required maxLength={128} value={name} autoComplete="off" onChange={(e) => setName(e.target.value)} />
                 </label>
                 <label className="form-field" htmlFor="fr-voice">
@@ -280,7 +280,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
                   Back
                 </button>
                 <span className="grow" />
-                <span className="subtext">Creates the flow as v1 and opens a test call</span>
+                <span className="subtext">Creates the agent as v1 and opens a test call</span>
                 <button type="submit" className="action-button" disabled={create.isPending}>
                   {create.isPending ? "Creating…" : "Create and call it"}
                 </button>
@@ -297,7 +297,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
                 <AgentVoiceTest agent={agent} client={client} keyValue={keyValue} />
               </div>
               <p className="subtext">
-                Doesn't sound right? <Link to={`/flows/${encodeURIComponent(agent.id)}`}>Open the flow editor</Link> to change the instructions, publish, and call again.
+                Doesn't sound right? <Link to={`/agents/${encodeURIComponent(agent.id)}`}>Open the agent editor</Link> to change the instructions, publish, and call again.
               </p>
               <div className="first-run__foot">
                 <span className="grow" />
@@ -327,8 +327,8 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
                 <h3 id="fr-more">When you're ready for more</h3>
                 <ul>
                   <li>
-                    <span>Add a fallback so a provider outage doesn't drop calls, or route callers to a specialist step</span>
-                    <Link to={`/flows/${encodeURIComponent(agent.id)}`}>Open the editor</Link>
+                    <span>Add a fallback so a provider outage doesn't drop calls, or hand callers off to a specialist step</span>
+                    <Link to={`/agents/${encodeURIComponent(agent.id)}`}>Open the editor</Link>
                   </li>
                   <li>
                     <span>Let it look things up with an MCP tool</span>

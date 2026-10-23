@@ -35,7 +35,7 @@ export function TurnFields({ cfg, setKey, serverConfig }: Props) {
   const off = st !== undefined && !st.manager;
   const serverHasAlways = serverMute.includes(ALWAYS);
 
-  // The choice a call would act on: the flow's members over the server's (absent = the server's, 0 = off).
+  // The choice a call would act on: the agent's members over the server's (absent = the server's, 0 = off).
   const serverWords = st?.min_words ?? 0;
   const mode =
     mute.includes(ALWAYS) ? (agentMute?.includes(ALWAYS) ? "never" : "server")
@@ -44,7 +44,7 @@ export function TurnFields({ cfg, setKey, serverConfig }: Props) {
     : "server";
   const shownWords = minWords !== null ? minWords : mode === "after" ? serverWords : 0;
 
-  // Server mute unknown (config loading): never compare against a guess, and never invent a mute list the flow did not have.
+  // Server mute unknown (config loading): never compare against a guess, and never invent a mute list the agent did not have.
   const write = (patch: { min_words?: number | null; mute?: string[] | null; max_mute_ms?: number | null }) =>
     writeTurn(turn, setKey, st || agentMute !== null ? patch : { ...patch, mute: undefined }, st && serverMute);
   const withMute = (name: string, on: boolean) => ORDER.filter((n) => (n === name ? on : mute.includes(n)));
@@ -53,7 +53,7 @@ export function TurnFields({ cfg, setKey, serverConfig }: Props) {
   const serverSays = !st ? "" : ` (${serverHasAlways ? "not while the agent speaks" : st.min_words > 0 ? `after ${st.min_words} word${st.min_words === 1 ? "" : "s"}` : "any speech interrupts"})`;
   const serverCap = st ? st.max_mute_ms / 1000 : TURN_RANGE.maxMuteS[1];
   const maxSeconds = Math.min(TURN_RANGE.maxMuteS[1], serverCap);
-  const minSeconds = Math.min(TURN_RANGE.maxMuteS[0], maxSeconds); // a server cap under the flow minimum leaves one value
+  const minSeconds = Math.min(TURN_RANGE.maxMuteS[0], maxSeconds); // a server cap under the agent minimum leaves one value
   const choices = [
     { id: "server", label: `Server setting${serverSays}`, pick: () => write({ min_words: null, mute: serverHasAlways ? null : rest }) },
     { id: "any", label: "Any time", pick: () => write({ min_words: 0, mute: rest }) },
@@ -75,20 +75,20 @@ export function TurnFields({ cfg, setKey, serverConfig }: Props) {
       <fieldset className="stage-box">
         <legend>When can the caller interrupt?</legend>
         {choices.map((c) => (
-          <label key={c.id} className="check-row" htmlFor={`flow-turn-${c.id}`}>
-            <input id={`flow-turn-${c.id}`} type="radio" name="flow-turn-interrupt" checked={mode === c.id} disabled={off} onChange={c.pick} />
+          <label key={c.id} className="check-row" htmlFor={`agent-turn-${c.id}`}>
+            <input id={`agent-turn-${c.id}`} type="radio" name="agent-turn-interrupt" checked={mode === c.id} disabled={off} onChange={c.pick} />
             <span>{c.label}</span>
           </label>
         ))}
-        <label className="form-field" htmlFor="flow-turn-words">
+        <label className="form-field" htmlFor="agent-turn-words">
           <span>Words before the caller interrupts</span>
           <input
-            id="flow-turn-words"
+            id="agent-turn-words"
             type="number"
             min={TURN_RANGE.minWords[0]}
             max={TURN_RANGE.minWords[1]}
             disabled={off || mode !== "after"}
-            aria-describedby="flow-turn-words-hint"
+            aria-describedby="agent-turn-words-hint"
             value={wordsText ?? (shownWords >= 1 ? shownWords : "")}
             onChange={(e) => {
               setWordsText(e.target.value);
@@ -98,31 +98,31 @@ export function TurnFields({ cfg, setKey, serverConfig }: Props) {
             onBlur={() => setWordsText(null)}
           />
         </label>
-        <p id="flow-turn-words-hint" className="subtext">
+        <p id="agent-turn-words-hint" className="subtext">
           {TURN_RANGE.minWords[0]} to {TURN_RANGE.minWords[1]}. Needs a speech-to-text with interim results.
         </p>
         <SettingHelp id="turn.interruptions" />
       </fieldset>
-      <label className="check-row" htmlFor="flow-turn-first">
-        <input id="flow-turn-first" type="checkbox" checked={mute.includes("first_speech")} disabled={off} onChange={(e) => write({ mute: withMute("first_speech", e.target.checked) })} />
+      <label className="check-row" htmlFor="agent-turn-first">
+        <input id="agent-turn-first" type="checkbox" checked={mute.includes("first_speech")} disabled={off} onChange={(e) => write({ mute: withMute("first_speech", e.target.checked) })} />
         <span>Protect the agent's first reply or greeting</span>
       </label>
-      <label className="check-row" htmlFor="flow-turn-tool">
-        <input id="flow-turn-tool" type="checkbox" checked={mute.includes("function_call")} disabled={off} onChange={(e) => write({ mute: withMute("function_call", e.target.checked) })} />
+      <label className="check-row" htmlFor="agent-turn-tool">
+        <input id="agent-turn-tool" type="checkbox" checked={mute.includes("function_call")} disabled={off} onChange={(e) => write({ mute: withMute("function_call", e.target.checked) })} />
         <span>Not while a tool runs</span>
       </label>
       {mute.includes("until_first_bot_complete") && <p className="subtext">Also muted until the greeting has finished (set through the API, kept when you save).</p>}
       <SettingHelp id="turn.mute" />
-      <label className="form-field" htmlFor="flow-turn-max-mute">
+      <label className="form-field" htmlFor="agent-turn-max-mute">
         <span>Longest mute (seconds)</span>
         <input
-          id="flow-turn-max-mute"
+          id="agent-turn-max-mute"
           type="number"
           min={minSeconds}
           max={maxSeconds}
           disabled={off}
           placeholder={st ? String(st.max_mute_ms / 1000) : "Server setting"}
-          aria-describedby="flow-turn-max-mute-hint"
+          aria-describedby="agent-turn-max-mute-hint"
           value={typeof turn.max_mute_ms === "number" ? turn.max_mute_ms / 1000 : ""}
           onChange={(e) => {
             const n = e.target.value.trim() === "" ? null : Number(e.target.value);
@@ -130,7 +130,7 @@ export function TurnFields({ cfg, setKey, serverConfig }: Props) {
           }}
         />
       </label>
-      <p id="flow-turn-max-mute-hint" className="subtext">
+      <p id="agent-turn-max-mute-hint" className="subtext">
         {minSeconds} to {maxSeconds}. Empty: the server's limit.
       </p>
       <SettingHelp id="turn.max_mute_ms" />
@@ -160,28 +160,28 @@ export function EndOfTurnFields({ cfg, setKey, serverConfig }: Props) {
   return (
     <>
       {off && <p className="subtext">This server has the turn manager off. Remove the turn settings under Interruptions.</p>}
-      <label className="form-field" htmlFor="flow-turn-speech-timeout">
+      <label className="form-field" htmlFor="agent-turn-speech-timeout">
         <span>Wait for the caller to resume (ms)</span>
         <input
-          id="flow-turn-speech-timeout"
+          id="agent-turn-speech-timeout"
           type="number"
           min={TURN_RANGE.speechTimeoutMs[0]}
           max={TURN_RANGE.speechTimeoutMs[1]}
           disabled={off}
           placeholder={st ? String(st.speech_timeout_ms) : "Server setting"}
-          aria-describedby="flow-turn-speech-timeout-hint"
+          aria-describedby="agent-turn-speech-timeout-hint"
           value={typeof turn.speech_timeout_ms === "number" ? turn.speech_timeout_ms : ""}
           onChange={(e) => writeTurn(turn, setKey, { speech_timeout_ms: numberOrNull(e.target.value) })}
         />
       </label>
-      <p id="flow-turn-speech-timeout-hint" className="subtext">
+      <p id="agent-turn-speech-timeout-hint" className="subtext">
         {TURN_RANGE.speechTimeoutMs[0]} to {TURN_RANGE.speechTimeoutMs[1]}. Empty: the server's setting.
       </p>
       <SettingHelp id="turn.speech_timeout_ms" />
-      <label className="form-field" htmlFor="flow-turn-end">
+      <label className="form-field" htmlFor="agent-turn-end">
         <span>End-of-turn detection</span>
         <select
-          id="flow-turn-end"
+          id="agent-turn-end"
           disabled={off}
           value={detector}
           onChange={(e) => writeTurn(turn, setKey, { end_of_turn: e.target.value || null, smart_hold_ms: e.target.value === "smart" ? turn.smart_hold_ms : null })}
@@ -202,21 +202,21 @@ export function EndOfTurnFields({ cfg, setKey, serverConfig }: Props) {
       <SettingHelp id="turn.end_of_turn" />
       {detector === "smart" && (
         <>
-          <label className="form-field" htmlFor="flow-turn-smart-hold">
+          <label className="form-field" htmlFor="agent-turn-smart-hold">
             <span>Smart hold (ms)</span>
             <input
-              id="flow-turn-smart-hold"
+              id="agent-turn-smart-hold"
               type="number"
               min={TURN_RANGE.smartHoldMs[0]}
               max={TURN_RANGE.smartHoldMs[1]}
               disabled={off}
               placeholder={st ? String(st.smart_hold_ms) : "Server setting"}
-              aria-describedby="flow-turn-smart-hold-hint"
+              aria-describedby="agent-turn-smart-hold-hint"
               value={typeof turn.smart_hold_ms === "number" ? turn.smart_hold_ms : ""}
               onChange={(e) => writeTurn(turn, setKey, { smart_hold_ms: numberOrNull(e.target.value) })}
             />
           </label>
-          <p id="flow-turn-smart-hold-hint" className="subtext">
+          <p id="agent-turn-smart-hold-hint" className="subtext">
             {TURN_RANGE.smartHoldMs[0]} to {TURN_RANGE.smartHoldMs[1]}. Empty: the server's setting.
           </p>
           <SettingHelp id="turn.smart_hold_ms" />

@@ -84,11 +84,11 @@ describe("usage", () => {
   const b = agent("b", [{ server: "crm", name: "notes", hash: "h3", required: false }]);
   const gone = agent("gone", [{ server: "crm", name: "lookup", hash: "h1", required: true }], [], true);
   const bare = { ...agent("bare", []), current_version: undefined } as AgentDTO;
-  it("lists the flows that pin a server's tools, once each, never an archived one", () => {
+  it("lists the agents that pin a server's tools, once each, never an archived one", () => {
     expect(agentsUsingServer([a, b, gone, bare], "crm").map((f) => f.id)).toEqual(["a", "b"]);
     expect(agentsUsingServer([a, b], "billing").map((f) => f.id)).toEqual(["a"]);
   });
-  it("lists the flows that pin one tool", () => {
+  it("lists the agents that pin one tool", () => {
     expect(agentsUsingTool([a, b], "crm", "lookup").map((f) => f.id)).toEqual(["a"]);
     expect(agentsUsingTool([a, b], "crm", "nope")).toEqual([]);
   });
@@ -100,7 +100,7 @@ describe("drifts and acceptedSelection", () => {
   const ok = dep({ remote_name: "fine" });
   const other = dep({ mcp_server_id: "billing", state: "schema_drift", current_schema_hash: "z" });
   const f = agent("f", [{ server: "crm", name: "lookup", hash: "aaaaaaaa11", required: true }, { server: "billing", name: "pay", hash: "p1", required: false }], [changed, missing, ok, other]);
-  it("finds the changed and missing tools of one server, for live flows only", () => {
+  it("finds the changed and missing tools of one server, for live agents only", () => {
     const archived = agent("old", [], [changed], true);
     expect(drifts([f, archived], "crm").map((d) => [d.agent.id, d.dep.remote_name, d.kind])).toEqual([
       ["f", "lookup", "changed"],
@@ -124,7 +124,7 @@ describe("repin", () => {
       dep({ mcp_server_id: "billing", remote_name: "pay", required: false, state: "ready", selected_schema_hash: "p1" }),
     ],
   );
-  it("re-pins every changed tool of the flow in one list, and keeps the rest as they were", () => {
+  it("re-pins every changed tool of the agent in one list, and keeps the rest as they were", () => {
     const plan = repin(two);
     expect(plan.tools).toEqual(["lookup", "notes"]);
     expect(plan.blockedBy).toEqual([]);
@@ -148,7 +148,7 @@ describe("repin", () => {
 });
 
 describe("referencedAgents", () => {
-  it("reads the flows the server names when it refuses a delete, once each", () => {
+  it("reads the agents the server names when it refuses a delete, once each", () => {
     const details = [
       { agent_id: "a1", agent_name: "Front desk", remote_name: "lookup", required: true },
       { agent_id: "a1", agent_name: "Front desk", remote_name: "notes", required: false },
@@ -161,7 +161,7 @@ describe("referencedAgents", () => {
     expect(referencedAgents("x")).toEqual([]);
     expect(referencedAgents([{ nope: 1 }, null])).toEqual([]);
     // the Go-field-name keys the server used to send are not read any more
-    expect(referencedAgents([{ ["Flow" + "ID"]: "a1", ["Flow" + "Name"]: "Front desk" }, { AgentID: "a1", AgentName: "Front desk" }])).toEqual([]);
+    expect(referencedAgents([{ ["Agent" + "ID"]: "a1", ["Agent" + "Name"]: "Front desk" }, { AgentID: "a1", AgentName: "Front desk" }])).toEqual([]);
   });
 });
 

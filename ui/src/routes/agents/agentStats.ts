@@ -16,7 +16,7 @@ export function toolCount(a: AgentDTO): number {
   return a.current_version?.mcp_tools?.length ?? 0;
 }
 
-/** The status lamp and its words. A disabled flow reads as Disabled whatever the server says. */
+/** The status lamp and its words. A disabled agent reads as Disabled whatever the server says. */
 export function readiness(a: AgentDTO): { tone: Tone; label: string } {
   if (!a.enabled) return { tone: "idle", label: "Disabled" };
   switch (a.readiness.state) {
@@ -40,7 +40,7 @@ export function canTest(a: AgentDTO): boolean {
 
 type LiveCalls = { live: number; onOlderVersion: number };
 
-/** A flow's calls in progress, and how many started on a version that is no longer current. */
+/** An agent's calls in progress, and how many started on a version that is no longer current. */
 export function liveCalls(sessions: SessionDTO[], a: AgentDTO): LiveCalls {
   const mine = sessions.filter((s) => s.status === "active" && s.agent_id === a.id);
   const current = a.current_version?.id;

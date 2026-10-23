@@ -37,7 +37,7 @@ describe("AgentEditor during a test call", () => {
     );
     await user.click(screen.getByRole("button", { name: "Test call" }));
     expect(await screen.findByText("Call in progress")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Flow settings" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Agent settings" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Add step" })).toBeDisabled();
   });
 });

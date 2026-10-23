@@ -18,7 +18,7 @@ export function DemoCard({ client }: { client: ApiClient }) {
       <p>A front desk that hands new and returning patients to different agents, with a scheduling tool server.</p>
       {d.installed && d.agent_id ? (
         <p>
-          Installed: <Link to={`/flows/${encodeURIComponent(d.agent_id)}`}>Smile Dental front desk</Link>
+          Installed: <Link to={`/agents/${encodeURIComponent(d.agent_id)}`}>Smile Dental front desk</Link>
         </p>
       ) : (
         <button type="button" className="action-button-small" disabled={install.isPending} onClick={() => install.mutate()}>

@@ -3,9 +3,9 @@ import { Modal } from "../../components/Modal";
 
 export type DeleteServerDialogProps = {
   name: string;
-  /** The flows that pin this server's tools; `undefined` when the flow list could not be loaded. */
+  /** The agents that pin this server's tools; `undefined` when the agent list could not be loaded. */
   agents: { id: string; name: string }[] | undefined;
-  /** The server refused a plain delete because flows or calls in progress use it. */
+  /** The server refused a plain delete because agents or calls in progress use it. */
   inUse: boolean;
   pending: boolean;
   error: string | null;
@@ -21,15 +21,15 @@ export function DeleteServerDialog({ name, agents, inUse, pending, error, onDele
       {inUse ? (
         <>
           <p>
-            Flows or calls in progress still use this server's tools. Detaching removes its tools from the flows that use them; those flows need review before they take calls again. Calls in progress finish first.
+            Agents or calls in progress still use this server's tools. Detaching removes its tools from the agents that use them; those agents need review before they take calls again. Calls in progress finish first.
           </p>
           {agents === undefined ? (
-            <p className="subtext">Which flows use it could not be loaded.</p>
+            <p className="subtext">Which agents use it could not be loaded.</p>
           ) : agents.length > 0 ? (
-            <ul className="drift-flows">
+            <ul className="drift-agents">
               {agents.map((f) => (
                 <li key={f.id}>
-                  <Link to={`/flows/${encodeURIComponent(f.id)}`}>{f.name}</Link>
+                  <Link to={`/agents/${encodeURIComponent(f.id)}`}>{f.name}</Link>
                 </li>
               ))}
             </ul>

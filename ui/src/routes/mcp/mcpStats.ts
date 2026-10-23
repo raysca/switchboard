@@ -57,7 +57,7 @@ export function drifts(agents: AgentDTO[], serverId: string): Drift[] {
 }
 
 type Repin = {
-  /** The flow's whole tool list with every changed tool re-pinned; `null` when nothing can be re-pinned. */
+  /** The agent's whole tool list with every changed tool re-pinned; `null` when nothing can be re-pinned. */
   selection: ToolSelection[] | null;
   /** The tools that get re-pinned. */
   tools: string[];
@@ -66,7 +66,7 @@ type Repin = {
 };
 
 /**
- * What accepting the new schemas means for one flow. The server checks every tool in the list against its latest
+ * What accepting the new schemas means for one agent. The server checks every tool in the list against its latest
  * discovery, so a list that leaves any changed tool on its old hash is refused: all of them are re-pinned together.
  */
 export function repin(agent: AgentDTO): Repin {
@@ -82,7 +82,7 @@ export function repin(agent: AgentDTO): Repin {
   return { selection, tools: changed.map((d) => d.remote_name), blockedBy };
 }
 
-/** The flows a refused delete names (`details` of the 409: every current flow that pins a tool of the server, archived or not). */
+/** The agents a refused delete names (`details` of the 409: every current agent that pins a tool of the server, archived or not). */
 export function referencedAgents(details: unknown): { id: string; name: string }[] {
   if (!Array.isArray(details)) return [];
   const seen = new Map<string, string>();

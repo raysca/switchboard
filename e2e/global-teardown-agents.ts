@@ -1,6 +1,6 @@
 import { stopStack } from "./global-teardown";
-import { flowsStackFile } from "./lib/stack";
+import { agentsStackFile } from "./lib/stack";
 
 export default async function globalTeardown() {
-  stopStack(flowsStackFile);
+  stopStack(agentsStackFile);
 }

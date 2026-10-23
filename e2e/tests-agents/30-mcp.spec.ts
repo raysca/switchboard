@@ -1,7 +1,7 @@
-import { test, expect, LIVE } from "../lib/flows-stack";
+import { test, expect, LIVE } from "../lib/agents-stack";
 import { step } from "../lib/evidence";
-import { api, botReply, connectAdmin, openFlowTest, sendText, stage, startCall } from "../lib/flows-helpers";
-import { connectMCPServer, lastMCPCall, mcpFlow, mcpRecord, pace } from "../lib/mcp-helpers";
+import { api, botReply, connectAdmin, openAgentTest, sendText, stage, startCall } from "../lib/agents-helpers";
+import { connectMCPServer, lastMCPCall, mcpAgent, mcpRecord, pace } from "../lib/mcp-helpers";
 
 // MCP in the admin UI: the MCP tools page and the local test MCP servers (cmd/mcptest, started by
 // the global setup). The first test needs a stack with no MCP server connected; fake stack only.
@@ -29,7 +29,7 @@ test("mcp tools page: servers, their tools and a changed schema, with the API fa
     { remote_name: "latest_invoice", description: "Return the caller's most recent invoice.", input_schema: schema, schema_hash: "31f0aaaa11" },
     { remote_name: "send_pay_link", description: "Send a one-time payment link by SMS or email.", input_schema: schema, schema_hash: "c9d00000bb" },
   ];
-  const flow = {
+  const agent = {
     id: "f1", name: "Front desk", description: "", enabled: true, archived: false, created_at: "", updated_at: "",
     current_version: { id: "v", number: 3, schema_version: 1, config: {}, config_hash: "h", created_at: "", mcp_tools: [{ mcp_server_id: "billing", remote_name: "send_pay_link", schema_hash: "7a3e0000aa", required: true }] },
     readiness: { state: "needs_tool_review", reasons: ["required_tool_unavailable"], tool_dependencies: [{ mcp_server_id: "billing", remote_name: "send_pay_link", required: true, state: "schema_drift", selected_schema_hash: "7a3e0000aa", current_schema_hash: "c9d00000bb" }] },
@@ -39,7 +39,7 @@ test("mcp tools page: servers, their tools and a changed schema, with the API fa
     const id = r.request().url().split("/").pop()!;
     return r.fulfill({ json: { data: { ...server(id), discovery: { id: "d", discovery_hash: "x", created_at: "", tools: id === "billing" ? tools : [] } } } });
   });
-  await page.route("**/api/v1/agents?*", (r) => r.fulfill({ json: { data: [flow] } }));
+  await page.route("**/api/v1/agents?*", (r) => r.fulfill({ json: { data: [agent] } }));
   await connectAdmin(page, stack);
   await page.getByRole("link", { name: "MCP tools", exact: true }).first().click();
   await expect(page.getByRole("heading", { name: "billing", level: 2 })).toBeVisible();
@@ -70,11 +70,11 @@ test("mcp: healthy, failing and unreachable servers show their state", async ({ 
 });
 
 
-test("mcp: a flow calls an MCP tool during a test call", async ({ page, stack }) => {
+test("mcp: an agent calls an MCP tool during a test call", async ({ page, stack }) => {
   test.skip(LIVE, "the MCP cases run against the fake stack only");
-  await mcpFlow(stack, "E2E Orders", "/ok", ["lookup_order"], "MCP_TOKEN_TEST");
+  await mcpAgent(stack, "E2E Orders", "/ok", ["lookup_order"], "MCP_TOKEN_TEST");
   await connectAdmin(page, stack);
-  await openFlowTest(page, "E2E Orders");
+  await openAgentTest(page, "E2E Orders");
   await startCall(page);
   await sendText(page, 'call tool lookup_order {"order_id":"42"}');
   await expect(botReply(page, /shipped/)).toBeVisible();
@@ -89,9 +89,9 @@ test("mcp: a flow calls an MCP tool during a test call", async ({ page, stack })
 test("mcp: each kind of tool failure is answered and the call goes on", async ({ page, stack }) => {
   test.skip(LIVE, "the MCP cases run against the fake stack only");
   const tools = ["tool_error", "protocol_error", "drop", "too_big"];
-  await mcpFlow(stack, "E2E Failing Tools", "/fail/tools", tools);
+  await mcpAgent(stack, "E2E Failing Tools", "/fail/tools", tools);
   await connectAdmin(page, stack);
-  await openFlowTest(page, "E2E Failing Tools");
+  await openAgentTest(page, "E2E Failing Tools");
   await startCall(page);
   for (const tool of tools) {
     await sendText(page, `call tool ${tool}`);
@@ -118,9 +118,9 @@ test("mcp: each kind of tool failure is answered and the call goes on", async ({
 
 test("mcp: a slow tool answers under the timeout and is abandoned over it", async ({ page, stack }) => {
   test.skip(LIVE, "the MCP cases run against the fake stack only");
-  await mcpFlow(stack, "E2E Slow Tool", "/slow", ["slow_lookup"]);
+  await mcpAgent(stack, "E2E Slow Tool", "/slow", ["slow_lookup"]);
   await connectAdmin(page, stack);
-  await openFlowTest(page, "E2E Slow Tool");
+  await openAgentTest(page, "E2E Slow Tool");
   await startCall(page);
 
   await sendText(page, 'call tool slow_lookup {"delay_ms":300}');
@@ -145,7 +145,7 @@ test("mcp: a slow tool answers under the timeout and is abandoned over it", asyn
 // TestMCPCallBargeInCancelsSlowTool): in this fake stack the microphone's speech is heard by the
 // VAD but the fake STT produces no words, so no user turn starts and nothing interrupts.
 
-test("mcp: editing a failing server's endpoint to a healthy one connects it, and a flow that uses it is ready", async ({ page, stack }) => {
+test("mcp: editing a failing server's endpoint to a healthy one connects it, and an agent that uses it is ready", async ({ page, stack }) => {
   test.skip(LIVE, "the MCP cases run against the fake stack only");
   await connectAdmin(page, stack);
   const status = page.locator(".mcp-detail__status");

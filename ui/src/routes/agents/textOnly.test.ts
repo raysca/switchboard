@@ -4,13 +4,13 @@ import { isTextOnly, TEXT_ONLY_PROVIDER } from "./textOnly";
 const step = (id: string, config: Record<string, unknown>) => ({ id, name: id, config });
 
 describe("isTextOnly", () => {
-  it("reads a flat flow's speech-to-text", () => {
+  it("reads a flat agent's speech-to-text", () => {
     expect(isTextOnly({ stt: { provider: TEXT_ONLY_PROVIDER, model: "text" } })).toBe(true);
     expect(isTextOnly({ stt: { provider: "deepgram" }, tts: { provider: "silence" } })).toBe(false); // silent voice, real listening: the mic is needed
     expect(isTextOnly({ stt: { provider: "echo" } })).toBe(false);
   });
 
-  it("reads a routed flow's speech-to-text from its START step, not the first or the last", () => {
+  it("reads a routed agent's speech-to-text from its START step, not the first or the last", () => {
     const silence = { stt: { provider: "silence", model: "text" } };
     const voice = { stt: { provider: "deepgram", model: "nova-3" } };
     const handedOff = (start: string) => ({ start, steps: [step("a", voice), step("b", silence), step("c", {})], handoffs: [] });
@@ -24,7 +24,7 @@ describe("isTextOnly", () => {
     expect(isTextOnly(cfg)).toBe(false);
   });
 
-  it("is false for anything that is not a flow config", () => {
+  it("is false for anything that is not an agent config", () => {
     for (const v of [undefined, null, 0, "silence", [], {}, { stt: null }, { stt: {} }, { stt: { provider: 1 } }, { start: "x", steps: [] }, { steps: [null] }]) {
       expect(isTextOnly(v)).toBe(false);
     }

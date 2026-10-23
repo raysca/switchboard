@@ -22,7 +22,7 @@ import {
 
 const TABS: { id: StepTab; label: string }[] = [
   { id: "basics", label: "Basics" },
-  { id: "handoffs", label: "Routes" },
+  { id: "handoffs", label: "Handoffs" },
   { id: "tools", label: "Tools" },
   { id: "advanced", label: "Advanced" },
 ];
@@ -36,13 +36,13 @@ export type StepPanelProps = {
   providers: ProviderStatus[];
   /** What the server offers (its background sounds); absent while it loads. */
   serverConfig?: ServerConfigDTO;
-  /** MCP tools selected on the flow ("<mcp_server_id>/<remote_name>"); a step may call a subset. */
+  /** MCP tools selected on the agent ("<mcp_server_id>/<remote_name>"); a step may call a subset. */
   agentTools: string[];
-  /** Chooses which MCP tools the flow has: shown above the step's own choice in the Tools tab. */
+  /** Chooses which MCP tools the agent has: shown above the step's own choice in the Tools tab. */
   toolPicker?: ReactNode;
   tab: StepTab;
   onTab: (tab: StepTab) => void;
-  /** The route whose condition takes focus: one just drawn or added. */
+  /** The handoff whose condition takes focus: one just drawn or added. */
   focusHandoff?: string;
   onFocusHandoff: (handoffId: string | undefined) => void;
   /** A step just added: its name takes focus, selected, so typing renames it. */
@@ -255,16 +255,16 @@ export function StepPanel(props: StepPanelProps) {
         {tab === "handoffs" && (
           <>
             <p className="subtext">
-              When the model decides a condition is true, the caller moves to that step. You can also drag from a step’s right route on the graph.
+              When the model decides a condition is true, the caller moves to that step. You can also drag from a step’s right handoff on the graph.
             </p>
-            {handoffs.length === 0 && <p className="subtext">No routes. The call stays on this step until it ends.</p>}
-            <ul className="plain-list route-list">
+            {handoffs.length === 0 && <p className="subtext">No handoffs. The call stays on this step until it ends.</p>}
+            <ul className="plain-list handoff-list">
               {handoffs.map((r) => (
-                <li key={r.id} className="route-list__item">
-                  <label className="form-field" htmlFor={`route-${r.id}`}>
-                    <span>Condition for the route to {nameOf(r.to)}</span>
+                <li key={r.id} className="handoff-list__item">
+                  <label className="form-field" htmlFor={`handoff-${r.id}`}>
+                    <span>Condition for the handoff to {nameOf(r.to)}</span>
                     <textarea
-                      id={`route-${r.id}`}
+                      id={`handoff-${r.id}`}
                       rows={2}
                       maxLength={512}
                       value={r.condition}
@@ -276,15 +276,15 @@ export function StepPanel(props: StepPanelProps) {
                     />
                   </label>
                   <button type="button" className="action-button-small action-button-danger" onClick={() => onChange(removeHandoff(graph, r.id))}>
-                    Remove the route to {nameOf(r.to)}
+                    Remove the handoff to {nameOf(r.to)}
                   </button>
                 </li>
               ))}
             </ul>
             <div className="row row--end">
-              <label className="form-field grow" htmlFor="route-target">
-                <span>Route to</span>
-                <select id="route-target" value={handoffTarget} onChange={(e) => setHandoffTarget(e.target.value)}>
+              <label className="form-field grow" htmlFor="handoff-target">
+                <span>Hand off to</span>
+                <select id="handoff-target" value={handoffTarget} onChange={(e) => setHandoffTarget(e.target.value)}>
                   <option value="">Choose a step</option>
                   {targets.map((n) => (
                     <option key={n.id} value={n.id}>
@@ -294,11 +294,11 @@ export function StepPanel(props: StepPanelProps) {
                 </select>
               </label>
               <button type="button" className="action-button-small" disabled={!handoffTarget} onClick={addHandoff}>
-                Add route
+                Add handoff
               </button>
             </div>
             <button type="button" className="action-button-small" disabled={graph.steps.length >= MAX_STEPS} onClick={handoffToNewStep}>
-              Route to a new step
+              Hand off to a new step
             </button>
           </>
         )}
@@ -322,15 +322,15 @@ export function StepPanel(props: StepPanelProps) {
             </fieldset>
             {toolPicker && (
               <fieldset className="stage-box">
-                <legend>Flow tools</legend>
+                <legend>Agent tools</legend>
                 <p className="subtext">Shared by every step. Each step chooses which of these it can call.</p>
                 {toolPicker}
               </fieldset>
             )}
             {agentTools.length === 0 ? (
-              <p className="subtext">No tools are chosen for this flow yet.</p>
+              <p className="subtext">No tools are chosen for this agent yet.</p>
             ) : graph.steps.length === 1 ? (
-              <p className="subtext">A one-step flow can call every tool of the flow.</p>
+              <p className="subtext">A one-step agent can call every tool of the agent.</p>
             ) : (
               <fieldset className="stage-box">
                 <legend>Tools this step can call</legend>
@@ -347,7 +347,7 @@ export function StepPanel(props: StepPanelProps) {
                     <code>{t}</code>
                   </label>
                 ))}
-                {graph.steps.length === 1 && <p className="subtext">With one step, it can call every tool the flow has.</p>}
+                {graph.steps.length === 1 && <p className="subtext">With one step, it can call every tool the agent has.</p>}
               </fieldset>
             )}
           </>

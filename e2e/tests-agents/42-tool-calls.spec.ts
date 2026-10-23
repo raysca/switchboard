@@ -1,7 +1,7 @@
-import { test, expect, LIVE } from "../lib/flows-stack";
+import { test, expect, LIVE } from "../lib/agents-stack";
 import { step } from "../lib/evidence";
-import { botReply, connectAdmin, openFlowTest, sendText, startCall } from "../lib/flows-helpers";
-import { mcpFlow, pace } from "../lib/mcp-helpers";
+import { botReply, connectAdmin, openAgentTest, sendText, startCall } from "../lib/agents-helpers";
+import { mcpAgent, pace } from "../lib/mcp-helpers";
 
 // A tool call seen live in the test call's RTVI event log, then on the call's page: its turn and its technical trace.
 // The local test MCP server (cmd/mcptest) and the echo providers: free and deterministic.
@@ -10,9 +10,9 @@ test.skip(LIVE, "the MCP cases run against the echo stack only");
 const NAME = "E2E Tool Records";
 
 test("a tool call shows in the test call's events and on the call's page", async ({ page, stack }) => {
-  await mcpFlow(stack, NAME, "/ok", ["lookup_order"], "MCP_TOKEN_TEST");
+  await mcpAgent(stack, NAME, "/ok", ["lookup_order"], "MCP_TOKEN_TEST");
   await connectAdmin(page, stack);
-  await openFlowTest(page, NAME);
+  await openAgentTest(page, NAME);
   await startCall(page);
   await sendText(page, 'call tool lookup_order {"order_id":"42"}');
   await expect(botReply(page, /shipped/)).toBeVisible();

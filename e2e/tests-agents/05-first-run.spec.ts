@@ -1,28 +1,28 @@
-import { test, expect, PROVIDER } from "../lib/flows-stack";
+import { test, expect, PROVIDER } from "../lib/agents-stack";
 import { step } from "../lib/evidence";
-import { api, connectAdmin, loadProviders, providers, sendText, startCall } from "../lib/flows-helpers";
+import { api, connectAdmin, loadProviders, providers, sendText, startCall } from "../lib/agents-helpers";
 
-// First run end to end on a fresh stack (the 05- prefix runs it before any spec that creates a flow).
+// First run end to end on a fresh stack (the 05- prefix runs it before any spec that creates an agent).
 test.describe.configure({ mode: "serial" });
 test.use({ viewport: { width: 1440, height: 1040 } });
 test.beforeAll(loadProviders);
 
-test("dashboard: a detected provider and no flow is one step from a first call", async ({ page, stack }) => {
-  const flows = (await api(stack, "/agents")).data as unknown[];
-  test.skip(flows.length > 0, "needs a stack with no flows yet");
+test("dashboard: a detected provider and no agent is one step from a first call", async ({ page, stack }) => {
+  const agents = (await api(stack, "/agents")).data as unknown[];
+  test.skip(agents.length > 0, "needs a stack with no agents yet");
   await connectAdmin(page, stack);
   await expect(page.getByRole("heading", { name: "One step to your first call." })).toBeVisible();
   await step(page, "dashboard checklist");
 });
 
-test("first run: stack, flow, test call, connect", async ({ page, stack }) => {
-  const flows = (await api(stack, "/agents")).data as unknown[];
-  test.skip(flows.length > 0, "needs a stack with no flows yet");
+test("first run: stack, agent, test call, connect", async ({ page, stack }) => {
+  const agents = (await api(stack, "/agents")).data as unknown[];
+  test.skip(agents.length > 0, "needs a stack with no agents yet");
   await connectAdmin(page, stack);
   await page.getByRole("link", { name: "Start first run" }).click();
 
   const name = providers.find((p) => p.id === PROVIDER)!.display_name;
-  await expect(page.getByRole("heading", { name: "Choose how your flow hears, thinks and speaks." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Choose how your agent hears, thinks and speaks." })).toBeVisible();
   // The stack also has placeholder google and xai keys (for the dentistry demo), and the simulated
   // provider is listed after real ones: choose it, since only echo can take a test call here.
   await page.getByRole("radio", { name }).check();
@@ -31,8 +31,8 @@ test("first run: stack, flow, test call, connect", async ({ page, stack }) => {
   await step(page, "first run step 1 voice stack");
   await page.getByRole("button", { name: "Continue" }).click();
 
-  await page.getByLabel("Name", { exact: true }).fill("First run flow");
-  await step(page, "first run step 2 flow");
+  await page.getByLabel("Name your agent").fill("First run agent");
+  await step(page, "first run step 2 agent");
   await page.getByRole("button", { name: "Create and call it" }).click();
 
   await expect(page.getByRole("heading", { name: "Say hello." })).toBeVisible();
@@ -43,7 +43,7 @@ test("first run: stack, flow, test call, connect", async ({ page, stack }) => {
   await page.getByRole("button", { name: "Next: connect" }).click();
 
   await expect(page.getByRole("heading", { name: "Put it in front of callers." })).toBeVisible();
-  const created = ((await api(stack, "/agents")).data as { id: string; name: string }[]).find((f) => f.name === "First run flow")!;
+  const created = ((await api(stack, "/agents")).data as { id: string; name: string }[]).find((f) => f.name === "First run agent")!;
   await expect(page.getByLabel("Token request")).toContainText(`"agent_id": "${created.id}"`);
   await step(page, "first run step 4 connect");
 

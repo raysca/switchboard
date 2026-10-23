@@ -1,10 +1,10 @@
-import { test, expect, LIVE } from "../lib/flows-stack";
-import type { Stack } from "../lib/flows-stack";
+import { test, expect, LIVE } from "../lib/agents-stack";
+import type { Stack } from "../lib/agents-stack";
 import { step } from "../lib/evidence";
-import { api, botReplies, connectAdmin, openFlowTest, startCall, stepCard } from "../lib/flows-helpers";
+import { api, botReplies, connectAdmin, openAgentTest, startCall, stepCard } from "../lib/agents-helpers";
 import { createEchoDentalVariant, toolTurn, turn } from "../lib/dental-helpers";
 
-// What this verifies: the demo installs from the Dashboard; a call is handed off by route (front
+// What this verifies: the demo installs from the Dashboard; a call is handed off between steps (front
 // desk -> New patient / Returning patient), the new step takes the next turn, its MCP tools run
 // against the real dental server, end_call hangs the call up, and the Calls page shows the path,
 // the step-labelled transcript and how it ended. NOT verified here: that the transfer note (the
@@ -13,19 +13,19 @@ import { createEchoDentalVariant, toolTurn, turn } from "../lib/dental-helpers";
 //
 // The dentistry demo, end to end: Load demo from the Dashboard (the real dental MCP server from
 // cmd/dental-mcp, started by the global setup), then two fake-provider calls on a variant of the
-// installed flow. Fake only: the installed flow's xai/elevenlabs stages cannot take a fake call.
+// installed agent. Fake only: the installed agent's xai/elevenlabs stages cannot take a fake call.
 test.describe.configure({ mode: "serial" });
 test.skip(LIVE, "the dentistry demo runs against the fake stack only");
 
-test("load the demo from the Dashboard: three steps, two routes", async ({ page, stack }) => {
+test("load the demo from the Dashboard: three steps, two handoffs", async ({ page, stack }) => {
   await connectAdmin(page, stack);
   await expect(page.getByRole("heading", { name: "Dentistry demo" })).toBeVisible();
   await page.getByRole("button", { name: "Load demo" }).click();
   await expect(page.getByRole("link", { name: "Smile Dental front desk" })).toBeVisible();
   await step(page, "dentistry demo loaded");
 
-  const flows = await api<{ data: { id: string; name: string }[] }>(stack, "/agents");
-  const installed = flows.data.find((f) => f.name === "Smile Dental front desk")!;
+  const agents = await api<{ data: { id: string; name: string }[] }>(stack, "/agents");
+  const installed = agents.data.find((f) => f.name === "Smile Dental front desk")!;
   const { config, mcp_tools } = await createEchoDentalVariant(stack, installed.id);
   expect(config.steps).toHaveLength(3);
   expect(config.handoffs).toHaveLength(2);
@@ -33,9 +33,9 @@ test("load the demo from the Dashboard: three steps, two routes", async ({ page,
   expect(mcp_tools).toHaveLength(7);
 });
 
-test("a new patient call: handed off by route, MCP tools called, hung up by end_call", async ({ page, stack }) => {
+test("a new patient call: handed off between steps, MCP tools called, hung up by end_call", async ({ page, stack }) => {
   await connectAdmin(page, stack);
-  await openFlowTest(page, "Dental (echo)");
+  await openAgentTest(page, "Dental (echo)");
   await startCall(page);
 
   await turn(page, "hello");
@@ -58,7 +58,7 @@ async function openLatestCall(page: import("@playwright/test").Page, stack: Stac
   await connectAdmin(page, stack);
   await page.getByRole("link", { name: "Calls", exact: true }).first().click();
   await expect(page.getByRole("heading", { name: "Calls", level: 1 })).toBeVisible();
-  await page.getByRole("combobox", { name: "Flow", exact: true }).selectOption({ label: "Dental (echo)" });
+  await page.getByRole("combobox", { name: "Agent", exact: true }).selectOption({ label: "Dental (echo)" });
   const rows = page.getByRole("row").filter({ hasText: "Dental (echo)" });
   await expect(rows).toHaveCount(nth, { timeout: 20_000 });
   await expect(rows.first()).toContainText("Ended", { timeout: 20_000 });
@@ -80,15 +80,15 @@ async function expectToolSpans(page: import("@playwright/test").Page, stack: Sta
 test("calls: the new patient call shows its path, step labels, how it ended and its tool-call spans", async ({ page, stack }) => {
   await openLatestCall(page, stack, 1);
   await expect(page.getByText("Front desk → New patient", { exact: true })).toBeVisible();
-  await expect(page.getByText("By the flow (New patient)")).toBeVisible();
+  await expect(page.getByText("By the agent (New patient)")).toBeVisible();
   await expect(page.getByRole("list", { name: "Transcript" }).getByText(/^New patient · /).first()).toBeVisible();
   await expectToolSpans(page, stack, 3); // register_patient, find_slots, book_appointment
   await step(page, "new patient call detail");
 });
 
-test("a returning patient call: handed off by route, MCP tools called, hung up by end_call", async ({ page, stack }) => {
+test("a returning patient call: handed off between steps, MCP tools called, hung up by end_call", async ({ page, stack }) => {
   await connectAdmin(page, stack);
-  await openFlowTest(page, "Dental (echo)");
+  await openAgentTest(page, "Dental (echo)");
   await startCall(page);
   await turn(page, "transfer to returning patient");
   await expect(stepCard(page, "Returning patient").locator(".step-node")).toHaveAttribute("data-state", "active", { timeout: 15_000 });
@@ -99,7 +99,7 @@ test("a returning patient call: handed off by route, MCP tools called, hung up b
 
   await openLatestCall(page, stack, 2);
   await expect(page.getByText("Front desk → Returning patient", { exact: true })).toBeVisible();
-  await expect(page.getByText("By the flow (Returning patient)")).toBeVisible();
+  await expect(page.getByText("By the agent (Returning patient)")).toBeVisible();
   await expectToolSpans(page, stack, 2); // find_patient, list_appointments
   await step(page, "returning patient call detail");
 });

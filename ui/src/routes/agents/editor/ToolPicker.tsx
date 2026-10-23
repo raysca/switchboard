@@ -17,7 +17,7 @@ function unusable(d: MCPServerDetailDTO): string | null {
 }
 
 /**
- * The flow's MCP tools: which servers' tools the flow may call. Shared by every step; each step then
+ * The agent's MCP tools: which servers' tools the agent may call. Shared by every step; each step then
  * chooses its own subset. The lists are read from the servers' latest discoveries only while this is
  * shown (it sits in the step panel's Tools tab), through the same queries the MCP page uses.
  */
@@ -55,7 +55,7 @@ export function ToolPicker({
   if (servers.length === 0 && selected.length === 0) {
     return (
       <p className="subtext">
-        No MCP server is connected. <Link to="/mcp-servers">Connect a server</Link> to give this flow tools.
+        No MCP server is connected. <Link to="/mcp-servers">Connect a server</Link> to give this agent tools.
       </p>
     );
   }

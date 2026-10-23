@@ -1,17 +1,17 @@
-import { test, expect, LIVE } from "../lib/flows-stack";
+import { test, expect, LIVE } from "../lib/agents-stack";
 import { step } from "../lib/evidence";
-import { BUY, api, botReply, botReplies, connectAdmin, openFlow, openFlowTest, sendText, stage, startCall, stepCard } from "../lib/flows-helpers";
+import { BUY, api, botReply, botReplies, connectAdmin, openAgent, openAgentTest, sendText, stage, startCall, stepCard } from "../lib/agents-helpers";
 
 // A step's greeting is spoken word for word: the start step's when the call connects, another step's when
-// a route hands the call to it. Draft test calls use the unpublished greetings.
+// a handoff hands the call to it. Draft test calls use the unpublished greetings.
 test.skip(LIVE, "labelled replies and instant voices are echo-only");
 test.describe.configure({ mode: "serial" });
 
 const NAME = "E2E Greeting";
 const OPENING = "Hello from the front desk.";
 const SALES = "Sales here, how can I help?";
-type Flow = { name: string; current_version: { number: number; config: { steps?: { config: { greeting?: string } }[] } } };
-const current = async (stack: Parameters<typeof api>[0]) => (await api<{ data: Flow[] }>(stack, "/agents")).data.find((f) => f.name === NAME)!.current_version;
+type Agent = { name: string; current_version: { number: number; config: { steps?: { config: { greeting?: string } }[] } } };
+const current = async (stack: Parameters<typeof api>[0]) => (await api<{ data: Agent[] }>(stack, "/agents")).data.find((f) => f.name === NAME)!.current_version;
 
 test("greetings typed in the designer are spoken on a draft test call, opening and handoff", async ({ page, stack }) => {
   await api(stack, "/agents", {
@@ -29,7 +29,7 @@ test("greetings typed in the designer are spoken on a draft test call, opening a
     }),
   });
   await connectAdmin(page, stack);
-  await openFlow(page, NAME);
+  await openAgent(page, NAME);
   await stepCard(page, "Front").click();
   await page.getByLabel("Greeting").fill(OPENING);
   await expect(page.getByText("Said word for word as soon as the call connects.")).toBeVisible();
@@ -59,9 +59,9 @@ test("greetings typed in the designer are spoken on a draft test call, opening a
   expect((await current(stack)).config.steps![1].config.greeting).toBe(SALES);
 });
 
-test("the published flow greets, and clearing the greeting makes the next call silent", async ({ page, stack }) => {
+test("the published agent greets, and clearing the greeting makes the next call silent", async ({ page, stack }) => {
   await connectAdmin(page, stack);
-  await openFlowTest(page, NAME);
+  await openAgentTest(page, NAME);
   await startCall(page);
   await expect(botReply(page, new RegExp(OPENING))).toBeVisible();
   await page.getByTestId("disconnect-btn").click();
@@ -71,7 +71,7 @@ test("the published flow greets, and clearing the greeting makes the next call s
   await page.getByRole("button", { name: "Publish", exact: true }).click();
   await page.getByRole("button", { name: "Publish v3" }).click();
   await expect.poll(async () => (await current(stack)).number).toBe(3);
-  await openFlowTest(page, NAME);
+  await openAgentTest(page, NAME);
   await startCall(page);
   await page.waitForTimeout(1500);
   await expect(botReplies(page)).toHaveCount(0); // the caller speaks first again

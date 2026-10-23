@@ -188,11 +188,11 @@ export function TurnTimeline({ turns, traces, loading }: TurnTimelineProps) {
                           const r = handoffSpan(span);
                           const handoff = r?.event === "active";
                           return (
-                            <div key={span.id} className="trace-item" data-testid="span-item" data-route={handoff ? "true" : undefined}>
+                            <div key={span.id} className="trace-item" data-testid="span-item" data-handoff={handoff ? "true" : undefined}>
                               <div className="trace-item-header">
                                 <span className="row">
                                   {handoff && <span className="lamp" data-tone="warn" aria-hidden="true" />}
-                                  {handoff ? `Routed to ${r.to}` : span.name}
+                                  {handoff ? `Handed off to ${r.to}` : span.name}
                                 </span>
                                 <span>{formatDuration(span.started_at, span.ended_at)}</span>
                               </div>

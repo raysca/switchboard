@@ -39,7 +39,7 @@ const ACTIVITY_LABEL: Record<Exclude<Activity, null>, string> = {
   interrupted: "Interrupted",
   error: "Error",
 };
-const SETUP_LABEL = { ready: "Ready", incomplete: "Needs setup", unreachable: "No route leads here" } as const;
+const SETUP_LABEL = { ready: "Ready", incomplete: "Needs setup", unreachable: "No handoff leads here" } as const;
 
 function StepNode({ data, selected }: NodeProps<Node<StepNodeData>>) {
   const state = data.visual?.state ?? "idle";
@@ -85,7 +85,7 @@ const str = (v: unknown): string => (typeof v === "string" ? v : "");
 const stage = (c: Record<string, unknown>, k: string): Record<string, unknown> =>
   c[k] && typeof c[k] === "object" ? (c[k] as Record<string, unknown>) : {};
 
-/** Routes as React Flow routes: a route with no condition yet draws as a labelled draft. */
+/** Handoffs as React Flow edges: a handoff with no condition yet draws as a labelled draft. */
 export function agentHandoffs(graph: AgentDraft, selected?: Selection, traversedHandoffs?: string[], justHandedHandoff?: string): Edge[] {
   return graph.handoffs.map((e) => ({
     id: e.id,
@@ -97,8 +97,8 @@ export function agentHandoffs(graph: AgentDraft, selected?: Selection, traversed
     markerEnd: { type: MarkerType.ArrowClosed },
     className:
       [
-        !e.condition.trim() ? "route-edge--draft" : "",
-        traversedHandoffs?.includes(e.id) ? `route-edge--traversed${e.id === justHandedHandoff ? " route-edge--just" : ""}` : "",
+        !e.condition.trim() ? "handoff-edge--draft" : "",
+        traversedHandoffs?.includes(e.id) ? `handoff-edge--traversed${e.id === justHandedHandoff ? " handoff-edge--just" : ""}` : "",
       ]
         .join(" ")
         .trim() || undefined,
@@ -111,14 +111,14 @@ export type CanvasProps = {
   onSelect?: (s: Selection) => void;
   onMove?: (id: string, pos: { x: number; y: number }) => void;
   onConnect?: (from: string, to: string) => void;
-  /** Live view: per-step state and the routes the call has taken. */
+  /** Live view: per-step state and the handoffs the call has taken. */
   visual?: Record<string, StepVisual>;
   traversedHandoffs?: string[];
-  /** The route taken a moment ago: its route draws in. */
+  /** The handoff taken a moment ago: its handoff draws in. */
   justHandedHandoff?: string;
   readOnly?: boolean;
   height?: number | string;
-  /** The flow refits when this changes (a panel opened, closed or widened) as well as when a step is added or removed. */
+  /** The agent refits when this changes (a panel opened, closed or widened) as well as when a step is added or removed. */
   fitKey?: string;
 };
 
@@ -141,7 +141,7 @@ export function Canvas({ graph, selected, onSelect, onMove, onConnect, visual, t
       })),
     [graph, selected, visual, readOnly],
   );
-  // Dragging updates local step state; the flow (the source of truth) is told at drag stop.
+  // Dragging updates local step state; the agent (the source of truth) is told at drag stop.
   // Adopted during render, not in an effect: a deleted step leaves the DOM in the same commit that closes its panel,
   // so the panel's focus return can tell that the step it came from is gone.
   const [steps, setNodes] = useState(derived);
@@ -154,7 +154,7 @@ export function Canvas({ graph, selected, onSelect, onMove, onConnect, visual, t
   const handoffs = useMemo(() => agentHandoffs(graph, selected, traversedHandoffs, justHandedHandoff), [graph.handoffs, selected, traversedHandoffs, justHandedHandoff]);
 
   // Re-fit in place (not by remounting, which would drop focus on a step and the viewport) when a step is added or
-  // removed, or the room for the flow changes, so no step is left off-screen or tiny.
+  // removed, or the room for the agent changes, so no step is left off-screen or tiny.
   const agent = useRef<ReactFlowInstance | null>(null);
   const fitted = useRef(`${graph.steps.length}:${fitKey}`);
   useEffect(() => {
@@ -168,7 +168,7 @@ export function Canvas({ graph, selected, onSelect, onMove, onConnect, visual, t
 
 
   return (
-    <div className="flow-canvas" style={{ height }} data-testid="flow-canvas" data-fit={`${graph.steps.length}:${fitKey}`}>
+    <div className="agent-canvas" style={{ height }} data-testid="agent-canvas" data-fit={`${graph.steps.length}:${fitKey}`}>
       <ReactFlow
         onInit={(instance) => {
           agent.current = instance as unknown as ReactFlowInstance;
@@ -182,7 +182,7 @@ export function Canvas({ graph, selected, onSelect, onMove, onConnect, visual, t
           for (const c of changes) if (c.type === "select" && c.selected) onSelect?.({ kind: "step", id: c.id });
         }}
         selectNodesOnDrag={false}
-        // Steps are deleted from their panel, which updates the flow; React Flow's own Backspace
+        // Steps are deleted from their panel, which updates the agent; React Flow's own Backspace
         // would only drop the step from the canvas.
         deleteKeyCode={null}
         onNodeDragStop={(_, step) => onMove?.(step.id, step.position)}

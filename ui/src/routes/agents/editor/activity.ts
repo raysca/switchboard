@@ -7,7 +7,7 @@ type VoiceActivity = { userSpeaking: boolean; botSpeaking: boolean; thinking: bo
 
 type GraphView = {
   steps: Record<string, StepVisual>;
-  /** Routes the call has taken, oldest first. */
+  /** Handoffs the call has taken, oldest first. */
   traversed: { handoffId: string | null; from: string; to: string; at: string }[];
   /** Steps the call has been in, oldest first. */
   trail: { step: string; since: string }[];
@@ -22,7 +22,7 @@ function activityOf(v: VoiceActivity): Activity {
 }
 
 /**
- * Replays the server's route trace spans (handoff.preparing, .active, .failed)
+ * Replays the server's handoff trace spans (handoff.preparing, .active, .failed)
  * into which step holds the call. Pure: the same spans always give the same
  * view, so a finished session replays the path it took.
  */

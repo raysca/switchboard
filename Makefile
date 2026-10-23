@@ -158,24 +158,24 @@ e2e: ## paid|Playwright browser e2e against REAL Google (GOVOICE_LIVE=1; the mos
 	@test "$$GOVOICE_LIVE" = 1 || { echo "e2e drives real Google providers and spends API credit: run GOVOICE_LIVE=1 make e2e"; exit 1; }
 	cd e2e && npm install --no-audit --no-fund && npx playwright install chromium && npx playwright test
 
-# Routed flows in a real browser against the echo provider: free and offline (about 1 min). Builds
-# bin/server-echo (the echo provider), starts it with the admin UI, then drives the flow designer, a
-# live call with a route, republish, a failed route and a plain flow (e2e/tests-flows).
+# Agents with handoffs in a real browser against the echo provider: free and offline (about 1 min). Builds
+# bin/server-echo (the echo provider), starts it with the admin UI, then drives the agent designer, a
+# live call with a handoff, republish, a failed handoff and a plain agent (e2e/tests-agents).
 E2E_SETUP = cd e2e && npm ci --no-audit --no-fund && npm run typecheck && npx playwright install chromium
-e2e-fake: ui-embed ## free|Playwright browser e2e for routed flows and the one-port server against the echo provider (about 2 min)
+e2e-fake: ui-embed ## free|Playwright browser e2e for agents with handoffs and the one-port server against the echo provider (about 2 min)
 	$(E2E_SETUP)
 	@# Run both suites so a failure in one cannot hide the other; fail if either did.
-	@cd e2e && rc=0; npx playwright test -c playwright.flows.config.ts || rc=1; npx playwright test -c playwright.oneport.config.ts || rc=1; exit $$rc
+	@cd e2e && rc=0; npx playwright test -c playwright.agents.config.ts || rc=1; npx playwright test -c playwright.oneport.config.ts || rc=1; exit $$rc
 
 # Every free end-to-end test: the Go suite, then the browser suite (echo provider, offline, about 2 min).
 e2e-echo: test-e2e-go e2e-fake ## free|Every end-to-end test on the echo provider: Go (test-e2e-go) then browser (e2e-fake)
 
 # The same specs against LIVE xAI (STT, Grok, TTS): the model itself must call the transfer tool. Needs
 # XAI_API_KEY (env or examples/.env; XAI_MODEL optional). Roughly 20 provider requests per run.
-e2e-xai: ## paid|Playwright browser e2e for routed flows against REAL xAI (GOVOICE_LIVE=1; about 20 requests)
+e2e-xai: ## paid|Playwright browser e2e for agents with handoffs against REAL xAI (GOVOICE_LIVE=1; about 20 requests)
 	@test "$$GOVOICE_LIVE" = 1 || { echo "e2e-xai drives real xAI providers and spends API credit: run GOVOICE_LIVE=1 make e2e-xai"; exit 1; }
 	cd ui && npm ci --no-audit --no-fund
-	cd e2e && npm ci --no-audit --no-fund && npx playwright install chromium && E2E_PROVIDER=xai npx playwright test -c playwright.flows.config.ts
+	cd e2e && npm ci --no-audit --no-fund && npx playwright install chromium && E2E_PROVIDER=xai npx playwright test -c playwright.agents.config.ts
 
 e2e-oneport: ui-embed ## free|Playwright e2e of the one-port server (embedded UI, same-origin API and socket) on the echo provider
 	$(E2E_SETUP) && npx playwright test -c playwright.oneport.config.ts

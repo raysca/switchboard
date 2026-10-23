@@ -57,12 +57,12 @@ export function AgentVoiceTest({
   }
 
   // Mirrors the server: only these readiness states may take calls.
-  // A flow whose speech-to-text is `silence` takes typed turns only: no microphone, no push to talk, no mute.
+  // An agent whose speech-to-text is `silence` takes typed turns only: no microphone, no push to talk, no mute.
   const textOnly = isTextOnly(draft?.config ?? agent.current_version?.config);
   const callable = agent.readiness.state === "ready" || agent.readiness.state === "ready_with_tool_warning";
   const voiceClient = voiceClientRef.current;
   // A call keeps the version it started on: remember it, so a publish during the call neither
-  // changes the flow being shown nor passes for a test of the new version.
+  // changes the agent being shown nor passes for a test of the new version.
   const [callVersion, setCallVersion] = useState<{ number: number; config: unknown } | null>(null);
   const [state, setState] = useState<VoiceClientState>(() =>
     voiceClient.getState(),
@@ -94,7 +94,7 @@ export function AgentVoiceTest({
   if (!inCall) startedAt.current = null;
   const clock = mmss(inCall && startedAt.current !== null ? (now - startedAt.current) / 1000 : 0);
   for (const item of state.transcripts) if (item.speaker !== "user" && !stepOf.current.has(item.id)) stepOf.current.set(item.id, activeStep || agent.name);
-  // The step a route leads to speaks its greeting before the server reports it active, so that greeting was first
+  // The step a handoff leads to speaks its greeting before the server reports it active, so that greeting was first
   // labelled with the old step. Once the step changes, the lines after the old step's one goodbye (the first bot line
   // after the caller's last message) are the new step's. Without a caller turn there is nothing to tell them apart.
   if (activeStep && lastActive.current && activeStep !== lastActive.current) {
@@ -169,7 +169,7 @@ export function AgentVoiceTest({
           <span id="voice-test-heading">
             {draft ? "Testing draft (based on " : "Testing "}v{(inCall && callVersion ? callVersion.number : agent.current_version?.number) ?? 0}{draft ? ")" : ""}
           </span>
-          <code data-testid="flow-readiness" className="call-panel__ready">
+          <code data-testid="agent-readiness" className="call-panel__ready">
             {agent.readiness.state}
           </code>
           <span className="grow" />
@@ -257,7 +257,7 @@ export function AgentVoiceTest({
 
       {!callable && !isConnectedOrReady && (
         <div role="note" className="note">
-          <strong>Notice:</strong> This flow is marked as <code>{agent.readiness.state}</code> ({agent.readiness.reasons.join(", ") || "configuration incomplete"}). Fix these before starting a voice test; the server will not accept calls to this flow.
+          <strong>Notice:</strong> This agent is marked as <code>{agent.readiness.state}</code> ({agent.readiness.reasons.join(", ") || "configuration incomplete"}). Fix these before starting a voice test; the server will not accept calls to this agent.
         </div>
       )}
 
@@ -287,7 +287,7 @@ export function AgentVoiceTest({
             {textOnly
               ? isConnectedOrReady
                 ? "Type a message below to start the conversation."
-                : "No text session active. Click \"Start text test\" to talk to this flow."
+                : "No text session active. Click \"Start text test\" to talk to this agent."
               : isConnectedOrReady
                 ? "Listening… Speak to start the transcript."
                 : "No voice session active. Click \"Start voice test\" to test audio."}

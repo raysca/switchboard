@@ -12,7 +12,7 @@ export type NewAgentDialogProps = {
   onCancel: () => void;
 };
 
-/** Name a flow, then start from nothing or from a copy of an existing one. */
+/** Name an agent, then start from nothing or from a copy of an existing one. */
 export function NewAgentDialog({ agents, pending, error, onBlank, onCopy, onCancel }: NewAgentDialogProps) {
   const uid = useId();
   const [name, setName] = useState("");
@@ -29,10 +29,10 @@ export function NewAgentDialog({ agents, pending, error, onBlank, onCopy, onCanc
   }
 
   return (
-    <Modal title="New flow" onCancel={onCancel}>
+    <Modal title="New agent" onCancel={onCancel}>
       <form onSubmit={submit} className="dialog__form" noValidate>
         <label className="form-field" htmlFor={`${uid}-name`}>
-          <span>Name</span>
+          <span>Name your agent</span>
           <input id={`${uid}-name`} type="text" value={name} maxLength={128} autoComplete="off" onChange={(e) => setName(e.target.value)} />
         </label>
         <fieldset className="stage-box">
@@ -47,13 +47,13 @@ export function NewAgentDialog({ agents, pending, error, onBlank, onCopy, onCanc
           <label className="option-card" htmlFor={`${uid}-copy`} data-selected={mode === "copy" ? "true" : undefined}>
             <input id={`${uid}-copy`} type="radio" name={`${uid}-mode`} checked={mode === "copy"} disabled={agents.length === 0} onChange={() => setMode("copy")} />
             <span>
-              <b>Copy an existing flow</b>
-              <span className="subtext">Its steps, routes and settings. Call history is not copied.</span>
+              <b>Copy an existing agent</b>
+              <span className="subtext">Its steps, handoffs and settings. Call history is not copied.</span>
             </span>
           </label>
           {mode === "copy" && agents.length > 0 && (
             <label className="form-field" htmlFor={`${uid}-source`}>
-              <span>Flow to copy</span>
+              <span>Agent to copy</span>
               <select id={`${uid}-source`} value={source} onChange={(e) => setSource(e.target.value)}>
                 {agents.map((f) => (
                   <option key={f.id} value={f.id}>
@@ -69,7 +69,7 @@ export function NewAgentDialog({ agents, pending, error, onBlank, onCopy, onCanc
             {error}
           </p>
         )}
-        <p className="subtext">A new flow is a draft in this editor until you publish it. Nothing takes calls before that.</p>
+        <p className="subtext">A new agent is a draft in this editor until you publish it. Nothing takes calls before that.</p>
         <div className="row row--end">
           <button type="button" className="action-button-small" onClick={onCancel}>
             Cancel

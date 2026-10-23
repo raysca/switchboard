@@ -1,14 +1,14 @@
-import { test, expect, LIVE } from "../lib/flows-stack";
-import { api, connectAdmin, openFlow, openFlowSettings, stage, stepCard } from "../lib/flows-helpers";
+import { test, expect, LIVE } from "../lib/agents-stack";
+import { api, connectAdmin, openAgent, openAgentSettings, stage, stepCard } from "../lib/agents-helpers";
 
-// Per-flow conversation settings (Phase 7b). Each test creates its own flow, so it runs alone with --grep.
+// Per-agent conversation settings (Phase 7b). Each test creates its own agent, so it runs alone with --grep.
 test.skip(LIVE, "echo-provider spec");
 
 type Step = { id: string; config: { tts?: { clean_text?: boolean }; failover?: { on?: string[] } } };
-type Flow = { id: string; name: string; current_version: { config: { steps: Step[] } } };
-const find = async (stack: Parameters<typeof api>[0], name: string) => (await api<{ data: Flow[] }>(stack, "/agents")).data.find((f) => f.name === name)!;
+type Agent = { id: string; name: string; current_version: { config: { steps: Step[] } } };
+const find = async (stack: Parameters<typeof api>[0], name: string) => (await api<{ data: Agent[] }>(stack, "/agents")).data.find((f) => f.name === name)!;
 
-test("text cleaning and fallback rules are flow settings that survive a reload", async ({ page, stack }) => {
+test("text cleaning and fallback rules are agent settings that survive a reload", async ({ page, stack }) => {
   const name = "E2E Call-wide Settings";
   const cfg = (extra: object = {}) => ({ llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }), ...extra });
   await api(stack, "/agents", {
@@ -26,8 +26,8 @@ test("text cleaning and fallback rules are flow settings that survive a reload",
     }),
   });
   await connectAdmin(page, stack);
-  await openFlow(page, name);
-  await openFlowSettings(page);
+  await openAgent(page, name);
+  await openAgentSettings(page);
   await page.locator("details.advanced").getByText("Advanced", { exact: true }).click();
   await page.getByLabel(/Clean text before speaking/).uncheck();
   await page.getByLabel("Rejected requests (bad request, bad key)", { exact: true }).check();
@@ -45,8 +45,8 @@ test("text cleaning and fallback rules are flow settings that survive a reload",
 
   await page.reload();
   await connectAdmin(page, stack);
-  await openFlow(page, name);
-  await openFlowSettings(page);
+  await openAgent(page, name);
+  await openAgentSettings(page);
   await expect(page.locator("details.advanced")).toHaveAttribute("open", "");
   await expect(page.getByLabel(/Clean text before speaking/)).not.toBeChecked();
   await expect(page.getByLabel("Rejected requests (bad request, bad key)", { exact: true })).toBeChecked();
@@ -60,8 +60,8 @@ test("interruption settings are published, read back and shown after a reload", 
   });
   const turnOf = async () => ((await api<{ data: { name: string; current_version: { config: { turn?: object } } }[] }>(stack, "/agents")).data.find((f) => f.name === name)!).current_version.config.turn;
   await connectAdmin(page, stack);
-  await openFlow(page, name);
-  await openFlowSettings(page);
+  await openAgent(page, name);
+  await openAgentSettings(page);
   await page.locator("details.advanced").getByText("Advanced", { exact: true }).click();
   await page.getByRole("radio", { name: "After a number of words" }).check();
   await page.getByRole("spinbutton", { name: "Words before the caller interrupts" }).fill("3");
@@ -75,8 +75,8 @@ test("interruption settings are published, read back and shown after a reload", 
 
   await page.reload();
   await connectAdmin(page, stack);
-  await openFlow(page, name);
-  await openFlowSettings(page);
+  await openAgent(page, name);
+  await openAgentSettings(page);
   await expect(page.locator("details.advanced")).toHaveAttribute("open", "");
   await expect(page.getByRole("radio", { name: "After a number of words" })).toBeChecked();
   await expect(page.getByRole("spinbutton", { name: "Words before the caller interrupts" })).toHaveValue("3");
@@ -92,8 +92,8 @@ test("end-of-turn settings are published, read back and shown after a reload", a
   });
   const turnOf = async () => ((await api<{ data: { name: string; current_version: { config: { turn?: object } } }[] }>(stack, "/agents")).data.find((f) => f.name === name)!).current_version.config.turn;
   await connectAdmin(page, stack);
-  await openFlow(page, name);
-  await openFlowSettings(page);
+  await openAgent(page, name);
+  await openAgentSettings(page);
   await page.locator("details.advanced").getByText("Advanced", { exact: true }).click();
   const detection = page.getByRole("combobox", { name: "End-of-turn detection" });
   // The echo stack loads no Smart Turn model: the choice is visible but cannot be picked.
@@ -108,8 +108,8 @@ test("end-of-turn settings are published, read back and shown after a reload", a
 
   await page.reload();
   await connectAdmin(page, stack);
-  await openFlow(page, name);
-  await openFlowSettings(page);
+  await openAgent(page, name);
+  await openAgentSettings(page);
   await expect(page.locator("details.advanced")).toHaveAttribute("open", "");
   await expect(page.getByRole("combobox", { name: "End-of-turn detection" })).toHaveValue("eager");
   await expect(page.getByRole("spinbutton", { name: "Wait for the caller to resume (ms)" })).toHaveValue("900");
@@ -134,11 +134,11 @@ test("a step's background sound is published, read back and shown after a reload
   });
   type Listed = { name: string; current_version: { config: { steps: { id: string; config: { audio?: object } }[] } } };
   const salesAudio = async () => {
-    const flows = (await api<{ data: Listed[] }>(stack, "/agents")).data;
-    return flows.find((f) => f.name === name)!.current_version.config.steps.find((s) => s.id === "sales")!.config.audio;
+    const agents = (await api<{ data: Listed[] }>(stack, "/agents")).data;
+    return agents.find((f) => f.name === name)!.current_version.config.steps.find((s) => s.id === "sales")!.config.audio;
   };
   await connectAdmin(page, stack);
-  await openFlow(page, name);
+  await openAgent(page, name);
   await stepCard(page, "Sales").click();
   await page.getByRole("tab", { name: /Advanced/ }).click();
   await expect(page.getByRole("combobox", { name: "Background sound" })).toHaveValue("");
@@ -150,7 +150,7 @@ test("a step's background sound is published, read back and shown after a reload
 
   await page.reload();
   await connectAdmin(page, stack);
-  await openFlow(page, name);
+  await openAgent(page, name);
   await stepCard(page, "Sales").click();
   await page.getByRole("tab", { name: /Advanced/ }).click();
   await expect(page.getByRole("combobox", { name: "Background sound" })).toHaveValue("office");
@@ -165,8 +165,8 @@ test("a hold sound is published, read back and shown after a reload", async ({ p
   type Listed = { name: string; current_version: { config: { audio?: object } } };
   const audioOf = async () => ((await api<{ data: Listed[] }>(stack, "/agents")).data.find((f) => f.name === name)!).current_version.config.audio;
   await connectAdmin(page, stack);
-  await openFlow(page, name);
-  await openFlowSettings(page);
+  await openAgent(page, name);
+  await openAgentSettings(page);
   await page.locator("details.advanced").getByText("Advanced", { exact: true }).click();
   await page.getByRole("combobox", { name: "Hold sound" }).selectOption("chime");
   await page.getByRole("spinbutton", { name: "Start the hold sound after (ms)" }).fill("1000");
@@ -178,14 +178,14 @@ test("a hold sound is published, read back and shown after a reload", async ({ p
 
   await page.reload();
   await connectAdmin(page, stack);
-  await openFlow(page, name);
-  await openFlowSettings(page);
+  await openAgent(page, name);
+  await openAgentSettings(page);
   await expect(page.locator("details.advanced")).toHaveAttribute("open", "");
   await expect(page.getByRole("combobox", { name: "Hold sound" })).toHaveValue("chime");
   await expect(page.getByRole("spinbutton", { name: "Start the hold sound after (ms)" })).toHaveValue("1000");
 });
 
-test("a one-step flow can end the call: published in steps form, read back and shown after a reload", async ({ page, stack }) => {
+test("a one-step agent can end the call: published in steps form, read back and shown after a reload", async ({ page, stack }) => {
   const name = "E2E One Step End Call";
   await api(stack, "/agents", {
     method: "POST",
@@ -194,7 +194,7 @@ test("a one-step flow can end the call: published in steps form, read back and s
   type Listed = { name: string; current_version: { config: { steps?: { end_call?: boolean }[] } } };
   const endCallOf = async () => ((await api<{ data: Listed[] }>(stack, "/agents")).data.find((f) => f.name === name)!).current_version.config.steps?.[0]?.end_call;
   await connectAdmin(page, stack);
-  await openFlow(page, name);
+  await openAgent(page, name);
   await page.locator(".react-flow__node").first().click();
   await page.getByRole("tab", { name: /Tools/ }).click();
   await page.getByRole("checkbox", { name: /can end the call/i }).check();
@@ -205,7 +205,7 @@ test("a one-step flow can end the call: published in steps form, read back and s
 
   await page.reload();
   await connectAdmin(page, stack);
-  await openFlow(page, name);
+  await openAgent(page, name);
   await page.locator(".react-flow__node").first().click();
   await page.getByRole("tab", { name: /Tools/ }).click();
   await expect(page.getByRole("checkbox", { name: /can end the call/i })).toBeChecked();
@@ -220,8 +220,8 @@ test("a shorter call limit is published in seconds, read back and shown in minut
   type Listed = { name: string; current_version: { config: { max_call_duration_seconds?: number } } };
   const limitOf = async () => ((await api<{ data: Listed[] }>(stack, "/agents")).data.find((f) => f.name === name)!).current_version.config.max_call_duration_seconds;
   await connectAdmin(page, stack);
-  await openFlow(page, name);
-  await openFlowSettings(page);
+  await openAgent(page, name);
+  await openAgentSettings(page);
   await page.locator("details.advanced").getByText("Advanced", { exact: true }).click();
   await page.getByRole("spinbutton", { name: "Longest call (minutes)" }).fill("10");
   await page.getByRole("button", { name: "Done" }).click();
@@ -232,8 +232,8 @@ test("a shorter call limit is published in seconds, read back and shown in minut
 
   await page.reload();
   await connectAdmin(page, stack);
-  await openFlow(page, name);
-  await openFlowSettings(page);
+  await openAgent(page, name);
+  await openAgentSettings(page);
   await expect(page.locator("details.advanced")).toHaveAttribute("open", "");
   await expect(page.getByRole("spinbutton", { name: "Longest call (minutes)" })).toHaveValue("10");
 });

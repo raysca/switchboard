@@ -79,7 +79,7 @@ describe("ProvidersView", () => {
     expect(screen.getByText(/enter a management key/i)).toBeVisible();
   });
 
-  it("lists each provider with its services, where the credential comes from, and how many flows use it", async () => {
+  it("lists each provider with its services, where the credential comes from, and how many agents use it", async () => {
     setup({});
     await screen.findByRole("table");
     const g = within(rowOf("Google"));
@@ -108,7 +108,7 @@ describe("ProvidersView", () => {
     await user.click(screen.getByRole("button", { name: "xAI" }));
     expect(screen.getByRole("heading", { name: "xAI", level: 2 })).toBeVisible();
     expect(screen.getByRole("button", { name: "xAI" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByText("No credential. Flows cannot use it yet.")).toBeVisible();
+    expect(screen.getByText("No credential. Agents cannot use it yet.")).toBeVisible();
     expect(screen.getByTestId("where")).toHaveTextContent("/providers?provider=xai");
   });
 
@@ -162,29 +162,29 @@ describe("ProvidersView", () => {
     expect(screen.getByRole("button", { name: "xAI" })).toBeVisible();
   });
 
-  it("says which flows use the provider, once each, and links to them", async () => {
+  it("says which agents use the provider, once each, and links to them", async () => {
     setup({ getAgents: vi.fn().mockResolvedValue([front, graph, agent("old", "Old", front.current_version!.config, true)]) });
     const panel = await screen.findByRole("complementary");
     const used = within(panel).getByRole("region", { name: "Used by" });
     expect(within(used).getAllByRole("link").map((a) => a.textContent)).toEqual(["Front desk"]);
-    expect(within(used).getByRole("link", { name: "Front desk" })).toHaveAttribute("href", "/flows/f1");
+    expect(within(used).getByRole("link", { name: "Front desk" })).toHaveAttribute("href", "/agents/f1");
   });
 
-  it("says when no flow uses the provider yet", async () => {
+  it("says when no agent uses the provider yet", async () => {
     setup({ getAgents: vi.fn().mockResolvedValue([]) });
-    expect(await screen.findByText("No flow uses this provider yet.")).toBeVisible();
+    expect(await screen.findByText("No agent uses this provider yet.")).toBeVisible();
   });
 
-  it("still lists providers when the flow list fails, with the counts left out", async () => {
+  it("still lists providers when the agent list fails, with the counts left out", async () => {
     setup({ getAgents: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) });
     await screen.findByRole("table");
     expect(within(rowOf("Google")).getByText("—")).toBeVisible();
-    expect(screen.getByText("The flows could not be loaded, so which flows use this provider is unknown.")).toBeVisible();
+    expect(screen.getByText("The agents could not be loaded, so which agents use this provider is unknown.")).toBeVisible();
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("says 'at least' when the flow list was cut at the API's page size", async () => {
-    const many = Array.from({ length: 100 }, (_, i) => agent(`f${i}`, `Flow ${i}`, { llm: { provider: "google" } }));
+  it("says 'at least' when the agent list was cut at the API's page size", async () => {
+    const many = Array.from({ length: 100 }, (_, i) => agent(`f${i}`, `Agent ${i}`, { llm: { provider: "google" } }));
     setup({ getAgents: vi.fn().mockResolvedValue(many) });
     await screen.findByRole("table");
     expect(within(rowOf("Google")).getByText("100+")).toBeVisible();
@@ -211,16 +211,16 @@ describe("ProvidersView", () => {
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
   });
 
-  it("says a provider with no match is unchecked beyond the first 100 flows, instead of 'none use it'", async () => {
-    const many = Array.from({ length: 100 }, (_, i) => agent(`f${i}`, `Flow ${i}`, { llm: { provider: "google" } }));
+  it("says a provider with no match is unchecked beyond the first 100 agents, instead of 'none use it'", async () => {
+    const many = Array.from({ length: 100 }, (_, i) => agent(`f${i}`, `Agent ${i}`, { llm: { provider: "google" } }));
     const { user } = setup({ getAgents: vi.fn().mockResolvedValue(many) });
     await screen.findByRole("table");
     await user.click(screen.getByRole("button", { name: "xAI" }));
-    expect(screen.getByText("No flow among the first 100 uses this provider; later flows were not checked.")).toBeVisible();
-    expect(screen.queryByText("No flow uses this provider yet.")).toBeNull();
+    expect(screen.getByText("No agent among the first 100 uses this provider; later agents were not checked.")).toBeVisible();
+    expect(screen.queryByText("No agent uses this provider yet.")).toBeNull();
   });
 
-  it("counts a provider that a flow names only as a fallback", async () => {
+  it("counts a provider that an agent names only as a fallback", async () => {
     const withFallback = agent("fb", "Failover", { llm: { provider: "google" }, tts: { provider: "google", fallbacks: [{ provider: "cartesia" }] } });
     const cartesia: ProviderStatus = { id: "cartesia", display_name: "Cartesia", capabilities: [], detected: false, env: ["CARTESIA_API_KEY"], services: { tts: { available: false, reason: "missing_env", missing_env: ["CARTESIA_API_KEY"], custom: true } } };
     const { user } = setup({ getProviders: vi.fn().mockResolvedValue([google, cartesia]), getAgents: vi.fn().mockResolvedValue([withFallback]) });

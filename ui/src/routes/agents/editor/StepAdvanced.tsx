@@ -45,7 +45,7 @@ export function StepAdvanced({ graph, step, providers, serverConfig, onChange }:
   const sampling = llm as Partial<Record<SamplingKey, number>>;
   const voiceSettings = rec(tts.voice_settings) as Partial<Record<VoiceKey, number>>;
 
-  // The start step's sound is set in Flow settings > Audio; a later step may switch it (K7).
+  // The start step's sound is set in Agent settings > Audio; a later step may switch it (K7).
   const bg = rec(step.config.audio).background;
   const setBg = (next: Stage | null) => {
     const { audio: _drop, ...rest } = step.config;

@@ -77,7 +77,7 @@ export function AgentSettingsPanel({ graph, providers, serverConfig, name, descr
 
   return (
     <SidePanel
-      title="Flow settings"
+      title="Agent settings"
       onClose={onClose}
       returnFocusTo={returnFocusTo}
       fallbackFocusId={fallbackFocusId}
@@ -100,13 +100,13 @@ export function AgentSettingsPanel({ graph, providers, serverConfig, name, descr
         </div>
       )}
       <p className="subtext">Shared by every step for the whole call.</p>
-      <label className="form-field" htmlFor="flow-name">
-        <span>Flow name</span>
-        <input id="flow-name" type="text" maxLength={128} value={name} onChange={(e) => onName(e.target.value)} />
+      <label className="form-field" htmlFor="agent-name">
+        <span>Agent name</span>
+        <input id="agent-name" type="text" maxLength={128} value={name} onChange={(e) => onName(e.target.value)} />
       </label>
-      <label className="form-field" htmlFor="flow-description">
+      <label className="form-field" htmlFor="agent-description">
         <span>Description</span>
-        <textarea id="flow-description" rows={2} maxLength={1024} value={description} onChange={(e) => onDescription(e.target.value)} />
+        <textarea id="agent-description" rows={2} maxLength={1024} value={description} onChange={(e) => onDescription(e.target.value)} />
       </label>
 
       {!start ? (
@@ -118,25 +118,25 @@ export function AgentSettingsPanel({ graph, providers, serverConfig, name, descr
             <StageFields
               kind="stt"
               providers={providers}
-              idPrefix="flow-stt"
+              idPrefix="agent-stt"
               value={{ provider: str(stt.provider), model: str(stt.model), language: str(stt.language) }}
               onChange={(v: StageValue) => setKey("stt", { ...stt, provider: v.provider, model: v.model ?? "", language: v.language ?? "" })}
             />
           </fieldset>
           <fieldset className="stage-box">
             <legend>Recording</legend>
-            <label className="check-row" htmlFor="flow-record">
+            <label className="check-row" htmlFor="agent-record">
               <input
-                id="flow-record"
+                id="agent-record"
                 type="checkbox"
                 checked={recording.enabled === true}
                 onChange={(e) => setKey("recording", e.target.checked ? { enabled: true, disclosure_confirmed: recording.disclosure_confirmed === true } : null)}
               />
               <span>Record calls</span>
             </label>
-            <label className="check-row" htmlFor="flow-disclosure">
+            <label className="check-row" htmlFor="agent-disclosure">
               <input
-                id="flow-disclosure"
+                id="agent-disclosure"
                 type="checkbox"
                 disabled={recording.enabled !== true}
                 checked={recording.disclosure_confirmed === true}
@@ -156,9 +156,9 @@ export function AgentSettingsPanel({ graph, providers, serverConfig, name, descr
           <AudioFields cfg={cfg} setKey={setKey} serverConfig={serverConfig} />
           <fieldset className="stage-box">
             <legend>Speaking</legend>
-            <label className="check-row" htmlFor="flow-clean-text">
+            <label className="check-row" htmlFor="agent-clean-text">
               <input
-                id="flow-clean-text"
+                id="agent-clean-text"
                 type="checkbox"
                 checked={tts.clean_text !== false}
                 onChange={(e) => setKey("tts", e.target.checked ? without(tts, "clean_text") : { ...tts, clean_text: false })}
@@ -171,9 +171,9 @@ export function AgentSettingsPanel({ graph, providers, serverConfig, name, descr
             <legend>When to move to a fallback</legend>
             <p className="subtext">Only matters when a stage has fallbacks.</p>
             {FAILOVER_CLASSES.map((c) => (
-              <label key={c.id} className="check-row" htmlFor={`flow-failover-${c.id}`}>
+              <label key={c.id} className="check-row" htmlFor={`agent-failover-${c.id}`}>
                 <input
-                  id={`flow-failover-${c.id}`}
+                  id={`agent-failover-${c.id}`}
                   type="checkbox"
                   checked={failover.includes(c.id)}
                   disabled={failover.includes(c.id) && failover.length === 1}
@@ -186,37 +186,37 @@ export function AgentSettingsPanel({ graph, providers, serverConfig, name, descr
           </fieldset>
           <fieldset className="stage-box">
             <legend>Turn-taking</legend>
-            <label className="form-field" htmlFor="flow-vad">
+            <label className="form-field" htmlFor="agent-vad">
               <span>Wait after the caller stops (ms)</span>
               <input
-                id="flow-vad"
+                id="agent-vad"
                 type="number"
                 min={200}
                 max={2000}
                 placeholder="Server default"
-                aria-describedby="flow-vad-hint"
+                aria-describedby="agent-vad-hint"
                 value={typeof cfg.vad_stop_ms === "number" ? cfg.vad_stop_ms : ""}
                 onChange={(e) => setKey("vad_stop_ms", numberOrNothing(e.target.value))}
               />
             </label>
-            <p id="flow-vad-hint" className="subtext">
+            <p id="agent-vad-hint" className="subtext">
               200 to 2000. Shorter replies sooner; longer interrupts the caller less.
             </p>
             <SettingHelp id="vad_stop_ms" />
-            <label className="form-field" htmlFor="flow-stt-p99">
+            <label className="form-field" htmlFor="agent-stt-p99">
               <span>Wait for a late transcript (ms)</span>
               <input
-                id="flow-stt-p99"
+                id="agent-stt-p99"
                 type="number"
                 min={STT_P99_RANGE[0]}
                 max={STT_P99_RANGE[1]}
                 placeholder="Server default"
-                aria-describedby="flow-stt-p99-hint"
+                aria-describedby="agent-stt-p99-hint"
                 value={typeof cfg.stt_p99_ms === "number" ? cfg.stt_p99_ms : ""}
                 onChange={(e) => setKey("stt_p99_ms", numberOrNothing(e.target.value))}
               />
             </label>
-            <p id="flow-stt-p99-hint" className="subtext">
+            <p id="agent-stt-p99-hint" className="subtext">
               {STT_P99_RANGE[0]} to {STT_P99_RANGE[1]}. Empty: the server default.
             </p>
             <SettingHelp id="stt_p99_ms" />
@@ -225,17 +225,17 @@ export function AgentSettingsPanel({ graph, providers, serverConfig, name, descr
           <TurnFields cfg={cfg} setKey={setKey} serverConfig={serverConfig} />
           <fieldset className="stage-box">
             <legend>Call length</legend>
-            <label className="form-field" htmlFor="flow-call-limit">
+            <label className="form-field" htmlFor="agent-call-limit">
               <span>Longest call (minutes)</span>
               <input
-                id="flow-call-limit"
+                id="agent-call-limit"
                 type="number"
                 min={CALL_LIMIT_RANGE_S[0] / 60}
                 max={limitMaxS / 60}
                 step="any"
                 disabled={!limitPossible}
                 placeholder={serverConfig ? String(serverConfig.max_call_duration_seconds / 60) : "Server limit"}
-                aria-describedby="flow-call-limit-hint"
+                aria-describedby="agent-call-limit-hint"
                 value={typeof cfg.max_call_duration_seconds === "number" ? cfg.max_call_duration_seconds / 60 : ""}
                 onChange={(e) => {
                   const n = e.target.value.trim() === "" ? NaN : Number(e.target.value);
@@ -243,10 +243,10 @@ export function AgentSettingsPanel({ graph, providers, serverConfig, name, descr
                 }}
               />
             </label>
-            <p id="flow-call-limit-hint" className="subtext">
+            <p id="agent-call-limit-hint" className="subtext">
               {limitPossible
                 ? `${CALL_LIMIT_RANGE_S[0] / 60} to ${limitMaxS / 60}. Empty: the server's limit.`
-                : `The server allows at most ${limitMaxS} seconds, so no per-flow limit can be set.`}
+                : `The server allows at most ${limitMaxS} seconds, so no per-agent limit can be set.`}
             </p>
             {typeof cfg.max_call_duration_seconds === "number" && cfg.max_call_duration_seconds <= 0 && (
               <p role="alert" className="note note--bad">
@@ -258,10 +258,10 @@ export function AgentSettingsPanel({ graph, providers, serverConfig, name, descr
           <fieldset className="stage-box">
             <legend>Memory</legend>
             <div className="grid-2">
-              <label className="form-field" htmlFor="flow-max-messages">
+              <label className="form-field" htmlFor="agent-max-messages">
                 <span>Max messages</span>
                 <input
-                  id="flow-max-messages"
+                  id="agent-max-messages"
                   type="number"
                   min={2}
                   placeholder="Server default"
@@ -272,10 +272,10 @@ export function AgentSettingsPanel({ graph, providers, serverConfig, name, descr
                   }}
                 />
               </label>
-              <label className="form-field" htmlFor="flow-max-tokens">
+              <label className="form-field" htmlFor="agent-max-tokens">
                 <span>Max tokens</span>
                 <input
-                  id="flow-max-tokens"
+                  id="agent-max-tokens"
                   type="number"
                   min={1}
                   placeholder="Server default"
@@ -288,9 +288,9 @@ export function AgentSettingsPanel({ graph, providers, serverConfig, name, descr
               </label>
             </div>
             <SettingHelp id="context.limits" />
-            <label className="check-row" htmlFor="flow-summarise">
+            <label className="check-row" htmlFor="agent-summarise">
               <input
-                id="flow-summarise"
+                id="agent-summarise"
                 type="checkbox"
                 checked={rec(context.summarization).enabled === true}
                 onChange={(e) => setContext(e.target.checked ? { ...context, summarization: { enabled: true } } : without(context, "summarization"))}
@@ -300,50 +300,50 @@ export function AgentSettingsPanel({ graph, providers, serverConfig, name, descr
             <SettingHelp id="summarization.enabled" />
             {summary.enabled === true && (
               <>
-                <label className="form-field" htmlFor="flow-summary-trigger">
+                <label className="form-field" htmlFor="agent-summary-trigger">
                   <span>Summarise when history reaches (tokens)</span>
                   <input
-                    id="flow-summary-trigger"
+                    id="agent-summary-trigger"
                     type="number"
                     min={1}
                     placeholder="Three quarters of Max tokens"
-                    aria-describedby="flow-summary-trigger-hint"
+                    aria-describedby="agent-summary-trigger-hint"
                     value={typeof summary.trigger_tokens === "number" ? summary.trigger_tokens : ""}
                     onChange={(e) => setSummary("trigger_tokens", numberOrNothing(e.target.value))}
                   />
                 </label>
-                <p id="flow-summary-trigger-hint" className="subtext">
+                <p id="agent-summary-trigger-hint" className="subtext">
                   Empty: three quarters of Max tokens. Must be below Max tokens.
                 </p>
                 <SettingHelp id="summarization.trigger_tokens" />
-                <label className="form-field" htmlFor="flow-summary-keep">
+                <label className="form-field" htmlFor="agent-summary-keep">
                   <span>Keep the latest turns</span>
                   <input
-                    id="flow-summary-keep"
+                    id="agent-summary-keep"
                     type="number"
                     min={1}
                     placeholder="4"
-                    aria-describedby="flow-summary-keep-hint"
+                    aria-describedby="agent-summary-keep-hint"
                     value={typeof summary.keep_turns === "number" ? summary.keep_turns : ""}
                     onChange={(e) => setSummary("keep_turns", numberOrNothing(e.target.value))}
                   />
                 </label>
-                <p id="flow-summary-keep-hint" className="subtext">
+                <p id="agent-summary-keep-hint" className="subtext">
                   Empty: 4.
                 </p>
                 <SettingHelp id="summarization.keep_turns" />
-                <label className="form-field" htmlFor="flow-summary-prompt">
+                <label className="form-field" htmlFor="agent-summary-prompt">
                   <span>Summary instructions</span>
                   <textarea
-                    id="flow-summary-prompt"
+                    id="agent-summary-prompt"
                     rows={3}
                     placeholder="Built-in instructions"
-                    aria-describedby="flow-summary-prompt-hint"
+                    aria-describedby="agent-summary-prompt-hint"
                     value={typeof summary.prompt === "string" ? summary.prompt : ""}
                     onChange={(e) => setSummary("prompt", e.target.value === "" ? null : e.target.value)}
                   />
                 </label>
-                <p id="flow-summary-prompt-hint" className="subtext">
+                <p id="agent-summary-prompt-hint" className="subtext">
                   Empty: the built-in prompt. At most {MAX_SUMMARY_PROMPT_BYTES} bytes.
                 </p>
                 <SettingHelp id="summarization.prompt" />
@@ -352,11 +352,11 @@ export function AgentSettingsPanel({ graph, providers, serverConfig, name, descr
           </fieldset>
       {graph.handoffs.length > 0 && (
         <fieldset className="stage-box">
-          <legend>Route sound</legend>
+          <legend>Handoff sound</legend>
           <p className="subtext">Plays while the caller moves between steps. The sounds are the ones set up on the server (audio.cues).</p>
           <div className="grid-2">
             <label className="form-field" htmlFor="cue-name">
-              <span>Route sound</span>
+              <span>Handoff sound</span>
               <select
                 id="cue-name"
                 value={cue?.name ?? ""}

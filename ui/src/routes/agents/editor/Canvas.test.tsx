@@ -18,20 +18,20 @@ const graph = fromAgentConfig({
 const card = (name: string) => screen.getByText(name).closest(".step-node") as HTMLElement;
 
 describe("Canvas step cards", () => {
-  it("shows Ready, Needs setup and No route leads here", () => {
+  it("shows Ready, Needs setup and No handoff leads here", () => {
     render(<ReactFlowProvider><Canvas graph={graph} /></ReactFlowProvider>);
     expect(card("Reception")).toHaveTextContent("Ready");
     expect(card("Reception")).toHaveTextContent("Start");
     expect(card("Billing")).toHaveTextContent("Needs setup");
     expect(card("Billing")).toHaveClass("step-node--incomplete");
-    expect(card("Support")).toHaveTextContent("No route leads here");
+    expect(card("Support")).toHaveTextContent("No handoff leads here");
   });
 
-  // React Flow draws no routes in jsdom (no measured handles), so the route mapping is tested directly.
-  it("labels a route with no condition and draws it as a draft", () => {
+  // React Flow draws no handoffs in jsdom (no measured handles), so the handoff mapping is tested directly.
+  it("labels a handoff with no condition and draws it as a draft", () => {
     const draft = agentHandoffs(addDraftHandoff(graph, "a", "c")).find((e) => e.target === "c")!;
     expect(draft.label).toBe("Set a condition");
-    expect(draft.className).toBe("route-edge--draft");
+    expect(draft.className).toBe("handoff-edge--draft");
     expect(agentHandoffs(graph)[0]).toMatchObject({ label: "asks about an invoice", className: undefined });
   });
 
@@ -57,9 +57,9 @@ describe("Canvas step card shape", () => {
 describe("Canvas fitting", () => {
   it("refits when the room for the graph changes", () => {
     const { rerender } = render(<ReactFlowProvider><Canvas graph={graph} fitKey="a" /></ReactFlowProvider>);
-    expect(screen.getByTestId("flow-canvas")).toHaveAttribute("data-fit", "3:a");
+    expect(screen.getByTestId("agent-canvas")).toHaveAttribute("data-fit", "3:a");
     rerender(<ReactFlowProvider><Canvas graph={graph} fitKey="b" /></ReactFlowProvider>);
-    expect(screen.getByTestId("flow-canvas")).toHaveAttribute("data-fit", "3:b");
+    expect(screen.getByTestId("agent-canvas")).toHaveAttribute("data-fit", "3:b");
   });
 });
 

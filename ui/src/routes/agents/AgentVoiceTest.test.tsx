@@ -237,7 +237,7 @@ describe("AgentVoiceTest", () => {
     expect(await screen.findByText("Replied in 640 ms")).toBeVisible();
   });
 
-  it("executes normal conversational flow: connect -> bot-ready -> user speaks -> bot speaks -> barge-in -> disconnect -> trace link", async () => {
+  it("executes normal conversational agent: connect -> bot-ready -> user speaks -> bot speaks -> barge-in -> disconnect -> trace link", async () => {
     const mockAudio = new BrowserAudioController();
     vi.spyOn(mockAudio, "startCapture").mockResolvedValue(undefined);
     const stopPlaybackSpy = vi.spyOn(mockAudio, "stopPlayback");
@@ -247,10 +247,10 @@ describe("AgentVoiceTest", () => {
     const agent = createMockAgent();
 
     render(
-      <MemoryRouter initialEntries={["/flows/agent-alpha"]}>
+      <MemoryRouter initialEntries={["/agents/agent-alpha"]}>
         <Routes>
           <Route
-            path="/flows/agent-alpha"
+            path="/agents/agent-alpha"
             element={
               <AgentVoiceTest
                 agent={agent}
@@ -564,7 +564,7 @@ describe("AgentVoiceTest", () => {
     );
     const user = userEvent.setup();
 
-    expect(screen.getByTestId("flow-readiness")).toHaveTextContent("ready");
+    expect(screen.getByTestId("agent-readiness")).toHaveTextContent("ready");
     expect(screen.getByTestId("connection-state")).toHaveTextContent("DISCONNECTED");
     const input = screen.getByLabelText("Message");
     expect(input).toBeDisabled();
@@ -678,7 +678,7 @@ describe("AgentVoiceTest", () => {
     expect(screen.queryByText(/this call is on v/i)).toBeNull();
   });
 
-  it("starts a text-only flow (silence speech-to-text) without a microphone, push to talk or mute", async () => {
+  it("starts a text-only agent (silence speech-to-text) without a microphone, push to talk or mute", async () => {
     const client = createMockClient();
     const agent = createMockAgent();
     agent.current_version = { ...agent.current_version!, config: { ...agent.current_version!.config, stt: { provider: "silence", model: "text" } } };
@@ -691,7 +691,7 @@ describe("AgentVoiceTest", () => {
     );
     expect(screen.queryByText("Push to talk")).toBeNull();
     expect(screen.queryByTestId("start-voice-test-btn")).toHaveTextContent("Start text test");
-    expect(screen.getByText(/Click "Start text test" to talk to this flow/)).toBeVisible(); // no voice wording on a text-only flow
+    expect(screen.getByText(/Click "Start text test" to talk to this agent/)).toBeVisible(); // no voice wording on a text-only agent
     expect(screen.queryByText(/voice test/i)).toBeNull();
     await userEvent.setup().click(screen.getByTestId("start-voice-test-btn"));
     await waitFor(() => expect(MockWebSocket.instances.length).toBe(1));
@@ -700,7 +700,7 @@ describe("AgentVoiceTest", () => {
     expect(screen.queryByTestId("mute-btn")).toBeNull();
   });
 
-  it("treats a routed flow as text-only by its start step's speech-to-text", async () => {
+  it("treats an agent with handoffs as text-only by its start step's speech-to-text", async () => {
     const client = createMockClient();
     const agent = createMockAgent();
     agent.current_version = {
@@ -727,7 +727,7 @@ describe("AgentVoiceTest", () => {
     expect(capture).not.toHaveBeenCalled(); // the later step has a real voice, but nobody speaks to it
   });
 
-  it("a draft decides: a silence draft over a voice flow is text-only, and the reverse is not", async () => {
+  it("a draft decides: a silence draft over a voice agent is text-only, and the reverse is not", async () => {
     const client = createMockClient();
     const audio = new BrowserAudioController();
     const capture = vi.spyOn(audio, "startCapture").mockResolvedValue(undefined);
@@ -842,7 +842,7 @@ describe("AgentVoiceTest", () => {
     expect(lines.map((l) => l.querySelector(".line__who")?.textContent)).toEqual(["Front desk", "Front desk"]);
   });
 
-  it("falls back to the flow's name when no step is known", async () => {
+  it("falls back to the agent's name when no step is known", async () => {
     const h = await connected();
     await h.botSays("Hi there.");
     expect(await screen.findByTestId("transcript-bot")).toHaveTextContent("Customer Assistant");

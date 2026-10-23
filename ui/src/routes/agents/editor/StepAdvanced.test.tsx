@@ -198,13 +198,13 @@ describe("StepAdvanced", () => {
       expect(audioOf(onChange)).toEqual({ background: { name: "default" } });
     });
 
-    it("is not offered on the start step, and is disabled with the reason when flows may not choose", () => {
+    it("is not offered on the start step, and is disabled with the reason when agents may not choose", () => {
       const { unmount } = render(<StepAdvanced graph={two} step={two.steps[0]} providers={providers} serverConfig={server} onChange={vi.fn()} />);
       expect(screen.queryByLabelText("Background sound")).toBeNull();
       unmount();
       render(<Two onChange={vi.fn()} serverConfig={{ ...server, audio: { ...server.audio, allow_agent_background: false } } as ServerConfigDTO} />);
       expect(screen.getByLabelText("Background sound")).toBeDisabled();
-      expect(screen.getByText("This server does not allow flow background sounds.")).toBeVisible();
+      expect(screen.getByText("This server does not allow agent background sounds.")).toBeVisible();
     });
 
     it("shows a stored sound the server no longer has", () => {

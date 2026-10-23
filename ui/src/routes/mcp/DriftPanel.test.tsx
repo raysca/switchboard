@@ -46,7 +46,7 @@ const items: Drift[] = [
 ];
 const schema = { type: "object", properties: { amount_pence: { type: "integer" } } };
 
-// getFlow serves the flow as the server holds it now; by default that is the cached one.
+// getAgent serves the agent as the server holds it now; by default that is the cached one.
 function setupWith(one: AgentDTO, updateAgent = vi.fn().mockResolvedValue({}), getAgent = vi.fn().mockResolvedValue(one)) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const client = { updateAgent, getAgent } as unknown as ApiClient;
@@ -76,12 +76,12 @@ function setup(updateAgent = vi.fn().mockResolvedValue({})) {
 }
 
 describe("DriftPanel", () => {
-  it("says what changed, and what it means: required flows are blocked, optional ones carry on", () => {
+  it("says what changed, and what it means: required agents are blocked, optional ones carry on", () => {
     setup();
     expect(screen.getByRole("heading", { name: "send_pay_link changed its input schema", level: 3 })).toBeVisible();
-    expect(screen.getByText(/Flows that require it need your review before they take calls again/)).toBeVisible();
+    expect(screen.getByText(/Agents that require it need your review before they take calls again/)).toBeVisible();
     const rows = screen.getAllByRole("listitem");
-    expect(within(rows[0]).getByRole("link", { name: "Front desk" })).toHaveAttribute("href", "/flows/f1");
+    expect(within(rows[0]).getByRole("link", { name: "Front desk" })).toHaveAttribute("href", "/agents/f1");
     expect(within(rows[0]).getByText("requires it")).toBeVisible();
     expect(within(rows[0]).getByText("7a3e0000 → c9d00000")).toBeVisible();
     expect(within(rows[1]).getByText("uses it optionally")).toBeVisible();
@@ -92,7 +92,7 @@ describe("DriftPanel", () => {
     expect(screen.getByText(/"amount_pence"/)).toBeVisible();
   });
 
-  it("accepts for one flow only after confirmation, sending the full list with just that hash replaced", async () => {
+  it("accepts for one agent only after confirmation, sending the full list with just that hash replaced", async () => {
     const { updateAgent, invalidate, user } = setup();
     await user.click(screen.getByRole("button", { name: "Accept new schema for Front desk" }));
     expect(screen.getByRole("dialog", { name: "Accept the new schema for Front desk?" })).toBeVisible();
@@ -106,7 +106,7 @@ describe("DriftPanel", () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["agents"] });
   });
 
-  it("publishes the flow's current config, not the cached one, so a newer prompt edit survives the re-pin", async () => {
+  it("publishes the agent's current config, not the cached one, so a newer prompt edit survives the re-pin", async () => {
     const cached = agent("f7", "Edited elsewhere", [dep()]);
     cached.current_version!.config = { prompt: "old" };
     const fresh = structuredClone(cached);
@@ -134,7 +134,7 @@ describe("DriftPanel", () => {
     expect(screen.getByRole("dialog")).toBeVisible();
   });
 
-  it("re-pins every changed tool of the flow in one publish, because the server refuses a list with a stale tool", async () => {
+  it("re-pins every changed tool of the agent in one publish, because the server refuses a list with a stale tool", async () => {
     const both = agent("f9", "Both tools", [
       dep(),
       dep({ remote_name: "latest_invoice", selected_schema_hash: "11110000aa", current_schema_hash: "22220000bb" }),
@@ -177,7 +177,7 @@ describe("DriftPanel", () => {
 });
 
 describe("MissingTools", () => {
-  it("names tools the server no longer offers and the flows that pin them", () => {
+  it("names tools the server no longer offers and the agents that pin them", () => {
     const f = agent("f4", "Billing line", [dep({ remote_name: "gone", state: "tool_missing", current_schema_hash: undefined })]);
     render(
       <MemoryRouter>
@@ -185,6 +185,6 @@ describe("MissingTools", () => {
       </MemoryRouter>,
     );
     expect(screen.getByRole("heading", { name: "gone is no longer offered by this server" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "Billing line" })).toHaveAttribute("href", "/flows/f4");
+    expect(screen.getByRole("link", { name: "Billing line" })).toHaveAttribute("href", "/agents/f4");
   });
 });

@@ -1,5 +1,5 @@
 /**
- * The copy behind every "Explain" button in the flow editor. One entry per obscure setting; a control
+ * The copy behind every "Explain" button in the agent editor. One entry per obscure setting; a control
  * names its entry with <SettingHelp id="…" />, and a test keeps the two in step (no dead copy, no
  * control without text).
  */
@@ -109,7 +109,7 @@ const COPY = {
     label: "Noise reduction",
     what: "Cleans the caller's audio before the call listens to it: it takes out steady hum and hiss, not other voices.",
     when: "For callers on noisy lines or in cars.",
-    defaults: "Off, unless the server already reduces noise on every call (a flow cannot turn that off). Strength 1 to 100%, 50% if you leave it empty.",
+    defaults: "Off, unless the server already reduces noise on every call (an agent cannot turn that off). Strength 1 to 100%, 50% if you leave it empty.",
     careful: "Costs about 0.1% of one core per call. Recordings keep the original audio.",
   },
   "audio.output_gain_db": {
@@ -124,13 +124,13 @@ const COPY = {
     what: "A sound the server keeps playing quietly under the agent's voice, such as an office.",
     when: "To make a call feel less empty.",
     defaults: "Server default: the sound the server plays on every call, if it has one. Pick None for silence, or one of the sounds your server provides.",
-    careful: "It adds continuous audio traffic to every call of this flow.",
+    careful: "It adds continuous audio traffic to every call of this agent.",
   },
   "audio.step_background": {
     label: "Background sound for this step",
     what: "Switches the sound playing under the voice when the call moves to this step.",
     when: "To change the mood for a step, or to stop the sound after it.",
-    defaults: "Keep the current sound: the step leaves whatever is playing. A route back to the first step brings back the sound the call began with.",
+    defaults: "Keep the current sound: the step leaves whatever is playing. A handoff back to the first step brings back the sound the call began with.",
     careful: "Switching restarts the sound from its beginning; choosing the sound that is already playing changes nothing.",
   },
   "audio.background_gain": {
@@ -149,14 +149,14 @@ const COPY = {
     label: "Hold sound",
     what: "A server sound that plays while the agent waits for a slow tool, so the caller does not hear dead air.",
     when: "If a tool (a lookup, a booking) can take a few seconds.",
-    defaults: "None. When it is on, it starts after 1000 ms if you leave the delay empty (0 to 10000). The route sound waits only 300 ms because a gap between steps is always silent, but most tool calls return within a second and a sound on each of them would be noise.",
+    defaults: "None. When it is on, it starts after 1000 ms if you leave the delay empty (0 to 10000). The handoff sound waits only 300 ms because a gap between steps is always silent, but most tool calls return within a second and a sound on each of them would be noise.",
     careful: "Only tools that run in the foreground play it: not background tools, transfers, hang-up or key presses. It pauses while anyone speaks and stops when the tool returns.",
   },
   max_call_duration_seconds: {
     label: "Longest call",
     what: "Ends the call after this many minutes, with the reason \"time limit\".",
-    when: "To cap the cost or length of calls to this flow.",
-    defaults: "1 minute up to the server's own limit. Empty: the server's limit. A flow can shorten calls, never lengthen them: if the server's limit is lowered later, the lower one applies.",
+    when: "To cap the cost or length of calls to this agent.",
+    defaults: "1 minute up to the server's own limit. Empty: the server's limit. An agent can shorten calls, never lengthen them: if the server's limit is lowered later, the lower one applies.",
   },
   recording: {
     label: "Recording",
@@ -166,7 +166,7 @@ const COPY = {
     careful: "Tick the disclosure only if callers are actually told: it is your compliance statement.",
   },
   handoff_cue: {
-    label: "Route sound",
+    label: "Handoff sound",
     what: "A short sound played while the call moves between steps, so the caller does not hear silence.",
     when: "When a transfer takes more than a moment.",
     defaults: "None. Pick one of the sounds your server has.",
@@ -174,7 +174,7 @@ const COPY = {
   "turn.interruptions": {
     label: "When can the caller interrupt?",
     what: "Whether the caller's speech cuts the agent off while it talks: at any moment, only after a few words (so a quiet \"mm-hm\" does not), or not at all while the agent speaks (until the longest-mute limit passes).",
-    when: "Not-while-speaking or after a few words for a flow that reads out something the caller must hear; any time for a free-flowing chat.",
+    when: "Not-while-speaking or after a few words for an agent that reads out something the caller must hear; any time for a free-flowing chat.",
     defaults: "The server's setting. After a number of words is 1 to 10 and needs a speech-to-text that sends interim results.",
     careful: "Muted speech still reaches speech-to-text (billed) and recordings; it just starts no turn.",
   },
@@ -236,7 +236,7 @@ const COPY = {
     label: "Max output tokens",
     what: "The most the model may write in one reply. A reply that reaches the cap is cut off, and the caller hears it cut.",
     when: "To keep spoken answers short.",
-    defaults: "1 to 8192. Empty: the model's own default. Applies to model fallbacks too. Not the history budget in Flow settings.",
+    defaults: "1 to 8192. Empty: the model's own default. Applies to model fallbacks too. Not the history budget in Agent settings.",
     careful: "Reasoning models (Gemini 2.5, GPT-OSS on NVIDIA, Grok reasoning models) count their thinking toward this cap, so a low cap can leave an empty reply. Leave it empty on these models, or use 1024 or more.",
   },
   "tts.clean_text": {
@@ -254,7 +254,7 @@ const COPY = {
   fallbacks: {
     label: "Fallbacks",
     what: "Backup providers tried in order when the main one fails.",
-    when: "For flows that must not drop calls on a provider outage.",
+    when: "For agents that must not drop calls on a provider outage.",
     defaults: "None. Up to 2 per stage.",
     careful: "Each fallback needs its own credentials on the server.",
   },

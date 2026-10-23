@@ -1,17 +1,17 @@
-import { test, expect, LIVE } from "../lib/flows-stack";
+import { test, expect, LIVE } from "../lib/agents-stack";
 import { step } from "../lib/evidence";
-import { api, botReply, connectAdmin, openFlow, sendText, stage, startCall } from "../lib/flows-helpers";
+import { api, botReply, connectAdmin, openAgent, sendText, stage, startCall } from "../lib/agents-helpers";
 import { lastMCPCall } from "../lib/mcp-helpers";
 
-// Choosing MCP tools in the designer: they are tested as a draft, published with the flow, and removable.
+// Choosing MCP tools in the designer: they are tested as a draft, published with the agent, and removable.
 test.skip(LIVE, "the MCP cases run against the echo stack only");
 test.describe.configure({ mode: "serial" });
 
 const NAME = "E2E Tool Picker";
-type Flow = { name: string; current_version: { number: number; mcp_tools: { remote_name: string }[] } };
-const current = async (stack: Parameters<typeof api>[0]) => ((await api<{ data: Flow[] }>(stack, "/agents")).data.find((f) => f.name === NAME)!).current_version;
+type Agent = { name: string; current_version: { number: number; mcp_tools: { remote_name: string }[] } };
+const current = async (stack: Parameters<typeof api>[0]) => ((await api<{ data: Agent[] }>(stack, "/agents")).data.find((f) => f.name === NAME)!).current_version;
 
-test("tools chosen in the Tools tab are tested as a draft, then published with the flow", async ({ page, stack }) => {
+test("tools chosen in the Tools tab are tested as a draft, then published with the agent", async ({ page, stack }) => {
   const server = await api<{ data: { id: string } }>(stack, "/mcp-servers", {
     method: "POST",
     body: JSON.stringify({ name: "Picker ok", endpoint: `${stack.mcpUrl}/ok`, auth_env: "MCP_TOKEN_TEST", enabled: true }),
@@ -22,7 +22,7 @@ test("tools chosen in the Tools tab are tested as a draft, then published with t
     body: JSON.stringify({ name: NAME, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You use tools." }), tts: stage({ voice: "v" }) } }),
   });
   await connectAdmin(page, stack);
-  await openFlow(page, NAME);
+  await openAgent(page, NAME);
   await page.locator(".react-flow__node").first().click();
   await page.getByRole("tab", { name: /Tools/ }).click();
   await expect(page.getByRole("group", { name: "Picker ok" })).toBeVisible();
@@ -50,7 +50,7 @@ test("tools chosen in the Tools tab are tested as a draft, then published with t
 
 test("a chosen tool can be taken off again, and the next version has none", async ({ page, stack }) => {
   await connectAdmin(page, stack);
-  await openFlow(page, NAME);
+  await openAgent(page, NAME);
   await page.locator(".react-flow__node").first().click();
   await page.getByRole("tab", { name: /Tools/ }).click();
   const box = page.getByRole("group", { name: "Picker ok" }).getByRole("checkbox", { name: /^lookup_order/ });

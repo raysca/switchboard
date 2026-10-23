@@ -1,6 +1,6 @@
-import { test, expect, LIVE } from "../lib/flows-stack";
+import { test, expect, LIVE } from "../lib/agents-stack";
 import { step } from "../lib/evidence";
-import { api, botReply, connectAdmin, openFlow, openFlowTest, sendText, stage, startCall } from "../lib/flows-helpers";
+import { api, botReply, connectAdmin, openAgent, openAgentTest, sendText, stage, startCall } from "../lib/agents-helpers";
 
 // A test call runs what is on the canvas, not the published version. The echo LLM labels each
 // reply with the step's instructions, so which version answered is visible in the transcript.
@@ -16,7 +16,7 @@ const body = {
 test("an unpublished change is heard on a test call and stays unpublished", async ({ page, stack }) => {
   await api(stack, "/agents", { method: "POST", body: JSON.stringify(body) });
   await connectAdmin(page, stack);
-  await openFlow(page, NAME);
+  await openAgent(page, NAME);
   await page.locator(".react-flow__node").first().click();
   await page.getByLabel("Instructions").fill("DRAFT PROMPT");
   await page.getByRole("button", { name: "Test call" }).click();
@@ -30,11 +30,11 @@ test("an unpublished change is heard on a test call and stays unpublished", asyn
   await page.getByTestId("disconnect-btn").click();
 
   // Nothing was published.
-  const flows = (await api<{ data: { name: string; current_version: { number: number; config: any } }[] }>(stack, "/agents")).data;
-  const flow = flows.find((f) => f.name === NAME)!;
-  expect(flow.current_version.number).toBe(1);
-  expect(JSON.stringify(flow.current_version.config)).toContain("PUBLISHED PROMPT");
-  expect(JSON.stringify(flow.current_version.config)).not.toContain("DRAFT PROMPT");
+  const agents = (await api<{ data: { name: string; current_version: { number: number; config: any } }[] }>(stack, "/agents")).data;
+  const agent = agents.find((f) => f.name === NAME)!;
+  expect(agent.current_version.number).toBe(1);
+  expect(JSON.stringify(agent.current_version.config)).toContain("PUBLISHED PROMPT");
+  expect(JSON.stringify(agent.current_version.config)).not.toContain("DRAFT PROMPT");
 
   // The Calls list marks it as a draft.
   await page.getByRole("link", { name: "Calls", exact: true }).first().click();
@@ -44,12 +44,12 @@ test("an unpublished change is heard on a test call and stays unpublished", asyn
 
 test("after publishing, the same words are the published version and the call is not a draft", async ({ page, stack }) => {
   await connectAdmin(page, stack);
-  await openFlow(page, NAME);
+  await openAgent(page, NAME);
   await page.locator(".react-flow__node").first().click();
   await page.getByLabel("Instructions").fill("DRAFT PROMPT");
   await page.getByRole("button", { name: "Publish", exact: true }).click();
   await page.getByRole("button", { name: "Publish v2" }).click();
-  await openFlowTest(page, NAME);
+  await openAgentTest(page, NAME);
   await expect(page.getByRole("note").filter({ hasText: "unpublished changes" })).toHaveCount(0);
   await startCall(page);
   await sendText(page, "hello");

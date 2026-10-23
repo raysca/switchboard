@@ -10,7 +10,7 @@ import { useActiveSessions } from "./useActiveSessions";
 
 export type AgentPageProps = { client: ApiClient; keyValue: string | null };
 
-/** /flows/new and /flows/:agentId: the flow editor as a page of its own. */
+/** /agents/new and /agents/:agentId: the agent editor as a page of its own. */
 export function AgentPage({ client, keyValue }: AgentPageProps) {
   const { agentId } = useParams();
   const [search] = useSearchParams();
@@ -20,7 +20,7 @@ export function AgentPage({ client, keyValue }: AgentPageProps) {
   const [formError, setFormError] = useState<ApiError | null>(null);
   const [dismissedAt, setDismissedAt] = useState<string | null>(null);
 
-  // The one flow, not the list: the list is capped at 100 and a flow can sort past the cap.
+  // The one agent, not the list: the list is capped at 100 and an agent can sort past the cap.
   const agentQuery = useQuery({
     queryKey: ["agents", agentId],
     queryFn: () => client.getAgent(agentId!),
@@ -28,7 +28,7 @@ export function AgentPage({ client, keyValue }: AgentPageProps) {
     retry: false,
   });
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: () => client.getProviders(), enabled: !!keyValue, retry: false });
-  // Placeholders and the sound list in Flow settings; the editor works without them.
+  // Placeholders and the sound list in Agent settings; the editor works without them.
   const serverConfigQuery = useQuery({ queryKey: ["server-config"], queryFn: () => client.getServerConfig(), enabled: !!keyValue, retry: false });
   const active = useActiveSessions(client, keyValue);
 
@@ -37,12 +37,12 @@ export function AgentPage({ client, keyValue }: AgentPageProps) {
 
   const published = (saved: AgentDTO) => {
     setFormError(null);
-    // Put the saved flow in the cache before moving to its address: a refetch is still in flight, and
-    // without this the new address would flash "That flow was not found." and remount the editor.
+    // Put the saved agent in the cache before moving to its address: a refetch is still in flight, and
+    // without this the new address would flash "That agent was not found." and remount the editor.
     queryClient.setQueryData(["agents", saved.id], saved);
     void queryClient.invalidateQueries({ queryKey: ["agents"] });
     // Same address for an update: the state change is what raises the banner.
-    navigate(`/flows/${encodeURIComponent(saved.id)}`, { replace: true, state: { published: saved.current_version?.number ?? 1 } });
+    navigate(`/agents/${encodeURIComponent(saved.id)}`, { replace: true, state: { published: saved.current_version?.number ?? 1 } });
   };
   const createMutation = useMutation({
     mutationFn: (payload: CreateAgentInput) => client.createAgent(payload),
@@ -55,18 +55,18 @@ export function AgentPage({ client, keyValue }: AgentPageProps) {
     onError: (err) => setFormError(asApiError(err, "Publishing failed")),
   });
 
-  if (!keyValue) return <EmptyState title="Connect to edit flows">Enter a management key above to configure voice flows.</EmptyState>;
-  if (agentId && agentQuery.isPending) return <LoadingState label="Loading flow" />;
-  // A failed refresh keeps the editor (and its unsaved edits): only a flow we never loaded is an error.
+  if (!keyValue) return <EmptyState title="Connect to edit agents">Enter a management key above to configure voice agents.</EmptyState>;
+  if (agentId && agentQuery.isPending) return <LoadingState label="Loading agent" />;
+  // A failed refresh keeps the editor (and its unsaved edits): only an agent we never loaded is an error.
   if (agentId && !agentQuery.data && agentQuery.isError && !notFound) {
-    return <ErrorState title="Failed to load the flow" error={agentQuery.error as ApiError} onRetry={() => void agentQuery.refetch()} reassure />;
+    return <ErrorState title="Failed to load the agent" error={agentQuery.error as ApiError} onRetry={() => void agentQuery.refetch()} reassure />;
   }
   if (agentId && !agent) {
     return (
-      <section className="flow-missing">
-        <p role="status">That flow was not found.</p>
-        <Link to="/flows" className="action-button-small">
-          Back to flows
+      <section className="agent-missing">
+        <p role="status">That agent was not found.</p>
+        <Link to="/agents" className="action-button-small">
+          Back to agents
         </Link>
       </section>
     );
@@ -77,7 +77,7 @@ export function AgentPage({ client, keyValue }: AgentPageProps) {
   const providers = providersQuery.data ?? [];
 
   return (
-    <div className="flow-page flow-page--editor">
+    <div className="agent-page agent-page--editor">
       {agent && publishedVersion !== null && dismissedAt !== location.key && (
         <PublishedBanner
           agentId={agent.id}
@@ -102,7 +102,7 @@ export function AgentPage({ client, keyValue }: AgentPageProps) {
         keyValue={keyValue}
         pending={createMutation.isPending || updateMutation.isPending}
         onSubmit={(input) => (agent ? updateMutation.mutate({ id: agent.id, payload: input }) : createMutation.mutate(input))}
-        onCancel={() => navigate("/flows")}
+        onCancel={() => navigate("/agents")}
         callsInProgress={agent ? (({ live, onOlderVersion }) => live - onOlderVersion)(liveCalls(active.data ?? [], agent)) : 0}
       />
     </div>
