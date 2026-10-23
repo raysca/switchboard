@@ -174,7 +174,7 @@ const COPY = {
   "turn.interruptions": {
     label: "When can the caller interrupt?",
     what: "Whether the caller's speech cuts the agent off while it talks: at any moment, only after a few words (so a quiet \"mm-hm\" does not), or not at all while the agent speaks (until the longest-mute limit passes).",
-    when: "Not-while-speaking or after a few words for an agent that reads out something the caller must hear; any time for a free-flowing chat.",
+    when: "Not-while-speaking or after a few words for an agent that reads out something the caller must hear; any time for a relaxed chat.",
     defaults: "The server's setting. After a number of words is 1 to 10 and needs a speech-to-text that sends interim results.",
     careful: "Muted speech still reaches speech-to-text (billed) and recordings; it just starts no turn.",
   },

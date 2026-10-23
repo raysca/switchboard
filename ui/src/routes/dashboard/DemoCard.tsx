@@ -15,7 +15,7 @@ export function DemoCard({ client }: { client: ApiClient }) {
   return (
     <div className="message-panel">
       <h2>Dentistry demo</h2>
-      <p>A front desk that hands new and returning patients to different agents, with a scheduling tool server.</p>
+      <p>A front desk that hands new and returning patients to different steps, with a scheduling tool server.</p>
       {d.installed && d.agent_id ? (
         <p>
           Installed: <Link to={`/agents/${encodeURIComponent(d.agent_id)}`}>Smile Dental front desk</Link>
