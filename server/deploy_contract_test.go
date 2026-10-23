@@ -98,7 +98,8 @@ func TestDockerfileProductionHardening(t *testing.T) {
 }
 
 // CI (M4-01): every workflow and the alert rules parse, and ci.yml gates on the Makefile targets that
-// cover verify, the tagged tests, Postgres and the image smoke on Linux and macOS.
+// cover verify, the tagged tests, Postgres and the image smoke. Linux only: the server ships as the
+// container image, so there is no macOS build job.
 func TestCIWorkflowCoversTheSafetyNet(t *testing.T) {
 	type step struct {
 		Run  string `yaml:"run"`
@@ -134,7 +135,7 @@ func TestCIWorkflowCoversTheSafetyNet(t *testing.T) {
 		}
 		return strings.Join(all, "\n")
 	}
-	for name, want := range map[string]string{"linux": "make verify", "macos": "make verify", "postgres": "make test-postgres", "image-smoke": "deploy/smoke.sh"} {
+	for name, want := range map[string]string{"test": "make verify", "postgres": "make test-postgres", "image-smoke": "deploy/smoke.sh"} {
 		if !strings.Contains(runs(name), want) {
 			t.Errorf("ci job %s must run %q", name, want)
 		}
@@ -142,8 +143,13 @@ func TestCIWorkflowCoversTheSafetyNet(t *testing.T) {
 			t.Errorf("ci job %s must be blocking", name)
 		}
 	}
-	if !strings.HasPrefix(ci["linux"].RunsOn, "ubuntu") || !strings.HasPrefix(ci["macos"].RunsOn, "macos") {
-		t.Errorf("linux/macos runners = %q/%q", ci["linux"].RunsOn, ci["macos"].RunsOn)
+	if !strings.HasPrefix(ci["test"].RunsOn, "ubuntu") {
+		t.Errorf("test runner = %q", ci["test"].RunsOn)
+	}
+	for name := range ci {
+		if strings.Contains(ci[name].RunsOn, "macos") {
+			t.Errorf("ci job %s runs on %q: the server ships as the Linux container image only", name, ci[name].RunsOn)
+		}
 	}
 	if dc, ok := ci["deadcode"]; !ok || !strings.Contains(runs("deadcode"), "make deadcode") || !dc.ContinueOnError {
 		t.Error("ci job deadcode must run make deadcode and stay advisory (continue-on-error)")

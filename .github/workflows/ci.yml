@@ -4,7 +4,9 @@
 # smoke test starts the image without credentials. The Postgres store tests are off for now (SQLite is the
 # store we run and test); set the repository variable RUN_POSTGRES_TESTS=true to turn them back on.
 #
-# Required status checks to configure on main: linux, macos, image-smoke, graph-e2e (postgres only once enabled).
+# Required status checks to configure on main: test, image-smoke, graph-e2e (postgres only once enabled).
+# There is no macOS job: the server ships only as the Linux container image (deploy/Dockerfile), so CI
+# verifies on ubuntu and smokes the image. perf-gate.yml still runs on macos-14 for the benchmarks.
 # perf-gate.yml is advisory (see docs/benchmarks/README.md, "CI policy").
 name: ci
 on:
@@ -18,10 +20,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The test suite, not a build for the Linux platform: the server ships only as the container image.
   # make verify = build (-tags xaispeech) + go vet (with and without the tag) + go test -race for every
   # module + gofmt + manifest/fixture/playback-clear checks. ONNX Runtime is git-ignored: `make ort`
   # downloads the pinned release (sha256-verified on Linux).
-  linux:
+  test:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -65,24 +68,6 @@ jobs:
             e2e/playwright-report-agents
             e2e/evidence
           retention-days: 7
-
-  # The reference platform for the committed benchmarks; also proves the macOS cgo/ORT path.
-  macos:
-    runs-on: macos-14
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true   # tools/compat parity tests read the pinned pipecat-impl revision
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - run: npm ci --prefix tools/compat   # released @pipecat-ai client packages for the compat tests
-      - run: make ort
-      - run: make verify
 
   # Storage and migration tests against the production database (skipped by `make test`).
   postgres:
