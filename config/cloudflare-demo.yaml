@@ -1,4 +1,4 @@
-# Cloudflare Containers demo: one Worker-routed container, one SQLite store, short test calls.
+# Cloudflare Containers demo: one container behind a Worker, one SQLite store, short test calls.
 # The Worker is the only ingress and overwrites forwarding headers from Cloudflare request metadata.
 profile: production
 

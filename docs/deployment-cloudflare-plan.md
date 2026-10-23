@@ -2,7 +2,7 @@
 
 ## Goal
 
-Deploy one Switchboard voice-server instance on Cloudflare Containers and complete a browser test call through the Cloudflare Worker ingress. This first milestone covers the voice server only; MCP deployment and the Smile Dental flow follow separately.
+Deploy one Switchboard voice-server instance on Cloudflare Containers and complete a browser test call through the Cloudflare Worker ingress. This first milestone covers the voice server only; MCP deployment and the Smile Dental agent follow separately.
 
 The demo uses SQLite on the container's ephemeral filesystem. Agent configuration and call history may be lost when the container restarts, sleeps, or is redeployed. That is acceptable for this milestone.
 
@@ -13,7 +13,7 @@ Browser / Pipecat client
         │ HTTPS / WebSocket
         ▼
 Cloudflare Worker
-        │ routes to a named Durable Object
+        │ forwards to a named Durable Object
         ▼
 Durable Object ── starts, health-checks, and forwards to ── Switchboard container
                                                               ├─ server :8080
@@ -68,7 +68,7 @@ The initial setup uses one named Durable Object/container instance and a low ses
 ## Risks and constraints
 
 - Cloudflare's Worker-to-container path differs from Cloud Run; verify trusted proxy and client-IP behavior from the deployed service.
-- Cloudflare documents WebSocket forwarding, but Switchboard's binary Protobuf RTVI frames and long-lived call flow require end-to-end validation.
+- Cloudflare documents WebSocket forwarding, but Switchboard's binary Protobuf RTVI frames and long-lived calls require end-to-end validation.
 - Container disk is ephemeral by default, so the SQLite demo store can disappear after sleep, restart, or redeploy. See the [Containers FAQ](https://developers.cloudflare.com/containers/faq/).
 - The real-provider call validates DNS, TLS, HTTP/2 or WebSocket connectivity required by that provider. See [outbound traffic](https://developers.cloudflare.com/containers/configuration/outbound-traffic/).
 - Cloudflare instance sizes differ from the current Cloud Run demo allocation. Begin with one-call sizing, record CPU/memory use, then adjust. See [instance types and limits](https://developers.cloudflare.com/containers/platform/limits/).
@@ -78,6 +78,6 @@ The initial setup uses one named Durable Object/container instance and a low ses
 
 - Deploying the Smile Dental MCP or porting it to TypeScript/Hono.
 - Persistent SQLite or Postgres storage.
-- Multi-instance call routing, horizontal scaling, or production capacity guarantees.
+- Multi-instance call distribution, horizontal scaling, or production capacity guarantees.
 - Paid/live provider checks beyond the single configured test call.
 - Core pipeline or provider changes unless deployment uncovers a concrete issue.
