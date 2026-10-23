@@ -1,0 +1,9 @@
+{
+  "name": "Eval assistant",
+  "description": "Self-test fixture: a one-step agent on the echo provider.",
+  "config": {
+    "stt": {"provider": "echo", "model": "chirp_2", "language": "en-US"},
+    "llm": {"provider": "echo", "model": "fake", "system_prompt": "You are a test assistant."},
+    "tts": {"provider": "echo", "voice": "fake"}
+  }
+}

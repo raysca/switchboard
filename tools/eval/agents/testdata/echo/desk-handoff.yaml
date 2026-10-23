@@ -1,0 +1,9 @@
+name: echo-desk-handoff
+agent: Eval desk
+caller:
+  script:
+    - "please transfer to sales"
+expect:
+  path: [front, sales]
+  tools_called: [transfer_to_sales]
+  end_reason: caller_hung_up

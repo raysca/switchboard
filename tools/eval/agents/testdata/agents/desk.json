@@ -1,0 +1,17 @@
+{
+  "name": "Eval desk",
+  "description": "Self-test fixture: a front desk that hands callers to a sales step, which can hang up.",
+  "config": {
+    "start": "front",
+    "steps": [
+      {"id": "front", "name": "Front desk", "config": {
+        "stt": {"provider": "echo", "model": "chirp_2", "language": "en-US"},
+        "llm": {"provider": "echo", "model": "fake", "system_prompt": "You are the front desk."},
+        "tts": {"provider": "echo", "voice": "front"}}},
+      {"id": "sales", "name": "Sales", "end_call": true, "config": {
+        "llm": {"provider": "echo", "model": "fake", "system_prompt": "You are sales."},
+        "tts": {"provider": "echo", "voice": "sales"}}}
+    ],
+    "handoffs": [{"id": "front-sales", "from": "front", "to": "sales", "condition": "The caller wants to buy a car."}]
+  }
+}

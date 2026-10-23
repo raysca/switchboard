@@ -1,0 +1,10 @@
+name: echo-desk-end-call
+agent: Eval desk
+caller:
+  script:
+    - "transfer to sales"
+    - "end the call"
+expect:
+  path: [front, sales]
+  tools_called: [transfer_to_sales, end_call]
+  end_reason: ended_by_agent

@@ -25,6 +25,7 @@ type config struct {
 	Dir, Only, Mode, JSON, Admin, Public string
 	Version, Runs, MinPass, MaxCalls     int
 	Opts                                 opts
+	Selftest                             bool
 }
 
 func parseFlags(args []string) (config, error) {
@@ -43,6 +44,7 @@ func parseFlags(args []string) (config, error) {
 	fs.IntVar(&c.MaxCalls, "max-calls", defaultMaxCalls, "most caller turns in the whole run")
 	fs.StringVar(&c.Admin, "admin", "http://127.0.0.1:9090", "management API base URL")
 	fs.StringVar(&c.Public, "public", "127.0.0.1:8080", "public listener host:port")
+	fs.BoolVar(&c.Selftest, "selftest", false, "prove the harness on a server child and the echo provider, with deliberately broken agents (free)")
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}
@@ -152,6 +154,11 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintln(stderr, "agent-eval:", err)
 		return 2
+	}
+	if c.Selftest {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return selftest(ctx, stdout, stderr)
 	}
 	setup := func(err error) int { fmt.Fprintln(stderr, "agent-eval:", err); return 2 }
 	var only []string

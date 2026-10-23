@@ -170,7 +170,13 @@ e2e-fake: ui-embed ## free|Playwright browser e2e for agents with handoffs and t
 	@cd e2e && rc=0; npx playwright test -c playwright.agents.config.ts || rc=1; npx playwright test -c playwright.oneport.config.ts || rc=1; exit $$rc
 
 # Every free end-to-end test: the Go suite, then the browser suite (echo provider, offline, about 2 min).
-e2e-echo: test-e2e-go e2e-fake ## free|Every end-to-end test on the echo provider: Go (test-e2e-go) then browser (e2e-fake)
+e2e-echo: test-e2e-go eval-agents-echo e2e-fake ## free|Every end-to-end test on the echo provider: Go (test-e2e-go), the agent eval self-test, then browser (e2e-fake)
+
+# The agent eval harness (tools/eval/agents) proven on the echo provider: plumbing cases must pass and
+# each deliberately broken agent must fail its case. Skips when the Silero model is missing.
+eval-agents-echo: ## free|Agent eval harness self-test on the echo provider, with mutation checks (about 30 s)
+	@test -f third_party/silero_vad.onnx || { echo "eval-agents-echo: SKIPPED: third_party/silero_vad.onnx missing"; exit 0; }
+	@go run ./tools/eval/agents -selftest
 
 # The same specs against LIVE xAI (STT, Grok, TTS): the model itself must call the transfer tool. Needs
 # XAI_API_KEY (env or examples/.env; XAI_MODEL optional). Roughly 20 provider requests per run.
@@ -182,7 +188,7 @@ e2e-xai: ## paid|Playwright browser e2e for agents with handoffs against REAL xA
 e2e-oneport: ui-embed ## free|Playwright e2e of the one-port server (embedded UI, same-origin API and socket) on the echo provider
 	$(E2E_SETUP) && npx playwright test -c playwright.oneport.config.ts
 
-.PHONY: e2e e2e-fake e2e-oneport e2e-xai e2e-echo test-e2e-go
+.PHONY: e2e e2e-fake e2e-oneport e2e-xai e2e-echo test-e2e-go eval-agents-echo
 
 # Local development (scripts/dev.sh): `make dev` runs the server and admin UI with
 # generated secrets and a local SQLite store in .govoice-dev/, seeded with a

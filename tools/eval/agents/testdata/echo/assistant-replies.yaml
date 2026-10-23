@@ -1,0 +1,11 @@
+name: echo-assistant-replies
+agent: Eval assistant
+caller:
+  script:
+    - "hello there"
+    - "hello again"
+expect:
+  say: ["You said: .*hello"]
+  never_say: ["(?i)as an ai"]
+  end_reason: caller_hung_up
+  max_turns: 2
