@@ -28,14 +28,14 @@ test("providers: the suite's provider is detected and only detected providers ar
 
 test("providers: with no STT provider available the designer names the variables to set", async ({ page, stack }) => {
   // Same server, one service taken away in the response: what an operator without speech keys sees.
-  await page.route("**/api/v1/providers", async (route) => {
-    const res = await route.fetch();
+  await page.route("**/api/v1/providers", async (req) => {
+    const res = await req.fetch();
     const body = (await res.json()) as { data: ProviderStatus[] };
     for (const p of body.data) {
       const stt = p.services.stt;
       if (stt?.available) Object.assign(stt, { available: false, reason: "missing_env", missing_env: ["E2E_MISSING_STT_KEY"] });
     }
-    await route.fulfill({ response: res, json: body });
+    await req.fulfill({ response: res, json: body });
   });
   await openDesigner(page, stack);
   await openAgentSettings(page);
@@ -62,20 +62,20 @@ test("providers page: the detected provider is listed with where its credential 
 
 test("agents list names the variables a not-ready agent is missing", async ({ page, stack }) => {
   // The suite's agent does not exist yet (spec 20 creates it), so this test makes its own; the echo stack
-  // is always ready, so only this row's readiness is altered in the response (route-mocked, R7).
+  // is always ready, so only this row's readiness is altered in the response (mocked, R7).
   const NAME = "E2E Not Ready";
   const created = await api<{ data: { id: string } }>(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({ name: NAME, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }) } }),
   });
   try {
-    await page.route("**/api/v1/agents?*", async (route) => {
-      const res = await route.fetch();
+    await page.route("**/api/v1/agents?*", async (req) => {
+      const res = await req.fetch();
       const body = (await res.json()) as { data: { name: string; readiness: object }[] };
       for (const f of body.data) {
         if (f.name === NAME) f.readiness = { state: "not_ready", reasons: ["missing_credential_llm"], missing_env: ["E2E_MISSING_LLM_KEY", "E2E_MISSING_LLM_KEY"] };
       }
-      await route.fulfill({ response: res, json: body });
+      await req.fulfill({ response: res, json: body });
     });
     await connectAdmin(page, stack);
     await openAgentsList(page);

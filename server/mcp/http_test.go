@@ -233,17 +233,17 @@ func TestMCPRoutesDistinguishNotFoundFromStoreFailure(t *testing.T) {
 		h.ServeHTTP(w, r)
 		return w.Code
 	}
-	routes := [][3]string{{"DELETE", "", ""}, {"GET", "", ""}, {"POST", "/detach-delete", `{"confirm":true}`},
+	reqs := [][3]string{{"DELETE", "", ""}, {"GET", "", ""}, {"POST", "/detach-delete", `{"confirm":true}`},
 		{"POST", "/disable", ""}, {"POST", "/enable", ""},
 		{"POST", "/validate", ""}, {"POST", "/tools/lookup/test", `{"arguments":{}}`}}
-	for _, rt := range routes {
+	for _, rt := range reqs {
 		if code := do(rt[0], "/api/v1/mcp-servers/"+storage.NewID()+rt[1], rt[2]); code != 404 {
 			t.Errorf("%s%s missing server: %d, want 404", rt[0], rt[1], code)
 		}
 	}
 	id := mustCreateMCP(t, svc)
 	_ = store.Close()
-	for _, rt := range routes {
+	for _, rt := range reqs {
 		if code := do(rt[0], "/api/v1/mcp-servers/"+id+rt[1], rt[2]); code != 500 {
 			t.Errorf("%s%s closed store: %d, want 500", rt[0], rt[1], code)
 		}

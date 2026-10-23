@@ -126,7 +126,7 @@ All engineering tasks, features, and refactors must conclude with an **independe
    - Error handling, recover blocks, and resource cleanup (`Close()`, `defer cancel()`).
 4. **Verification Gate:**
    - `gofmt -w .`
-   - `make verify`: vet and `go test -race` in every module of the Makefile's `MODULES`, the Go end-to-end tests, gofmt, the protobuf fixture and manifest checks, and the docs link checker (`scripts/check-links.mjs`).
+   - `make verify`: vet and `go test -race` in every module of the Makefile's `MODULES`, the Go end-to-end tests, gofmt, the protobuf fixture and manifest checks, and the docs link checker (`scripts/check-links.mjs`), and the vocabulary guard (`scripts/check-vocabulary.mjs`, exceptions in `scripts/vocabulary-allow.txt`).
    - `make deadcode`: no unreachable function outside `scripts/deadcode-allow.txt` (advisory in CI).
    - `make e2e-echo` (Go and browser end-to-end on the free echo provider) and, when the offline stack is running, `make offline-test`. Paid/live targets only when asked.
    - Clean git status with descriptive conventional commit messages.

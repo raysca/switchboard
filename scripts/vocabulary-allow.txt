@@ -2,7 +2,6 @@
 docs/pipecat-parity-matrix.md	F	pipecat-flows	# Pipecat's Python DSL (proper noun)
 docs/pipecat-parity-matrix.md	F	Pipecat Flows	# proper noun
 ui/src/**	F	ReactFlow	# @xyflow/react component names
-ui/src/**	R	from "react-router"	# react-router named imports Route/Routes
 core/frame.go	F	flow direction	# generic English: frame direction
 core/turn/mute.go	F	flowing	# audio keeps flowing (data flow)
 core/turn/mute.go	F	flow downstream	# data flow
@@ -19,12 +18,16 @@ tools/compat/testdata/parity/mute.json	F	flow downstream	# generated golden reas
 tools/compat/parity/gen_goldens.py	F	flow downstream	# generator of the golden above
 docs/benchmarks/container-soak-churn-chaos.md	F	traffic flows	# generic English
 server/api/**	R	route not found	# HTTP 404 message
-server/api_routes.go	R	*	# HTTP routing table (file is HTTP-only for R)
-server/probe_routes.go	R	*	# HTTP probe endpoints
+server/api_routes.go	R	api_routes	# HTTP routing table (file name)
+server/api_routes.go	R	routes sit under	# HTTP paths
+server/api_routes.go	R	liveCallRoute	# HTTP path matcher
+server/api_routes.go	R	route not found	# HTTP 404 message
+server/probe_routes.go	R	probe_routes	# HTTP probe endpoints (file name)
 server/api_*_test.go	R	management route	# HTTP endpoint
 server/api_routes_table_test.go	R	routing	# HTTP prefix routing
 server/adminui/*.go	R	client-side routes	# SPA paths
-server/public_admin_test.go	R	route	# SPA/HTTP paths (read each line in T9)
+server/public_admin_test.go	R	real routes still win	# SPA/HTTP paths
+server/public_admin_test.go	R	a client route must	# SPA fallback
 server/management.go	R	routes pointing	# HTTP handlers
 server/server.go	R	route handler	# HTTP handlers
 server/dtmf.go	R	routed to the tone output	# generic English
@@ -40,7 +43,6 @@ server/api_routes_table_test.go	R	api_routes_table	# HTTP routing table test (fi
 server/tool_frames_e2e_test.go	F	FramesFlowThrough	# frames flowing (verb)
 core/failover_test.go	R	RoutesReenter	# test name: candidates are routed to the next provider (generic English)
 core/naming_test.go	R	Route	# the naming test that bans Route in core's exported API
-scripts/dev-seed.mjs	R	route	# HTTP path parameter of the api() helper
 server/adminui/adminui_test.go	R	ClientRoutes	# SPA client-side routes
 server/api/agents.go	R	management route handler	# HTTP handler
 server/api/traces.go	R	tracesRoute	# HTTP sub-route handler
@@ -56,8 +58,6 @@ server/live_calls_api_test.go	R	LiveCallRoutes	# HTTP routes of the live-call AP
 server/live_calls_api_test.go	R	stored-session routes	# HTTP routes
 server/management.go	R	providersRoutes	# HTTP handler
 server/providers_test.go	R	providersRoutes	# HTTP handler
-server/mcp/http_test.go	R	Routes	# HTTP routes of the MCP API (test names)
-server/mcp/http_test.go	R	routes	# HTTP routes table in the test
 server/mcp/mcptest/mcptest.go	R	would route	# generic English (request routing)
 server/mcp/sdk_client.go	R	proxy routing	# generic English (network proxy)
 server/mcp/update_test.go	R	PatchRoute	# HTTP route test name
@@ -101,3 +101,14 @@ docs/pipecat-parity-matrix.md	R	cross-instance routing	# generic English: reques
 docs/security/credentials.md	R	management route,	# HTTP endpoint
 docs/security/mcp.md	R	proxy routing	# HTTP proxy routing
 docs/security/mcp.md	F	Cancellation flows into	# generic English: data flow
+ui/src/**	F	React Flow	# @xyflow/react library name in comments
+ui/src/**	F	react-flow	# @xyflow/react CSS class names
+e2e/**	F	react-flow	# @xyflow/react class names and library name
+e2e/**	F	React Flow	# @xyflow/react library name in comments
+e2e/tests-agents/**	R	page.route(	# Playwright network interception API
+ui/src/app/App.test.tsx	F	/flows	# the negative test: the old path is gone
+ui/src/app/App.tsx	R	Route,	# react-router component import
+ui/src/app/App.tsx	R	Routes,	# react-router component import
+ui/src/**/*.test.tsx	R	, Route, Routes	# react-router components in the test imports
+server/mcp/http_test.go	R	DetachRoutes	# HTTP routes (test name)
+server/mcp/http_test.go	R	MCPRoutesDistinguish	# HTTP routes (test name)

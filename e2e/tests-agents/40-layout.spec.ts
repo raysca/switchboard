@@ -11,7 +11,7 @@ test("layout: demo-path screens do not scroll sideways at 390px", async ({ page,
   const noSideways = async (where: string) => {
     const { sw, iw, wide } = await page.evaluate(() => {
       const iw = window.innerWidth;
-      // What widens the page: out-of-flow elements past the viewport (an absolutely positioned .visually-hidden cell is not
+      // What widens the page: elements taken out of the layout past the viewport (an absolutely positioned .visually-hidden cell is not
       // clipped by a scroller that is not its containing block).
       const wide = [...document.querySelectorAll("body *")]
         .map((el) => ({ el, r: el.getBoundingClientRect(), pos: getComputedStyle(el).position }))

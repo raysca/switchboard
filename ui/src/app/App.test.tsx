@@ -43,7 +43,7 @@ describe("admin shell", () => {
     }
   });
 
-  it("has no /flows route", () => {
+  it("has no /flows page", () => {
     render(<App initialPath="/flows" />);
     expect(screen.getByText("Area not found")).toBeVisible();
   });

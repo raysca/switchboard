@@ -11,14 +11,14 @@ const admin = process.env.GOVOICE_ADMIN_URL;
 const key = process.env.GOVOICE_MANAGEMENT_API_KEY;
 const log = (msg) => console.error(`[seed] ${msg}`);
 
-async function api(method, route, body) {
-  const res = await fetch(`${admin}/api/v1${route}`, {
+async function api(method, path, body) {
+  const res = await fetch(`${admin}/api/v1${path}`, {
     method,
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
     body: body && JSON.stringify(body),
   });
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`${method} ${route}: ${res.status} ${json?.error?.code ?? ""} ${json?.error?.message ?? ""}`);
+  if (!res.ok) throw new Error(`${method} ${path}: ${res.status} ${json?.error?.code ?? ""} ${json?.error?.message ?? ""}`);
   return json.data;
 }
 

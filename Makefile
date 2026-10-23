@@ -96,6 +96,8 @@ verify: test ## build|test + gofmt + manifest/fixture checks: run before a PR
 	node tools/compat/probe_playback_clear.js
 	@echo "=== Docs links and paths ==="
 	node scripts/check-links.mjs --paths
+	@echo "=== Vocabulary guard (allowlist scripts/vocabulary-allow.txt) ==="
+	node scripts/check-vocabulary.mjs
 	@echo "=== All verify checks passed ==="
 
 deadcode: ## build|Unreachable functions not in scripts/deadcode-allow.txt (advisory in CI)
