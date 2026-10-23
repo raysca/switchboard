@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/server/mcp/mcptest"
 	"govoice/server/storage"
 )
@@ -181,7 +181,7 @@ func TestRenameSkipsDestinationCheck(t *testing.T) {
 	}
 }
 
-func TestUpdateKeepsFlowReadyAndCapturedSessionOnOldEndpoint(t *testing.T) {
+func TestUpdateKeepsAgentReadyAndCapturedSessionOnOldEndpoint(t *testing.T) {
 	r := newSyncRig(t)
 	ctx := context.Background()
 	d, err := r.svc.Refresh(ctx, r.id)
@@ -194,12 +194,12 @@ func TestUpdateKeepsFlowReadyAndCapturedSessionOnOldEndpoint(t *testing.T) {
 			hash = tool.SchemaHash
 		}
 	}
-	flows := flow.NewService(r.store, allAvailable{})
-	f, err := flows.Create(ctx, flow.CreateRequest{Name: "f", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`)})
+	agents := agent.NewService(r.store, allAvailable{})
+	f, err := agents.Create(ctx, agent.CreateRequest{Name: "f", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = flows.SetMCPTools(ctx, f.ID, []flow.ToolSelection{{ServerID: r.id, RemoteName: "echo", SchemaHash: hash, Required: true}}); err != nil {
+	if _, err = agents.SetMCPTools(ctx, f.ID, []agent.ToolSelection{{ServerID: r.id, RemoteName: "echo", SchemaHash: hash, Required: true}}); err != nil {
 		t.Fatal(err)
 	}
 	captured, err := r.svc.CaptureTool(ctx, r.id, "echo", hash)
@@ -211,9 +211,9 @@ func TestUpdateKeepsFlowReadyAndCapturedSessionOnOldEndpoint(t *testing.T) {
 	if _, err = r.svc.Update(ctx, r.id, ServerUpdate{Endpoint: ptr(newURL + "/open")}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := flows.Get(ctx, f.ID)
+	got, err := agents.Get(ctx, f.ID)
 	if err != nil || got.Readiness.State != "ready" {
-		t.Fatalf("flow after edit: readiness=%+v err=%v", got.Readiness, err)
+		t.Fatalf("agent after edit: readiness=%+v err=%v", got.Readiness, err)
 	}
 	if _, err = captured.Execute(ctx, json.RawMessage(`{"text":"hi"}`)); err != nil {
 		t.Fatal(err)

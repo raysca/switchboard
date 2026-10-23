@@ -15,7 +15,7 @@ Most paragraphs end with an HTML `src:` comment naming the files (and lines) tha
  browser / Pipecat client ──443──▶ nginx ──8080──▶ server  (/ws, /health)
  Prometheus ──────────────9092───────────────────▶ server  (/health, /ready, /metrics)
  operator ── docker exec ──127.0.0.1:9090─────────▶ server  (/api/v1, /debug/timeline)
-                                                    server ──5432──▶ Postgres (flow store)
+                                                    server ──5432──▶ Postgres (agent store)
                                                     server ──────────▶ provider APIs (egress)
                                                     tini ─ server ─┬─ vadworker (child processes)
                                                                    └─ turnworker
@@ -70,7 +70,7 @@ Compose publishes 8080 and 9092 on `127.0.0.1` only. It does **not** publish 909
 
 <!-- src: deploy/Dockerfile:5-10,33,46-50,58-115 -->
 
-- `-tags xaispeech` is on by default in the image. Without it xAI STT and TTS do not exist in the binary, and the production profile refuses to start when a stored flow needs a provider that the build lacks (the error names each `flow <id> <stage>=<provider>`).
+- `-tags xaispeech` is on by default in the image. Without it xAI STT and TTS do not exist in the binary, and the production profile refuses to start when a stored agent needs a provider that the build lacks (the error names each `agent <id> <stage>=<provider>`).
 
 <!-- src: deploy/Dockerfile:36-38; server/management.go:84-91,128-150 -->
 
@@ -94,7 +94,7 @@ Compose publishes 8080 and 9092 on `127.0.0.1` only. It does **not** publish 909
 
 <!-- src: config/production.yaml:5-110; config/cloudrun.yaml:4-99; config/development.yaml:1-50; deploy/docker-compose.perf.yaml:1-12; server/deploy_contract_test.go:243-276 -->
 
-The server takes `-config` (default `config/development.yaml`), `-profile` (`development` or `production`) and `-vad-mode` (`process` or `inprocess`). Unknown YAML keys are rejected at startup. The YAML holds infrastructure only: models, voices, prompts and flows live in the flow store and provider secrets in the environment, and a `pipelines:` section is rejected.
+The server takes `-config` (default `config/development.yaml`), `-profile` (`development` or `production`) and `-vad-mode` (`process` or `inprocess`). Unknown YAML keys are rejected at startup. The YAML holds infrastructure only: models, voices, prompts and agents live in the agent store and provider secrets in the environment, and a `pipelines:` section is rejected.
 
 <!-- src: cmd/server/main.go:28-31; server/config_load.go:42,70-71; docs/quickstart.md:41 -->
 
@@ -112,13 +112,14 @@ Production profile only:
 - `origin_allow_same_host` or `public_admin` is on without `tls.trusted_proxy_mode`;
 - the token secret is missing, is the repository-public development secret, or is shorter than 32 characters;
 - the VAD mode is `inprocess`, or the Smart Turn analyzer is loaded in a mode other than `process`;
-- a stored flow uses a provider the build cannot run (in other profiles this is logged as an error and startup continues).
+- a stored agent uses a provider the build cannot run (in other profiles this is logged as an error and startup continues).
 
 In every profile:
 
-- `storage.dialect` is empty (calls run stored flows, so a store is required);
+- `storage.dialect` is empty (calls run stored agents, so a store is required);
 - the DSN variable is empty (`storage enabled but GOVOICE_DATABASE_DSN is empty`), except in the development profile, which creates its own SQLite store;
 - the management key is set but shorter than 32 bytes, or equals the token secret, or is missing while `public_admin` is on.
+- the database was created before the agent rename (it still has the old table, and nothing migrates it, so recreate the database; the error is `open storage: database predates the agent rename ...`).
 
 <!-- src: server/config_validate.go:100-125,172-179,290-300; server/management.go:34-47,84-91; server/server.go:185-198; server/auth/auth.go:17-27 -->
 
@@ -171,7 +172,7 @@ Provider keys, the token secret, the management key and the database password co
 | Rule | never two processes on one file; never a filesystem without reliable locks | migrations take an advisory lock, so replicas can start together |
 | Backup | online `VACUUM INTO`; verify with `PRAGMA quick_check` and `PRAGMA foreign_key_check` | `pg_dump` or physical backup with point-in-time recovery |
 
-Migrations run forward-only at startup and a failed migration aborts the start. Back up before each upgrade, and restore into an isolated instance with the matching build. Details are in [storage.md](storage.md). The Cloud Run deployment keeps flows and call history in Cloud SQL (Postgres, with daily automated backups), so deploys and restarts lose nothing; on each start the dentistry demo is added only if missing (a demo MCP server you disabled is switched back on). Retention settings (`retention.*`, shipped on in `production.yaml`) are described in [privacy.md](privacy.md#server-data-retention-and-privacy-controls).
+Migrations run forward-only at startup and a failed migration aborts the start. Back up before each upgrade, and restore into an isolated instance with the matching build. Details are in [storage.md](storage.md). The Cloud Run deployment keeps agents and call history in Cloud SQL (Postgres, with daily automated backups), so deploys and restarts lose nothing; on each start the dentistry demo is added only if missing (a demo MCP server you disabled is switched back on). Retention settings (`retention.*`, shipped on in `production.yaml`) are described in [privacy.md](privacy.md#server-data-retention-and-privacy-controls).
 
 <!-- src: docs/storage.md (moved up from the former operations directory); former hardening guide §2; server/storage/backup_test.go:19; deploy/gcp/switchboard.service.yaml:1-3,44; .github/workflows/deploy.yml:13; config/production.yaml:90-96 -->
 
@@ -182,7 +183,7 @@ Migrations run forward-only at startup and a failed migration aborts the start. 
 1. Put TLS files in a `certs` directory next to `nginx.conf` (git-ignored): `voice.example.com.crt` and `.key` for the public vhost, and `admin.crt` and `.key` for the internal 9091 vhost. The paths are fixed by `nginx.conf` and mounted by compose at `/etc/ssl/certs`; replace `voice.example.com` in the two `server_name` lines and in the file names with your host. For a throwaway test, `deploy/smoke-google.sh` creates a self-signed pair with the command below (do not run that script on a deployment host, see [section 17](#17-smoke-tests-troubleshooting-and-checklist)): `openssl req -x509 -newkey rsa:2048 -nodes -keyout deploy/certs/voice.example.com.key -out deploy/certs/voice.example.com.crt -days 2 -subj '/CN=localhost'` and copies it to `admin.crt` and `admin.key`.
 2. Put the provider variables in `deploy/govoice.env` and export `TOKEN_SECRET`, `GOVOICE_MANAGEMENT_API_KEY` and `POSTGRES_PASSWORD` (compose refuses to start without them).
 3. Start: `docker compose -f deploy/docker-compose.yaml up -d`.
-4. Call the management API from inside the container, because compose does not publish port 9090 (on Kubernetes use `kubectl port-forward` or `exec`): `docker exec govoice-server sh -c 'curl -H "Authorization: Bearer $GOVOICE_MANAGEMENT_API_KEY" http://127.0.0.1:9090/api/v1/...'`. Keep the single quotes: the variable is then expanded by the shell inside the container, from the container's own environment, so the key never appears in the host's process list (`deploy/smoke.sh` does the same). Then follow [quickstart.md](quickstart.md#5-check-providers-create-a-flow-issue-a-token) to check providers, create a flow and issue a voice token. This nginx proxies only `/ws` and `/health`, so the admin UI is not reachable through it; the UI needs `public_admin` ([section 10](#10-path-c-google-cloud-run-the-demo-deployment)).
+4. Call the management API from inside the container, because compose does not publish port 9090 (on Kubernetes use `kubectl port-forward` or `exec`): `docker exec govoice-server sh -c 'curl -H "Authorization: Bearer $GOVOICE_MANAGEMENT_API_KEY" http://127.0.0.1:9090/api/v1/...'`. Keep the single quotes: the variable is then expanded by the shell inside the container, from the container's own environment, so the key never appears in the host's process list (`deploy/smoke.sh` does the same). Then follow [quickstart.md](quickstart.md#5-check-providers-create-an-agent-issue-a-token) to check providers, create an agent and issue a voice token. This nginx proxies only `/ws` and `/health`, so the admin UI is not reachable through it; the UI needs `public_admin` ([section 10](#10-path-c-google-cloud-run-the-demo-deployment)).
 
 <!-- src: deploy/nginx.conf:58,66,69-70,119-120; deploy/docker-compose.yaml:41-42,85-87; deploy/smoke-google.sh:18-23; former runbook; server/deploy_contract_test.go (TestNginxCertificatesAreMounted) -->
 
@@ -251,7 +252,7 @@ nginx on a host: `deploy/nginx.conf` is a complete `nginx.conf` (top-level `user
 
 ## 10. Path C: Google Cloud Run (the demo deployment)
 
-This is the deployment the repository automates. It is a single-instance deployment, not a scaled production reference: one Switchboard instance (live calls are in memory), flows and call history in a small Cloud SQL Postgres instance, a public `dental-mcp` service and the Smile Dental demo flow reinstalled on every start. Scaling out uses Path A. The shape:
+This is the deployment the repository automates. It is a single-instance deployment, not a scaled production reference: one Switchboard instance (live calls are in memory), agents and call history in a small Cloud SQL Postgres instance, a public `dental-mcp` service and the Smile Dental demo agent reinstalled on every start. Scaling out uses Path A. The shape:
 
 - Switchboard (`deploy/gcp/switchboard.service.yaml`, service `switchboard`): `maxScale: 1` (live calls are in memory), the Cloud SQL instance `switchboard-db` attached through the Cloud Run mount (the DSN is the `SWITCHBOARD_DATABASE_DSN` secret, a unix-socket URL), `minScale` from `MIN_INSTANCES`, CPU always allocated (`cpu-throttling: "false"`), second-generation execution environment, session affinity on, `timeoutSeconds: 3600`, `containerConcurrency: 20` (above `max_sessions: 10` on purpose, so admin and probe requests never queue behind calls), 2 CPU and 2Gi, a startup probe on `/health:8080`, and `config/cloudrun.yaml` (which caps a call at 20 minutes). It runs `tini -- server -config /etc/govoice/cloudrun.yaml`.
 - `dental-mcp` (`deploy/gcp/dental-mcp.service.yaml`): in-memory fake data, so `maxScale: 1`, scaling to zero, 1 CPU and 256Mi, token from the `DENTAL_MCP_TOKEN` secret.
@@ -262,7 +263,7 @@ This is the deployment the repository automates. It is a single-instance deploym
 
 <!-- src: deploy/gcp/bootstrap.sh:1-134 -->
 
-**Continuous deploy** (`.github/workflows/deploy.yml`). It runs after the `ci` workflow succeeds for a push to `main` in this repository, or by `workflow_dispatch` from `main` with a `min_instances` input (default 1; 0 stops idle spend, and flows and calls stay in Cloud SQL, but the first call after idle waits for a cold start). It authenticates with Workload Identity Federation (no GCP key is stored in GitHub), builds both images tagged with the commit SHA, deploys `dental-mcp`, mounts the optional provider keys, deploys Switchboard as a `candidate` revision with 0% traffic, runs `deploy/smoke-cloudrun.sh` against the candidate, and only then moves traffic to it and removes the tag. A failed smoke test removes the tag and leaves the previous revision serving. The first deploy (no previous revision) has no candidate step. Both services are granted the `allUsers` invoker role, so they are public: the management key and voice tokens are the protection.
+**Continuous deploy** (`.github/workflows/deploy.yml`). It runs after the `ci` workflow succeeds for a push to `main` in this repository, or by `workflow_dispatch` from `main` with a `min_instances` input (default 1; 0 stops idle spend, and agents and calls stay in Cloud SQL, but the first call after idle waits for a cold start). It authenticates with Workload Identity Federation (no GCP key is stored in GitHub), builds both images tagged with the commit SHA, deploys `dental-mcp`, mounts the optional provider keys, deploys Switchboard as a `candidate` revision with 0% traffic, runs `deploy/smoke-cloudrun.sh` against the candidate, and only then moves traffic to it and removes the tag. A failed smoke test removes the tag and leaves the previous revision serving. The first deploy (no previous revision) has no candidate step. Both services are granted the `allUsers` invoker role, so they are public: the management key and voice tokens are the protection.
 
 <!-- src: .github/workflows/deploy.yml:1-109 -->
 
@@ -307,7 +308,7 @@ The server can also terminate TLS itself with `tls.cert_file` and `tls.key_file`
 
 ## 12. Health, readiness and probes
 
-`/health` is a cheap local liveness check (`{"status":"live"}`). `/ready` answers 200 `{"status":"ready","circuits":{...}}` only when initialisation has finished, the server is not draining, admission is enabled, a VAD worker is online and the flow store answers a ping; otherwise 503 `{"status":"unready","reason":...}`. Provider circuits are reported for diagnosis and never make the server unready. Point readiness at `/ready` on the probe port (9092) and liveness at `/health` (9092 or public 8080), and never use `/ready` for liveness: it is 503 for the whole drain and would kill the instance mid-drain. A Kubernetes sketch (the repository ships no manifests): `terminationGracePeriodSeconds: 60`, `lifecycle.preStop.exec.command: ["sleep","5"]`, `readinessProbe.httpGet: {path: /ready, port: 9092}`, `livenessProbe.httpGet: {path: /health, port: 9092}`.
+`/health` is a cheap local liveness check (`{"status":"live"}`). `/ready` answers 200 `{"status":"ready","circuits":{...}}` only when initialisation has finished, the server is not draining, admission is enabled, a VAD worker is online and the agent store answers a ping; otherwise 503 `{"status":"unready","reason":...}`. Provider circuits are reported for diagnosis and never make the server unready. Point readiness at `/ready` on the probe port (9092) and liveness at `/health` (9092 or public 8080), and never use `/ready` for liveness: it is 503 for the whole drain and would kill the instance mid-drain. A Kubernetes sketch (the repository ships no manifests): `terminationGracePeriodSeconds: 60`, `lifecycle.preStop.exec.command: ["sleep","5"]`, `readinessProbe.httpGet: {path: /ready, port: 9092}`, `livenessProbe.httpGet: {path: /health, port: 9092}`.
 
 <!-- src: docs/observability.md:28-43; docs/operations.md:12-16,35,51 -->
 
@@ -321,8 +322,8 @@ On SIGTERM the server marks itself unready (`/ready` returns 503, `voice_drainin
 - `limits.immediate_cancel: true` skips the drain wait and cancels calls at once.
 - Add `preStop: sleep 5` so endpoint removal reaches the load balancer before the drain starts, enable load-balancer connection draining, and roll one instance at a time.
 - Voice tokens are bound to the process that issued them. With more than one replica, `POST /api/v1/voice-tokens` and the `/ws` upgrade for that token must reach the same replica (sticky routing, or issue the token through the replica you will connect to), otherwise most calls fail with `invalid token`. A client that gets the drain 503 requests a new token and reconnects.
-- Upgrade order for new providers: roll forward first, and create flows that use a new provider only after every replica runs the new build; to roll back, disable, archive or edit those flows first, because an old binary refuses to start when the flow store holds a flow it cannot run (the error names each `flow <id> <stage>=<provider>`).
-- Migrations are forward-only: back up first ([storage.md](storage.md)). Before rolling back past migration 007, or past the additive per-flow fields `idle`, `audio` and `greeting`, read the cautions in [operations.md](operations.md#rolling-deploys-and-session-affinity).
+- Upgrade order for new providers: roll forward first, and create agents that use a new provider only after every replica runs the new build; to roll back, disable, archive or edit those agents first, because an old binary refuses to start when the agent store holds an agent it cannot run (the error names each `agent <id> <stage>=<provider>`).
+- Migrations are forward-only: back up first ([storage.md](storage.md)). Before rolling back past migration 007, or past the additive per-agent fields `idle`, `audio` and `greeting`, read the cautions in [operations.md](operations.md#rolling-deploys-and-session-affinity).
 - After a crash, the next start ends the calls the old process left `active` in storage (see [operations.md](operations.md#rolling-deploys-and-session-affinity)).
 - Cloud Run: the deploy workflow promotes a smoke-tested candidate as described in [section 10](#10-path-c-google-cloud-run-the-demo-deployment). After promotion the repository has no rollback script.
 
@@ -330,7 +331,7 @@ On SIGTERM the server marks itself unready (`/ready` returns 503, `voice_drainin
 
 ## 14. Scaling and limits
 
-The `limits` block in `config/production.yaml` sets the ceilings: `max_sessions` (250), `max_sessions_per_principal` (5), `max_sessions_per_ip` (5), `max_pending_handshakes` (100), `upgrade_timeout`, `ready_timeout`, `max_call_duration` (60m), `ping_interval` (15s) and `ping_timeout` (10s), and `drain_timeout` (45s); `max_sessions_per_flow`, `start_rate_per_principal` and `handshake_rate_per_ip` are commented defaults. A refused call gets an RTVI error (`capacity_exceeded`, `principal_limit`, `flow_limit` or `rate_limited`) and close 1013, counted in `voice_admission_rejects_total{reason}` with reasons `session_limit`, `vad_unavailable`, `principal_limit`, `flow_limit` and `start_rate_limit`. WebSocket upgrades are limited per source IP (`limits.handshake_rate_per_ip`, default 20 per second) and answered with HTTP 429 before the upgrade. Details are in the [operations guide](operations.md#rolling-deploys-and-session-affinity).
+The `limits` block in `config/production.yaml` sets the ceilings: `max_sessions` (250), `max_sessions_per_principal` (5), `max_sessions_per_ip` (5), `max_pending_handshakes` (100), `upgrade_timeout`, `ready_timeout`, `max_call_duration` (60m), `ping_interval` (15s) and `ping_timeout` (10s), and `drain_timeout` (45s); `max_sessions_per_agent`, `start_rate_per_principal` and `handshake_rate_per_ip` are commented defaults. A refused call gets an RTVI error (`capacity_exceeded`, `principal_limit`, `agent_limit` or `rate_limited`) and close 1013, counted in `voice_admission_rejects_total{reason}` with reasons `session_limit`, `vad_unavailable`, `principal_limit`, `agent_limit` and `start_rate_limit`. WebSocket upgrades are limited per source IP (`limits.handshake_rate_per_ip`, default 20 per second) and answered with HTTP 429 before the upgrade. Details are in the [operations guide](operations.md#rolling-deploys-and-session-affinity).
 
 <!-- src: config/production.yaml:36-56; server/config_defaults.go:36-38; docs/operations.md:40-41 -->
 
@@ -362,13 +363,13 @@ Prometheus scrapes `:9092/metrics` (the probe listener). `deploy/alerts/govoice.
 
 ## 17. Smoke tests, troubleshooting and checklist
 
-> **Never run `deploy/smoke-google.sh` on a deployment host.** It drives `deploy/docker-compose.yaml` with the same project and the same fixed container names (`govoice-server`, `govoice-postgres`, `govoice-proxy`) as the live stack, so `compose up -d` replaces the running containers (with a freshly generated `POSTGRES_PASSWORD` and management key when you have not exported yours), and its exit trap runs `compose down -v`, which stops the stack and **deletes the Postgres volume** (`govoice_db`, your flow store). It also writes a 2-day self-signed certificate into the git-ignored `certs` directory next to `nginx.conf` when `voice.example.com.crt` is missing there. Run it only on a throwaway build machine.
+> **Never run `deploy/smoke-google.sh` on a deployment host.** It drives `deploy/docker-compose.yaml` with the same project and the same fixed container names (`govoice-server`, `govoice-postgres`, `govoice-proxy`) as the live stack, so `compose up -d` replaces the running containers (with a freshly generated `POSTGRES_PASSWORD` and management key when you have not exported yours), and its exit trap runs `compose down -v`, which stops the stack and **deletes the Postgres volume** (`govoice_db`, your agent store). It also writes a 2-day self-signed certificate into the git-ignored `certs` directory next to `nginx.conf` when `voice.example.com.crt` is missing there. Run it only on a throwaway build machine.
 
 | Check | Needs | What it proves | Blast radius (from the script) |
 |---|---|---|---|
 | `deploy/smoke.sh` (CI job `image-smoke`) | docker, curl, openssl; no provider key | builds the image, starts it read-only with all capabilities dropped next to a throwaway Postgres, probes `/ready`, `/metrics` and `/health` from outside, checks the probe port does not serve the management API or `/debug/timeline`, checks xAI speech is in the build, and checks that SIGTERM exits 0 | Isolated: builds `govoice:smoke` (or uses `SMOKE_IMAGE`), runs uniquely named `govoice-smoke-<pid>-*` containers on its own network, and removes only those on exit. It does not touch the Compose stack or its volumes. It costs a build and some CPU, so avoid running it on a loaded production host |
-| `deploy/smoke-google.sh` | `TOKEN_SECRET`, `GOOGLE_APPLICATION_CREDENTIALS` (host path), docker, openssl, jq | the Compose stack end to end with a Google service account: flow ready, voice token issued, `https://127.0.0.1/health` through nginx, clean SIGTERM | **Destructive on a deployment host**, see the warning above. It also builds `govoice:release-security`, while the Compose file runs `govoice:local`, so the run exercises whichever `govoice:local` image exists (or builds it), not the image it just built |
-| `deploy/smoke-cloudrun.sh <url>` | `GOVOICE_MANAGEMENT_API_KEY`, jq; `SMOKE_LOCAL=1` for the rehearsal | UI served, `/metrics`, `/ready` and `/debug/timeline` absent on the public port, management API behind the key, `client_ip` and `secure` correct, three providers detected, the demo flow and MCP server ready, failed-login throttling | Read-only HTTP against the URL you give it: no call is placed and nothing is created. It sends 11 requests with a wrong key, so it spends the global failed-login allowance (a wrong key may get 429 for a few seconds) and increments `voice_management_auth_failures_total` and `voice_management_auth_throttled_total`. It expects the Smile Dental demo flow, so it fails against a non-demo deployment |
+| `deploy/smoke-google.sh` | `TOKEN_SECRET`, `GOOGLE_APPLICATION_CREDENTIALS` (host path), docker, openssl, jq | the Compose stack end to end with a Google service account: agent ready, voice token issued, `https://127.0.0.1/health` through nginx, clean SIGTERM | **Destructive on a deployment host**, see the warning above. It also builds `govoice:release-security`, while the Compose file runs `govoice:local`, so the run exercises whichever `govoice:local` image exists (or builds it), not the image it just built |
+| `deploy/smoke-cloudrun.sh <url>` | `GOVOICE_MANAGEMENT_API_KEY`, jq; `SMOKE_LOCAL=1` for the rehearsal | UI served, `/metrics`, `/ready` and `/debug/timeline` absent on the public port, management API behind the key, `client_ip` and `secure` correct, three providers detected, the demo agent and MCP server ready, failed-login throttling | Read-only HTTP against the URL you give it: no call is placed and nothing is created. It sends 11 requests with a wrong key, so it spends the global failed-login allowance (a wrong key may get 429 for a few seconds) and increments `voice_management_auth_failures_total` and `voice_management_auth_throttled_total`. It expects the Smile Dental demo agent, so it fails against a non-demo deployment |
 | `make e2e-oneport` | Node and Playwright | the one-port server on the echo provider, no secrets | Starts its own local echo-provider server for the test; no containers, no deployment |
 | `make release-security` | docker, Go | the hardening gate of [section 3](#3-build) | Builds `govoice:release-security`, writes `deploy/sbom.json` (git-ignored), runs a throwaway `docker run --rm` of the image and the scan; it does not touch the Compose stack |
 
@@ -378,8 +379,8 @@ Prometheus scrapes `:9092/metrics` (the probe listener). `deploy/alerts/govoice.
 |---|---|---|
 | Start fails with one of the refusals in [section 4](#4-configuration-files) | production profile checks | fix the named setting |
 | `storage enabled but GOVOICE_DATABASE_DSN is empty` | the DSN variable is unset | set `GOVOICE_DATABASE_DSN` (or the name in `storage.dsn_env`) |
-| `stored flow stage(s) use providers missing from this build` | flow uses xAI speech on a build without `-tags xaispeech`, or a provider from a newer release | build with the default tag, or disable, archive or edit the listed flows |
-| `/ready` is 503 | starting, draining, no VAD worker online, or the flow store does not answer | read the `reason` field; check Postgres and the worker logs |
+| `stored agent stage(s) use providers missing from this build` | agent uses xAI speech on a build without `-tags xaispeech`, or a provider from a newer release | build with the default tag, or disable, archive or edit the listed agents |
+| `/ready` is 503 | starting, draining, no VAD worker online, or the agent store does not answer | read the `reason` field; check Postgres and the worker logs |
 | `invalid token` on some calls with several replicas | the token was issued by a different process (`ErrTokenEpoch`) | route token issue and `/ws` to the same replica |
 | HTTP 429 on WebSocket upgrades, or every caller in one bucket | `tls.trusted_proxies` does not list the proxy | add the proxy CIDR; check `server-config` `client_ip` |
 | `voice_vad_worker_restarts_total` rising, `vad_unavailable` rejects | CPU starvation or a tight CPU limit; or a worker crash (`vad: worker failed` WARN) | give more CPU; read the WARN line's `stderr` field |

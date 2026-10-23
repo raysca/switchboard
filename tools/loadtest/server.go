@@ -168,9 +168,9 @@ func ConnectTarget(ctx context.Context, targetURL, adminURL, metricsURL, apiKey,
 	return nil, fmt.Errorf("target server at %s (/ready) not ready after 60s", metricsURL)
 }
 
-// Provision creates the echo flow, returning its id.
+// Provision creates the echo agent, returning its id.
 func (s *Server) Provision() (string, error) {
-	d, err := s.Call("POST", "flows", map[string]any{"name": "Loadtest Echo", "description": "echo provider", "config": map[string]any{
+	d, err := s.Call("POST", "agents", map[string]any{"name": "Loadtest Echo", "description": "echo provider", "config": map[string]any{
 		"stt": map[string]any{"provider": "echo", "model": "chirp_2", "language": "en-US"},
 		"llm": map[string]any{"provider": "echo", "model": "fake", "system_prompt": "fake"},
 		"tts": map[string]any{"provider": "echo", "voice": "fake"}}})
@@ -179,7 +179,7 @@ func (s *Server) Provision() (string, error) {
 	}
 	var ag struct{ ID string }
 	if err := json.Unmarshal(d, &ag); err != nil || ag.ID == "" {
-		return "", fmt.Errorf("flow response: %v", err)
+		return "", fmt.Errorf("agent response: %v", err)
 	}
 	return ag.ID, nil
 }

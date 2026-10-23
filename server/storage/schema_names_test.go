@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// The schema says flows, steps and routes only: no table or column carries the old "agent" word.
-func TestSchemaUsesFlowVocabulary(t *testing.T) {
+// The schema says agents, steps and handoffs only: no table, column, trigger, index or function body carries the old "flow" word.
+func TestSchemaUsesAgentVocabulary(t *testing.T) {
 	eachStore(t, func(t *testing.T, s *Store) {
 		ctx := context.Background()
 		var query string
@@ -28,8 +28,8 @@ func TestSchemaUsesFlowVocabulary(t *testing.T) {
 				t.Fatal(err)
 			}
 			tables[table], columns[table+"."+column] = true, true
-			if strings.Contains(table, "agent") || strings.Contains(column, "agent") {
-				t.Errorf("%s.%s still says agent", table, column)
+			if strings.Contains(table, "flow") || strings.Contains(column, "flow") {
+				t.Errorf("%s.%s still says flow", table, column)
 			}
 		}
 		if err := rows.Err(); err != nil {
@@ -52,19 +52,43 @@ func TestSchemaUsesFlowVocabulary(t *testing.T) {
 			if err := objs.Scan(&name); err != nil {
 				t.Fatal(err)
 			}
-			if strings.Contains(name, "agent") {
-				t.Errorf("schema object %s still says agent", name)
+			if strings.Contains(name, "flow") {
+				t.Errorf("schema object %s still says flow", name)
 			}
 		}
 		if err := objs.Err(); err != nil {
 			t.Fatal(err)
 		}
-		for _, want := range []string{"flows", "flow_versions", "flow_mcp_tools"} {
+		// Function bodies and trigger/index definitions (RAISE text included) carry the vocabulary too.
+		var defs string
+		if s.dialect == Postgres {
+			defs = "SELECT p.prosrc FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = current_schema()"
+		} else {
+			defs = "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL"
+		}
+		bodies, err := s.DB().QueryContext(ctx, defs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer bodies.Close()
+		for bodies.Next() {
+			var body string
+			if err := bodies.Scan(&body); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(strings.ToLower(body), "flow") {
+				t.Errorf("schema definition still says flow: %.120s", body)
+			}
+		}
+		if err := bodies.Err(); err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"agents", "agent_versions", "agent_mcp_tools"} {
 			if !tables[want] {
 				t.Errorf("table %s is missing", want)
 			}
 		}
-		for _, want := range []string{"sessions.flow_id", "sessions.flow_version_id", "flow_versions.flow_id"} {
+		for _, want := range []string{"sessions.agent_id", "sessions.agent_version_id", "agent_versions.agent_id"} {
 			if !columns[want] {
 				t.Errorf("column %s is missing", want)
 			}

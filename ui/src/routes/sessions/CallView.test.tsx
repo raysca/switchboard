@@ -3,13 +3,13 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Link, MemoryRouter, Route, Routes } from "react-router";
-import type { FlowDTO, ApiClient, SessionDTO, SessionTracesDTO, TraceSpanDTO, TurnDTO } from "../../api/client";
+import type { AgentDTO, ApiClient, SessionDTO, SessionTracesDTO, TraceSpanDTO, TurnDTO } from "../../api/client";
 import { ApiError } from "../../api/client";
 import { CallView } from "./CallView";
 
 const ID = "0192aaaa-0000-7000-8000-000000000001";
-const graph = { start: "r", steps: [{ id: "r", name: "Reception" }, { id: "b", name: "Billing" }], routes: [] };
-const flow = (over: Partial<FlowDTO> = {}): FlowDTO => ({
+const graph = { start: "r", steps: [{ id: "r", name: "Reception" }, { id: "b", name: "Billing" }], handoffs: [] };
+const agent = (over: Partial<AgentDTO> = {}): AgentDTO => ({
   id: "a1",
   name: "Front desk",
   description: "",
@@ -24,8 +24,8 @@ const flow = (over: Partial<FlowDTO> = {}): FlowDTO => ({
 const session = (over: Partial<SessionDTO> = {}): SessionDTO => ({
   draft: false,
   id: ID,
-  flow_id: "a1",
-  flow_version_id: "v7",
+  agent_id: "a1",
+  agent_version_id: "v7",
   config_hash: "abcdef1234567890",
   started_at: "2026-10-12T14:00:00Z",
   ended_at: "2026-10-12T14:04:12Z",
@@ -53,14 +53,14 @@ const turns = [
 ];
 const span = (name: string, at: string, attributes: object): TraceSpanDTO => ({ id: `${name}-${at}`, name, started_at: at, ended_at: at, attributes });
 const traces = (...spans: TraceSpanDTO[]): SessionTracesDTO => ({ session_id: ID, spans, events: [], tool_calls: [] });
-const toBilling = span("route.active", "2026-10-12T14:00:41Z", { from_step: "r", to_step: "b" });
+const toBilling = span("handoff.active", "2026-10-12T14:00:41Z", { from_step: "r", to_step: "b" });
 
 function setup(client: Partial<ApiClient>, path = `/sessions/${ID}`, key: string | null = "k") {
   const full = {
     getSession: vi.fn().mockResolvedValue(session()),
     getSessionTurns: vi.fn().mockResolvedValue(turns),
     getSessionTraces: vi.fn().mockResolvedValue(traces(toBilling)),
-    getFlows: vi.fn().mockResolvedValue([flow()]),
+    getAgents: vi.fn().mockResolvedValue([agent()]),
     ...client,
   } as unknown as ApiClient;
   render(
@@ -82,13 +82,13 @@ describe("CallView", () => {
     expect(screen.getByText(/Enter a management key/)).toBeVisible();
   });
 
-  it("shows who the call was with, which flow and version, and how it went", async () => {
+  it("shows who the call was with, which agent and version, and how it went", async () => {
     setup({});
     expect(await screen.findByText("Ended · 04:12")).toBeVisible();
     expect(screen.getByRole("heading", { name: "call_0192aaaa", level: 1 })).toBeVisible();
     expect(screen.getByRole("link", { name: "Calls" })).toHaveAttribute("href", "/sessions");
-    expect(within(figure("Flow")).getByRole("link", { name: "Front desk" })).toHaveAttribute("href", "/flows/a1");
-    expect(within(figure("Flow")).getByText("v7")).toBeVisible();
+    expect(within(figure("Agent")).getByRole("link", { name: "Front desk" })).toHaveAttribute("href", "/agents/a1");
+    expect(within(figure("Agent")).getByText("v7")).toBeVisible();
     expect(within(figure("Duration")).getByText("04:12")).toBeVisible();
     expect(within(figure("Turns")).getByText("3")).toBeVisible();
     expect(within(figure("Interrupted replies")).getByText("1")).toBeVisible();
@@ -106,7 +106,7 @@ describe("CallView", () => {
     expect(live.querySelector('.lamp[data-tone="warn"]')).not.toBeNull();
   });
 
-  it("reads the call as a transcript labelled by step, with the route marked where it happened", async () => {
+  it("reads the call as a transcript labelled by step, with the handoff marked where it happened", async () => {
     setup({});
     const list = await screen.findByRole("list", { name: "Transcript" });
     const items = within(list).getAllByRole("listitem").map((li) => li.textContent);
@@ -114,7 +114,7 @@ describe("CallView", () => {
       "Reception · 00:01Hi, you're through. How can I help?",
       "Caller · 00:06My bill went up.",
       "Reception · 00:09I can look into that.",
-      "⇢ Routed Reception → Billing",
+      "⇢ Handed off Reception → Billing",
       "Caller · 00:43Put it back on?",
       "Billing · 00:45Let me check [interrupted]",
     ]);
@@ -125,32 +125,32 @@ describe("CallView", () => {
     expect(await screen.findByText("No words were recorded for this call.")).toBeVisible();
   });
 
-  it("names the failed route and who kept the caller", async () => {
-    const failed = span("route.failed", "2026-10-12T14:00:30Z", { from_step: "r", to_step: "b" });
+  it("names the failed handoff and who kept the caller", async () => {
+    const failed = span("handoff.failed", "2026-10-12T14:00:30Z", { from_step: "r", to_step: "b" });
     setup({ getSessionTraces: vi.fn().mockResolvedValue(traces(failed)) });
-    expect(await screen.findByRole("note")).toHaveTextContent("A route to Billing failed. The caller stayed with Reception.");
+    expect(await screen.findByRole("note")).toHaveTextContent("A handoff to Billing failed. The caller stayed with Reception.");
   });
 
-  it("shows step ids the flow no longer has, and calls an old version 'earlier version'", async () => {
-    const gone = span("route.active", "2026-10-12T14:00:41Z", { from_step: "r", to_step: "zz-deleted" });
-    setup({ getSession: vi.fn().mockResolvedValue(session({ flow_version_id: "v6" })), getSessionTraces: vi.fn().mockResolvedValue(traces(gone)) });
+  it("shows step ids the agent no longer has, and calls an old version 'earlier version'", async () => {
+    const gone = span("handoff.active", "2026-10-12T14:00:41Z", { from_step: "r", to_step: "zz-deleted" });
+    setup({ getSession: vi.fn().mockResolvedValue(session({ agent_version_id: "v6" })), getSessionTraces: vi.fn().mockResolvedValue(traces(gone)) });
     await screen.findByRole("list", { name: "Transcript" });
-    expect(within(figure("Flow")).getByText("earlier version")).toBeVisible();
+    expect(within(figure("Agent")).getByText("earlier version")).toBeVisible();
     expect(within(figure("Path")).getByText("Reception → zz-deleted")).toBeVisible();
-    expect(screen.getByRole("list", { name: "Transcript" })).toHaveTextContent("Routed Reception → zz-deleted");
+    expect(screen.getByRole("list", { name: "Transcript" })).toHaveTextContent("Handed off Reception → zz-deleted");
   });
 
-  it("still shows the call when the flow list fails", async () => {
-    setup({ getFlows: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")), getSessionTraces: vi.fn().mockResolvedValue(traces()) });
+  it("still shows the call when the agent list fails", async () => {
+    setup({ getAgents: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")), getSessionTraces: vi.fn().mockResolvedValue(traces()) });
     expect(await screen.findByRole("list", { name: "Transcript" })).toHaveTextContent("Assistant · 00:01");
-    expect(within(figure("Flow")).getByText("Unknown flow")).toBeVisible();
+    expect(within(figure("Agent")).getByText("Unknown agent")).toBeVisible();
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("keeps the transcript, unlabelled by step, when the traces fail", async () => {
     setup({ getSessionTraces: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) });
     expect(await screen.findByRole("list", { name: "Transcript" })).toHaveTextContent("My bill went up.");
-    expect(screen.getByRole("note")).toHaveTextContent("Steps and routes could not be loaded");
+    expect(screen.getByRole("note")).toHaveTextContent("Steps and handoffs could not be loaded");
   });
 
   it("keeps the raw trace one click away", async () => {
@@ -192,8 +192,8 @@ describe("CallView", () => {
     await waitFor(() => expect(screen.getByText(/^Live · /).textContent).not.toBe(first), { timeout: 3000 });
   });
 
-  it("labels a call on an earlier version with the flow's name, not the current start step", async () => {
-    setup({ getSession: vi.fn().mockResolvedValue(session({ flow_version_id: "v6" })), getSessionTraces: vi.fn().mockResolvedValue(traces()) });
+  it("labels a call on an earlier version with the agent's name, not the current start step", async () => {
+    setup({ getSession: vi.fn().mockResolvedValue(session({ agent_version_id: "v6" })), getSessionTraces: vi.fn().mockResolvedValue(traces()) });
     const list = await screen.findByRole("list", { name: "Transcript" });
     expect(list).toHaveTextContent("Front desk · 00:01");
     expect(list).not.toHaveTextContent("Reception ·");
@@ -205,7 +205,7 @@ describe("CallView", () => {
     await screen.findByRole("list", { name: "Transcript" });
     expect(screen.getByText(/^Started /)).toBeVisible();
     const terms = screen.getAllByRole("term").slice(0, 6).map((t) => t.textContent);
-    expect(terms).toEqual(["Flow", "Path", "Duration", "Caller", "Turns", "Interrupted replies"]);
+    expect(terms).toEqual(["Agent", "Path", "Duration", "Caller", "Turns", "Interrupted replies"]);
     expect(screen.getByRole("region", { name: "Turns" })).toBeVisible();
     expect(screen.getByRole("complementary", { name: "Transcript" })).toBeVisible();
   });
@@ -245,13 +245,13 @@ describe("CallView", () => {
     spy.mockRestore();
   });
 
-  it("says when the flow ended the call", async () => {
-    setup({ getSessionTraces: vi.fn().mockResolvedValue(traces(toBilling, span("call.end", "2026-10-12T14:04:12Z", { reason: "ended_by_flow", from_step: "b" }))) });
-    expect(await screen.findByText("Ended by the flow (Billing)")).toBeVisible();
+  it("says when the agent ended the call", async () => {
+    setup({ getSessionTraces: vi.fn().mockResolvedValue(traces(toBilling, span("call.end", "2026-10-12T14:04:12Z", { reason: "ended_by_agent", from_step: "b" }))) });
+    expect(await screen.findByText("Ended by the agent (Billing)")).toBeVisible();
   });
 
   it("shows who called and why the call ended, in words", async () => {
-    setup({ getSession: vi.fn().mockResolvedValue(session({ caller: "flow-test-0192aaaa", end_reason: "silent_caller" })) });
+    setup({ getSession: vi.fn().mockResolvedValue(session({ caller: "agent-test-0192aaaa", end_reason: "silent_caller" })) });
     expect(await screen.findByText("Console test")).toBeVisible();
     expect(screen.getByText("Caller went silent")).toBeVisible();
   });
@@ -265,7 +265,7 @@ describe("CallView", () => {
   it("does not claim an ending for a call that is still live", async () => {
     setup({ getSession: vi.fn().mockResolvedValue(session({ status: "active", ended_at: null })) });
     await screen.findByText("Not recorded");
-    expect(screen.queryByText("Ended by the flow")).toBeNull();
+    expect(screen.queryByText("Ended by the agent")).toBeNull();
   });
 
   it("draws a waterfall for a reply that has stage offsets and keeps older replies as they were", async () => {
@@ -288,7 +288,7 @@ describe("CallView", () => {
       getSession: vi.fn().mockResolvedValue(session({ status: "active", ended_at: null })),
       getSessionTurns: vi.fn().mockResolvedValue(turns),
       getSessionTraces: vi.fn().mockResolvedValue(traces(toBilling)),
-      getFlows: vi.fn().mockResolvedValue([flow()]),
+      getAgents: vi.fn().mockResolvedValue([agent()]),
     } as unknown as ApiClient;
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>

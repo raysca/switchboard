@@ -15,7 +15,7 @@ import (
 	coretranscript "govoice/core/transcript"
 	coreturn "govoice/core/turn"
 	"govoice/providers/google"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/vad"
 )
 
@@ -91,7 +91,7 @@ func (p *contextSinkProc) ProcessFrame(ctx context.Context, frame core.Frame, di
 }
 func (p *contextSinkProc) SetContextProvider(fn func() []core.Message) { p.provider = fn }
 
-func TestRegistry_BuildCallPipelineFromFlowSpec(t *testing.T) {
+func TestRegistry_BuildCallPipelineFromAgentSpec(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
 	reg := NewRegistry()
 	mockExec := &mockVADExecutor{ready: true, available: 4, total: 4}
@@ -113,7 +113,7 @@ func TestRegistry_BuildCallPipelineFromFlowSpec(t *testing.T) {
 		t.Fatal("expected build to reject unusable secrets")
 	}
 
-	// Factories receive exactly the flow's stage settings and credential.
+	// Factories receive exactly the agent's stage settings and credential.
 	got := map[string]StageSpec{}
 	stub := func(stage string, proc core.Processor) ProcessorFactory {
 		return func(c *Config, spec StageSpec) (core.Processor, error) { got[stage] = spec; return proc, nil }
@@ -602,7 +602,7 @@ func TestElevenLabsTTSConfigFromStageSpec(t *testing.T) {
 		t.Fatalf("unset spec must keep provider defaults: %+v", c)
 	}
 	st, sb, sty, sp := 0.3, 0.9, 0.1, 1.1
-	c := elevenlabsTTSConfig(&Config{}, StageSpec{VoiceSettings: &flow.ElevenLabsVoiceSettings{Stability: &st, SimilarityBoost: &sb, Style: &sty, Speed: &sp}})
+	c := elevenlabsTTSConfig(&Config{}, StageSpec{VoiceSettings: &agent.ElevenLabsVoiceSettings{Stability: &st, SimilarityBoost: &sb, Style: &sty, Speed: &sp}})
 	if *c.Stability != st || *c.SimilarityBoost != sb || *c.Style != sty || *c.Speed != sp {
 		t.Fatalf("settings not applied: %+v", c)
 	}

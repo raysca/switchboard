@@ -22,12 +22,12 @@ func TestOrphanCutoffByDialect(t *testing.T) {
 	}
 }
 
-// seedActiveSession leaves one active session of a fresh flow in the store, as a crash would.
+// seedActiveSession leaves one active session of a fresh agent in the store, as a crash would.
 func seedActiveSession(t *testing.T, store *storage.Store, started time.Time) string {
 	t.Helper()
 	ctx := context.Background()
-	f := storage.Flow{ID: storage.NewID(), Name: "F", Enabled: true, CreatedAt: time.Now()}
-	if err := store.Flows().Create(ctx, f); err != nil {
+	f := storage.Agent{ID: storage.NewID(), Name: "F", Enabled: true, CreatedAt: time.Now()}
+	if err := store.Agents().Create(ctx, f); err != nil {
 		t.Fatal(err)
 	}
 	v, err := publishTestVersion(ctx, store, f.ID, []byte(`{}`), nil)
@@ -35,7 +35,7 @@ func seedActiveSession(t *testing.T, store *storage.Store, started time.Time) st
 		t.Fatal(err)
 	}
 	id := storage.NewID()
-	if err := store.Sessions().Create(ctx, storage.SessionRecord{ID: id, FlowID: f.ID, FlowVersionID: v.ID, ConfigHash: v.ConfigHash, StartedAt: started, Status: "active"}); err != nil {
+	if err := store.Sessions().Create(ctx, storage.SessionRecord{ID: id, AgentID: f.ID, AgentVersionID: v.ID, ConfigHash: v.ConfigHash, StartedAt: started, Status: "active"}); err != nil {
 		t.Fatal(err)
 	}
 	return id
@@ -105,8 +105,8 @@ func TestAFailingSweepDoesNotStopStartup(t *testing.T) {
 	s.endOrphanedSessions(context.Background(), closed)
 }
 
-// publishTestVersion publishes config (with the given MCP selection) as the flow's next version.
-func publishTestVersion(ctx context.Context, s *storage.Store, flowID string, config []byte, tools []storage.SelectedTool) (storage.FlowVersion, error) {
-	v, _, err := s.Flows().MutateAndPublish(ctx, flowID, storage.FlowMutation{Tools: &tools}, config)
+// publishTestVersion publishes config (with the given MCP selection) as the agent's next version.
+func publishTestVersion(ctx context.Context, s *storage.Store, agentID string, config []byte, tools []storage.SelectedTool) (storage.AgentVersion, error) {
+	v, _, err := s.Agents().MutateAndPublish(ctx, agentID, storage.AgentMutation{Tools: &tools}, config)
 	return v, err
 }

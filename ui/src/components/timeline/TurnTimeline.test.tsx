@@ -178,7 +178,7 @@ describe("TurnTimeline", () => {
     await user.click(screen.getByRole("button", { name: /Hide traces/i }));
     expect(screen.queryByTestId("trace-tree")).not.toBeInTheDocument();
   });
-  it("marks a route span with a lamp and says which step took the call", async () => {
+  it("marks a handoff span with a lamp and says which step took the call", async () => {
     const user = userEvent.setup();
     const turns: TurnDTO[] = [
       { id: "t1", session_id: "s", ordinal: 1, started_at: "2026-10-05T12:00:00Z", transcript: "I want to buy a car", assistant_text: "Connecting you.", interrupted: false },
@@ -188,18 +188,18 @@ describe("TurnTimeline", () => {
       events: [],
       tool_calls: [],
       spans: [
-        { id: "h1", session_id: "s", turn_id: "t1", name: "route.active", started_at: "2026-10-05T12:00:01Z", ended_at: "2026-10-05T12:00:02Z", attributes: { from_step: "front", to_step: "sales" } },
+        { id: "h1", session_id: "s", turn_id: "t1", name: "handoff.active", started_at: "2026-10-05T12:00:01Z", ended_at: "2026-10-05T12:00:02Z", attributes: { from_step: "front", to_step: "sales" } },
         { id: "o1", session_id: "s", turn_id: "t1", name: "llm.generate", started_at: "2026-10-05T12:00:01Z", ended_at: "2026-10-05T12:00:02Z", attributes: {} },
       ],
     };
     render(<TurnTimeline turns={turns} traces={traces} />);
     await user.click(screen.getByRole("button", { name: /Show traces/i }));
 
-    const route = screen.getByText("Routed to sales").closest("[data-testid='span-item']") as HTMLElement;
-    expect(route).toHaveAttribute("data-route", "true");
-    expect(route.querySelector(".lamp")).not.toBeNull();
+    const handoff = screen.getByText("Handed off to sales").closest("[data-testid='span-item']") as HTMLElement;
+    expect(handoff).toHaveAttribute("data-handoff", "true");
+    expect(handoff.querySelector(".lamp")).not.toBeNull();
     // Other spans stay as they were.
-    expect(screen.getByText("llm.generate").closest("[data-testid='span-item']")).not.toHaveAttribute("data-route");
+    expect(screen.getByText("llm.generate").closest("[data-testid='span-item']")).not.toHaveAttribute("data-handoff");
   });
 
   it("shows each tool call's outcome in words and tone", async () => {

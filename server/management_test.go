@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"os"
 
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"net/http"
 	"path/filepath"
 	"testing"
@@ -19,7 +19,7 @@ func TestEnableManagementWiresAPIsAndRetention(t *testing.T) {
 	s.cfg.Storage.Dialect = "sqlite"
 	s.cfg.Retention.Enabled = true
 
-	for _, path := range []string{"/api/v1/flows", "/api/v1/providers", "/api/v1/mcp-servers", "/api/v1/sessions"} {
+	for _, path := range []string{"/api/v1/agents", "/api/v1/providers", "/api/v1/mcp-servers", "/api/v1/sessions"} {
 		if code := apiRequest(s, http.MethodGet, path, key, "").Code; code != http.StatusServiceUnavailable {
 			t.Fatalf("precondition: %s status=%d before wiring", path, code)
 		}
@@ -28,7 +28,7 @@ func TestEnableManagementWiresAPIsAndRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.closeManagement)
-	for _, path := range []string{"/api/v1/flows", "/api/v1/providers", "/api/v1/mcp-servers", "/api/v1/sessions"} {
+	for _, path := range []string{"/api/v1/agents", "/api/v1/providers", "/api/v1/mcp-servers", "/api/v1/sessions"} {
 		if w := apiRequest(s, http.MethodGet, path, key, ""); w.Code != http.StatusOK {
 			t.Fatalf("%s status=%d body=%s", path, w.Code, w.Body)
 		}
@@ -50,7 +50,7 @@ func TestMCPSyncIntervalZeroStartsNoSyncer(t *testing.T) {
 	}
 }
 
-// enableTestManagement wires a throwaway SQLite flow store into s.
+// enableTestManagement wires a throwaway SQLite agent store into s.
 func enableTestManagement(t *testing.T, s *Server) {
 	t.Helper()
 	t.Setenv("GOVOICE_DATABASE_DSN", filepath.Join(t.TempDir(), "mgmt.db"))
@@ -61,35 +61,35 @@ func enableTestManagement(t *testing.T, s *Server) {
 	t.Cleanup(s.closeManagement)
 }
 
-// readyTestFlow enables the flow store and creates a complete Google flow,
-// ready on the test provider environment; it returns the flow ID.
-func readyTestFlow(t *testing.T, s *Server) string {
+// readyTestAgent enables the agent store and creates a complete Google agent,
+// ready on the test provider environment; it returns the agent ID.
+func readyTestAgent(t *testing.T, s *Server) string {
 	t.Helper()
-	if s.flows == nil {
+	if s.agents == nil {
 		enableTestManagement(t, s)
 	}
-	a, err := s.flows.Create(t.Context(), flow.CreateRequest{Name: "Support", Config: json.RawMessage(
+	a, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "Support", Config: json.RawMessage(
 		`{"stt":{"provider":"google","model":"chirp_2"},"llm":{"provider":"google","model":"gemini-2.0-flash"},"tts":{"provider":"google","voice":"en-US-Journey-F"}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Readiness.State != flow.ReadinessReady {
-		t.Fatalf("test flow not ready: %+v", a.Readiness)
+	if a.Readiness.State != agent.ReadinessReady {
+		t.Fatalf("test agent not ready: %+v", a.Readiness)
 	}
 	return a.ID
 }
 
-// A flow whose provider/stage has no factory in this build (e.g. xAI speech
+// An agent whose provider/stage has no factory in this build (e.g. xAI speech
 // without -tags xaispeech) must be reported at startup, not at call time.
-func TestUnavailableFlowProvidersReported(t *testing.T) {
+func TestUnavailableAgentProvidersReported(t *testing.T) {
 	s := apiTestServer(t)
-	id := readyTestFlow(t, s)
-	if bad := s.unavailableFlowProviders(t.Context(), s.flows); len(bad) != 0 {
+	id := readyTestAgent(t, s)
+	if bad := s.unavailableAgentProviders(t.Context(), s.agents); len(bad) != 0 {
 		t.Fatalf("complete build reported %v", bad)
 	}
 	delete(s.registry.factories, factoryKey("google", "tts"))
-	bad := s.unavailableFlowProviders(t.Context(), s.flows)
-	if len(bad) != 1 || bad[0] != "flow "+id+" tts=google" {
+	bad := s.unavailableAgentProviders(t.Context(), s.agents)
+	if len(bad) != 1 || bad[0] != "agent "+id+" tts=google" {
 		t.Fatalf("got %v", bad)
 	}
 }
@@ -121,14 +121,14 @@ func TestManagementStartsWithoutAKeyring(t *testing.T) {
 	}
 }
 
-// A start EnableManagement refuses (a production store with flows this build cannot run, an unusable
+// A start EnableManagement refuses (a production store with agents this build cannot run, an unusable
 // recording directory) closes the store: nothing may still point at it and the APIs stay unavailable.
 func TestRefusedManagementStartLeavesNoClosedStoreBehind(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		refuse func(t *testing.T, s *Server)
 	}{
-		{"production flow this build cannot run", func(t *testing.T, s *Server) {
+		{"production agent this build cannot run", func(t *testing.T, s *Server) {
 			s.cfg.Profile = ProfileProduction
 			delete(s.registry.factories, factoryKey("google", "tts"))
 		}},
@@ -147,7 +147,7 @@ func TestRefusedManagementStartLeavesNoClosedStoreBehind(t *testing.T) {
 			if err := seed.EnableManagement(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			readyTestFlow(t, seed)
+			readyTestAgent(t, seed)
 			seed.closeManagement()
 
 			s := apiTestServer(t)
@@ -157,12 +157,12 @@ func TestRefusedManagementStartLeavesNoClosedStoreBehind(t *testing.T) {
 				s.closeManagement()
 				t.Fatal("the start was not refused")
 			}
-			if s.store != nil || s.flows != nil || s.mcpService != nil || s.mgmt.Load() != nil || s.recSink != nil {
-				t.Fatalf("a refused start left store=%v flows=%v mcp=%v mgmt=%v recSink=%v",
-					s.store != nil, s.flows != nil, s.mcpService != nil, s.mgmt.Load() != nil, s.recSink != nil)
+			if s.store != nil || s.agents != nil || s.mcpService != nil || s.mgmt.Load() != nil || s.recSink != nil {
+				t.Fatalf("a refused start left store=%v agents=%v mcp=%v mgmt=%v recSink=%v",
+					s.store != nil, s.agents != nil, s.mcpService != nil, s.mgmt.Load() != nil, s.recSink != nil)
 			}
-			if code := apiRequest(s, http.MethodGet, "/api/v1/flows", "management-test-key-32-bytes-long-and-separate", "").Code; code != http.StatusServiceUnavailable {
-				t.Fatalf("/api/v1/flows = %d after a refused start, want 503", code)
+			if code := apiRequest(s, http.MethodGet, "/api/v1/agents", "management-test-key-32-bytes-long-and-separate", "").Code; code != http.StatusServiceUnavailable {
+				t.Fatalf("/api/v1/agents = %d after a refused start, want 503", code)
 			}
 		})
 	}

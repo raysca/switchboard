@@ -10,13 +10,13 @@ import (
 var (
 	ErrSessionLimitExceeded = errors.New("maximum active sessions exceeded")
 	ErrPrincipalLimit       = errors.New("maximum concurrent sessions per principal exceeded")
-	ErrFlowLimit            = errors.New("maximum concurrent sessions per flow exceeded")
+	ErrAgentLimit           = errors.New("maximum concurrent sessions per agent exceeded")
 	ErrStartRateLimit       = errors.New("session start rate limit exceeded")
 	ErrVADUnavailable       = errors.New("VAD executor has zero available capacity")
 )
 
 // AdmissionController caps concurrent calls, in total, per principal (the
-// tenant: token principal, else subject) and optionally per flow, plus an
+// tenant: token principal, else subject) and optionally per agent, plus an
 // optional per-principal start-rate token bucket, before a call allocates its
 // pipeline. Quotas are per key, so a noisy principal at its cap is rejected
 // while others are still admitted under the global cap.
@@ -30,7 +30,7 @@ type AdmissionController struct {
 	now        func() time.Time // injectable for tests
 	active     int
 	principals map[string]int
-	flows      map[string]int
+	agents     map[string]int
 	buckets    map[string]*startBucket
 }
 
@@ -41,7 +41,7 @@ type startBucket struct {
 
 func NewAdmissionController(cfg *Config, metrics *Metrics) *AdmissionController {
 	return &AdmissionController{cfg: cfg, metrics: metrics, now: time.Now,
-		principals: make(map[string]int), flows: make(map[string]int), buckets: make(map[string]*startBucket)}
+		principals: make(map[string]int), agents: make(map[string]int), buckets: make(map[string]*startBucket)}
 }
 
 // takeStart consumes one start token for principal; caller holds ac.mu.
@@ -72,7 +72,7 @@ func (ac *AdmissionController) takeStart(principal string) bool {
 }
 
 // AcquireSession admits a call; ReleaseSession must follow once it ends.
-func (ac *AdmissionController) AcquireSession(principal, flowID string, vadCapacityAvailable bool) error {
+func (ac *AdmissionController) AcquireSession(principal, agentID string, vadCapacityAvailable bool) error {
 	if !vadCapacityAvailable {
 		ac.metrics.AdmissionRejectsVAD.Add(1)
 		return ErrVADUnavailable
@@ -87,9 +87,9 @@ func (ac *AdmissionController) AcquireSession(principal, flowID string, vadCapac
 		ac.metrics.AdmissionRejectsPrincipal.Add(1)
 		return fmt.Errorf("%w: %s has %d active sessions", ErrPrincipalLimit, principal, ac.principals[principal])
 	}
-	if max := ac.cfg.Limits.MaxSessionsPerFlow; max > 0 && flowID != "" && ac.flows[flowID] >= max {
-		ac.metrics.AdmissionRejectsFlow.Add(1)
-		return fmt.Errorf("%w: flow has %d active sessions", ErrFlowLimit, ac.flows[flowID])
+	if max := ac.cfg.Limits.MaxSessionsPerAgent; max > 0 && agentID != "" && ac.agents[agentID] >= max {
+		ac.metrics.AdmissionRejectsAgent.Add(1)
+		return fmt.Errorf("%w: agent has %d active sessions", ErrAgentLimit, ac.agents[agentID])
 	}
 	// Last, so a call rejected above never burns a start token.
 	if principal != "" && ac.cfg.Limits.StartRatePerPrincipal > 0 && !ac.takeStart(principal) {
@@ -100,14 +100,14 @@ func (ac *AdmissionController) AcquireSession(principal, flowID string, vadCapac
 	if principal != "" {
 		ac.principals[principal]++
 	}
-	if flowID != "" {
-		ac.flows[flowID]++
+	if agentID != "" {
+		ac.agents[agentID]++
 	}
 	ac.metrics.ActiveSessions.Store(int64(ac.active))
 	return nil
 }
 
-func (ac *AdmissionController) ReleaseSession(principal, flowID string) {
+func (ac *AdmissionController) ReleaseSession(principal, agentID string) {
 	ac.mu.Lock()
 	defer ac.mu.Unlock()
 	if ac.active > 0 {
@@ -119,9 +119,9 @@ func (ac *AdmissionController) ReleaseSession(principal, flowID string) {
 			delete(ac.principals, principal)
 		}
 	}
-	if flowID != "" {
-		if ac.flows[flowID]--; ac.flows[flowID] <= 0 {
-			delete(ac.flows, flowID)
+	if agentID != "" {
+		if ac.agents[agentID]--; ac.agents[agentID] <= 0 {
+			delete(ac.agents, agentID)
 		}
 	}
 }
@@ -132,8 +132,8 @@ func admissionReason(err error) string {
 	switch {
 	case errors.Is(err, ErrStartRateLimit):
 		return "rate_limited"
-	case errors.Is(err, ErrFlowLimit):
-		return "flow_limit"
+	case errors.Is(err, ErrAgentLimit):
+		return "agent_limit"
 	case errors.Is(err, ErrPrincipalLimit):
 		return "principal_limit"
 	default: // global cap, VAD unavailable

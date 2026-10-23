@@ -172,9 +172,9 @@ func (e *Exporter) Shutdown(ctx context.Context) error {
 
 // Session returns the core.Tracer for one call. Install it with
 // Session.SetTracer(t, e.Policy()) and feed latency via t.Latency.
-func (e *Exporter) Session(flowID, flowVersion string) *SessionTracer {
+func (e *Exporter) Session(agentID, agentVersion string) *SessionTracer {
 	return &SessionTracer{e: e, tr: e.tp.Tracer("govoice"), fl: []attribute.KeyValue{
-		attribute.String("govoice.flow.id", flowID), attribute.String("govoice.flow.version", flowVersion),
+		attribute.String("govoice.agent.id", agentID), attribute.String("govoice.agent.version", agentVersion),
 	}, turns: map[core.TurnID]trace.Span{}, open: map[*span]struct{}{}}
 }
 

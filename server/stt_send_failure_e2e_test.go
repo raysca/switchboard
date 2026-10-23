@@ -13,7 +13,7 @@ import (
 
 	"govoice/core"
 	"govoice/core/sttunit"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/server/storage"
 )
 
@@ -83,11 +83,11 @@ func (c *flakyConn) Recv(ctx context.Context) (sttunit.Result, error) {
 
 func (c *flakyConn) Close() {}
 
-// sttSendRig is a flow rig whose echo STT is a flaky provider chosen by the flow's STT model, with the
+// sttSendRig is an agent rig whose echo STT is a flaky provider chosen by the agent's STT model, with the
 // real VAD.
-func sttSendRig(t *testing.T, byModel map[string]*flakySTT, mods ...func(*Config)) *flowRigE2E {
+func sttSendRig(t *testing.T, byModel map[string]*flakySTT, mods ...func(*Config)) *agentRigE2E {
 	t.Helper()
-	r := newFlowRigE2E(t, newProbe(), mods...)
+	r := newAgentRigE2E(t, newProbe(), mods...)
 	realVAD(t, r.s)
 	r.s.registry.Register("echo.stt", func(_ *Config, spec StageSpec) (core.Processor, error) {
 		return byModel[spec.Model].runner(), nil
@@ -95,18 +95,18 @@ func sttSendRig(t *testing.T, byModel map[string]*flakySTT, mods ...func(*Config
 	return r
 }
 
-func sttSendFlow(t *testing.T, r *flowRigE2E, stt string) string {
+func sttSendAgent(t *testing.T, r *agentRigE2E, stt string) string {
 	t.Helper()
 	cfg := `{"stt":{"provider":"echo",` + stt + `},"llm":{"provider":"echo","model":"m","system_prompt":"STTSend"},"tts":{"provider":"echo","voice":"sttsendvoice"}}`
-	f, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "sttsend", Config: []byte(cfg)})
-	if err != nil || f.Readiness.State != flow.ReadinessReady {
-		t.Fatalf("flow: %+v err=%v", f.Readiness, err)
+	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "sttsend", Config: []byte(cfg)})
+	if err != nil || f.Readiness.State != agent.ReadinessReady {
+		t.Fatalf("agent: %+v err=%v", f.Readiness, err)
 	}
 	return f.ID
 }
 
 // armOnSpeech arms the provider's write failures once the caller's speech has begun.
-func armOnSpeech(t *testing.T, r *flowRigE2E, ps ...*flakySTT) {
+func armOnSpeech(t *testing.T, r *agentRigE2E, ps ...*flakySTT) {
 	t.Helper()
 	eventually(t, "the caller's speech to start", func() bool { return r.has(EventSpeechStart, "") })
 	for _, p := range ps {
@@ -114,7 +114,7 @@ func armOnSpeech(t *testing.T, r *flowRigE2E, ps ...*flakySTT) {
 	}
 }
 
-func timelineErrors(r *flowRigE2E) (n int) {
+func timelineErrors(r *agentRigE2E) (n int) {
 	for _, e := range r.timeline() {
 		if e.Type == EventError {
 			n++
@@ -125,10 +125,10 @@ func timelineErrors(r *flowRigE2E) (n int) {
 
 // A write to the provider fails twice mid-speech: each failure is a timeline error and the next audio
 // opens a fresh stream; the call stays up and the third stream's transcript reaches the model.
-func TestFlowE2E_STTSendFailureKeepsTheCall(t *testing.T) {
+func TestAgentE2E_STTSendFailureKeepsTheCall(t *testing.T) {
 	p := &flakySTT{failStreams: 2}
 	r := sttSendRig(t, map[string]*flakySTT{"s": p})
-	c := r.dial(sttSendFlow(t, r, `"model":"s"`))
+	c := r.dial(sttSendAgent(t, r, `"model":"s"`))
 	go c.sendAudioLoose(callerSpeech(t))
 	armOnSpeech(t, r, p)
 	c.waitReplies("hello from stream 3", 1)
@@ -148,10 +148,10 @@ func TestFlowE2E_STTSendFailureKeepsTheCall(t *testing.T) {
 
 // The provider stays down after the failed write: every redial is refused, the turn loses its transcript
 // (a local, non-fatal error), and a second lost turn a window later ends the call as stt_unavailable.
-func TestFlowE2E_STTSendFailureThenDeadProviderHangsUp(t *testing.T) {
+func TestAgentE2E_STTSendFailureThenDeadProviderHangsUp(t *testing.T) {
 	p := &flakySTT{failStreams: 1, deadAfter: true}
 	r := sttSendRig(t, map[string]*flakySTT{"s": p}, func(c *Config) { c.Turn.NoTranscriptTimeout = time.Second })
-	c := r.dial(sttSendFlow(t, r, `"model":"s"`))
+	c := r.dial(sttSendAgent(t, r, `"model":"s"`))
 	go c.sendAudioLoose(callerSpeech(t))
 	armOnSpeech(t, r, p)
 	eventually(t, "the failed write and the refused redial on the timeline", func() bool { return timelineErrors(r) >= 2 })
@@ -173,10 +173,10 @@ func TestFlowE2E_STTSendFailureThenDeadProviderHangsUp(t *testing.T) {
 // The provider accepts every dial but fails every live write. Each failure alone is non-fatal, but a
 // failed write counts as an unreachable STT: two of them a no-transcript window apart, with no transcript
 // between, end the call as stt_unavailable instead of redialing for ever.
-func TestFlowE2E_STTSendFailureAlwaysFailingEndsCall(t *testing.T) {
+func TestAgentE2E_STTSendFailureAlwaysFailingEndsCall(t *testing.T) {
 	p := &flakySTT{failStreams: 1 << 30, mute: true}
 	r := sttSendRig(t, map[string]*flakySTT{"s": p}, func(c *Config) { c.Turn.NoTranscriptTimeout = time.Second })
-	c := r.dial(sttSendFlow(t, r, `"model":"s"`))
+	c := r.dial(sttSendAgent(t, r, `"model":"s"`))
 	go c.sendAudioLoose(callerSpeech(t))
 	armOnSpeech(t, r, p)
 	eventually(t, "the first failed write on the timeline", func() bool { return timelineErrors(r) >= 1 })
@@ -198,10 +198,10 @@ func TestFlowE2E_STTSendFailureAlwaysFailingEndsCall(t *testing.T) {
 // The failing stream is the LAST candidate of an STT failover chain: the primary's failed write moves the
 // utterance to the fallback, whose own failed write used to end the call because the chain had nowhere
 // left to go. Now it is a reported error and the next audio reopens the fallback.
-func TestFlowE2E_STTSendFailureFailsOverOnLastCandidate(t *testing.T) {
+func TestAgentE2E_STTSendFailureFailsOverOnLastCandidate(t *testing.T) {
 	primary, fallback := &flakySTT{failStreams: 99}, &flakySTT{failStreams: 1}
 	r := sttSendRig(t, map[string]*flakySTT{"s": primary, "f": fallback})
-	c := r.dial(sttSendFlow(t, r, `"model":"s","fallbacks":[{"provider":"echo","model":"f"}]`))
+	c := r.dial(sttSendAgent(t, r, `"model":"s","fallbacks":[{"provider":"echo","model":"f"}]`))
 	go c.sendAudioLoose(callerSpeech(t))
 	armOnSpeech(t, r, primary, fallback)
 	c.waitReplies("hello from stream 2", 1)

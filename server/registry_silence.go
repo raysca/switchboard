@@ -7,13 +7,13 @@ import (
 
 	"govoice/core"
 	"govoice/providers/google"
-	"govoice/server/flow"
+	"govoice/server/agent"
 )
 
-// silenceProvider is the text-only speech provider (docs/decisions/silence-provider.md): a flow that
+// silenceProvider is the text-only speech provider (docs/decisions/silence-provider.md): an agent that
 // names it for both speech stages takes typed turns (RTVI send-text) and answers in text, for clients
 // that listen and speak in the browser themselves. It needs no secret.
-const silenceProvider = flow.SilenceProvider
+const silenceProvider = agent.SilenceProvider
 
 // registerSilence registers silence.stt and silence.tts. Like registerEcho the stages are the real
 // Google processors (retries, breaker, usage, tracing, unit splitting) on tiny in-process backends,

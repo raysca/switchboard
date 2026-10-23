@@ -10,24 +10,24 @@ import (
 )
 
 var (
-	ErrRoutePending = errors.New("core: a route is already in progress")
-	ErrRouteLimit   = errors.New("core: route limit reached for this call")
-	ErrRouteFlipped = errors.New("core: route already completed by the caller's turn")
-	ErrRouteClosed  = errors.New("core: route closed with the session")
+	ErrHandoffPending = errors.New("core: a handoff is already in progress")
+	ErrHandoffLimit   = errors.New("core: handoff limit reached for this call")
+	ErrHandoffFlipped = errors.New("core: handoff already completed by the caller's turn")
+	ErrHandoffClosed  = errors.New("core: handoff closed with the session")
 )
 
-type RouteEventKind string
+type HandoffEventKind string
 
 const (
-	RouteCommitted RouteEventKind = "committed"
-	RoutePreparing RouteEventKind = "preparing"
-	RouteActive    RouteEventKind = "active"
-	RouteFailed    RouteEventKind = "failed"
-	RouteClosed    RouteEventKind = "closed"
+	HandoffCommitted HandoffEventKind = "committed"
+	HandoffPreparing HandoffEventKind = "preparing"
+	HandoffActive    HandoffEventKind = "active"
+	HandoffFailed    HandoffEventKind = "failed"
+	HandoffClosed    HandoffEventKind = "closed"
 )
 
-type RouteEvent struct {
-	Kind     RouteEventKind
+type HandoffEvent struct {
+	Kind     HandoffEventKind
 	From, To string
 	Err      error
 	Elapsed  time.Duration // commit to active/failed, monotonic
@@ -52,7 +52,7 @@ type RouterConfig struct {
 	// Greet adds the "caller handed to you" message to history; it runs only
 	// when the flip is idle-driven (the caller has not spoken yet).
 	Greet         func(stepID string) error
-	OnEvent       func(RouteEvent)
+	OnEvent       func(HandoffEvent)
 	Max           int           // transfers per call (default 10)
 	BuildTimeout  time.Duration // default 10s
 	RetireTimeout time.Duration // default 2s
@@ -74,7 +74,7 @@ type Router struct {
 
 func NewRouter(cfg RouterConfig) (*Router, error) {
 	if cfg.LLM == nil || cfg.TTS == nil || cfg.Trigger == nil || cfg.Build == nil || cfg.Entry == "" {
-		return nil, errors.New("core: route needs LLM, TTS, Trigger, Build and Entry")
+		return nil, errors.New("core: handoff needs LLM, TTS, Trigger, Build and Entry")
 	}
 	if cfg.Max <= 0 {
 		cfg.Max = 10
@@ -102,7 +102,7 @@ func closeStages(s StepStages) {
 	closeProc(s.TTS)
 }
 
-// Close ends the route with the session: a step built but never installed
+// Close ends the handoff with the session: a step built but never installed
 // is closed, and a build still running closes its stages when it finishes.
 func (rt *Router) Close() {
 	rt.mu.Lock()
@@ -115,13 +115,13 @@ func (rt *Router) Close() {
 	}
 }
 
-func (rt *Router) emit(e RouteEvent) {
+func (rt *Router) emit(e HandoffEvent) {
 	if rt.cfg.OnEvent != nil {
 		rt.cfg.OnEvent(e)
 	}
 }
 
-// Commit starts the route to target. It returns at once; the step is built
+// Commit starts the handoff to target. It returns at once; the step is built
 // in the background while the old step finishes its farewell.
 func (rt *Router) Commit(target string) error {
 	sc := rt.cfg.LLM.Session()
@@ -132,20 +132,20 @@ func (rt *Router) Commit(target string) error {
 	switch {
 	case rt.closed:
 		rt.mu.Unlock()
-		return ErrRouteClosed
+		return ErrHandoffClosed
 	case rt.pending != "":
 		rt.mu.Unlock()
-		return ErrRoutePending
+		return ErrHandoffPending
 	case rt.count >= rt.cfg.Max:
 		rt.mu.Unlock()
-		return ErrRouteLimit
+		return ErrHandoffLimit
 	}
 	from := rt.active
 	rt.pending, rt.ready, rt.started = target, nil, time.Now()
 	rt.count++
 	rt.mu.Unlock()
-	rt.emit(RouteEvent{Kind: RouteCommitted, From: from, To: target})
-	rt.emit(RouteEvent{Kind: RoutePreparing, From: from, To: target})
+	rt.emit(HandoffEvent{Kind: HandoffCommitted, From: from, To: target})
+	rt.emit(HandoffEvent{Kind: HandoffPreparing, From: from, To: target})
 	if err := sc.Go(func(ctx context.Context) { rt.build(ctx, from, target) }); err != nil {
 		rt.fail(from, target, fmt.Errorf("start build: %w", err))
 		return err
@@ -184,7 +184,7 @@ func (rt *Router) fail(from, target string, err error) {
 	elapsed := time.Since(rt.started)
 	rt.pending, rt.ready = "", nil
 	rt.mu.Unlock()
-	rt.emit(RouteEvent{Kind: RouteFailed, From: from, To: target, Err: err, Elapsed: elapsed})
+	rt.emit(HandoffEvent{Kind: HandoffFailed, From: from, To: target, Err: err, Elapsed: elapsed})
 }
 
 // beforeLLM runs ahead of every frame the LLM stage sees. A caller's own turn
@@ -204,12 +204,12 @@ func (rt *Router) beforeLLM(f Frame, dir Direction) {
 
 // flip swaps the built target in. It runs at most once per commit. TTS is
 // replaced first: if the LLM swap then fails, the call is left on the old
-// model with the new voice (degraded but working) and RouteFailed says so.
+// model with the new voice (degraded but working) and HandoffFailed says so.
 func (rt *Router) flip(target string, viaTrigger bool) error {
 	rt.mu.Lock()
 	if rt.pending != target || rt.ready == nil {
 		rt.mu.Unlock()
-		return ErrRouteFlipped
+		return ErrHandoffFlipped
 	}
 	stages, from, started := *rt.ready, rt.active, rt.started
 	rt.pending, rt.ready, rt.active = "", nil, target
@@ -230,7 +230,7 @@ func (rt *Router) flip(target string, viaTrigger bool) error {
 		} else {
 			closeStages(stages) // neither was installed
 		}
-		rt.emit(RouteEvent{Kind: RouteFailed, From: from, To: target, Err: err, Elapsed: time.Since(started)})
+		rt.emit(HandoffEvent{Kind: HandoffFailed, From: from, To: target, Err: err, Elapsed: time.Since(started)})
 		return err
 	}
 	sc := rt.cfg.LLM.Session()
@@ -242,7 +242,7 @@ func (rt *Router) flip(target string, viaTrigger bool) error {
 		sc.IncrementGeneration()
 	}
 	rt.retire(sc, from, retireLLM, retireTTS)
-	rt.emit(RouteEvent{Kind: RouteActive, From: from, To: target, Elapsed: time.Since(started)})
+	rt.emit(HandoffEvent{Kind: HandoffActive, From: from, To: target, Elapsed: time.Since(started)})
 	if viaTrigger && rt.cfg.Greet != nil {
 		return rt.cfg.Greet(target)
 	}
@@ -254,6 +254,6 @@ func (rt *Router) retire(sc SessionController, from string, fns ...func(time.Dur
 		for _, fn := range fns {
 			_ = fn(rt.cfg.RetireTimeout)
 		}
-		rt.emit(RouteEvent{Kind: RouteClosed, From: from})
+		rt.emit(HandoffEvent{Kind: HandoffClosed, From: from})
 	})
 }

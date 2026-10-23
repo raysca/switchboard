@@ -204,7 +204,7 @@ type ToolResult struct {
 	Status      string
 }
 
-// CapturedTool is an in-memory execution lease for one immutable flow/session
+// CapturedTool is an in-memory execution lease for one immutable agent/session
 // snapshot. It intentionally has no JSON representation and never exposes the
 // resolved bearer token. Server disable and discovery refresh do not change it;
 // pending deletion waits for the owning session to drain.

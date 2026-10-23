@@ -1,4 +1,4 @@
-// Package runtime binds immutable flow snapshots to public core tool contracts.
+// Package runtime binds immutable agent snapshots to public core tool contracts.
 // MCP SDK and server types stay on the Server side of the framework boundary.
 package runtime
 
@@ -15,14 +15,14 @@ import (
 	"time"
 
 	"govoice/core"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/server/mcp"
 	"govoice/server/storage"
 )
 
 type Session struct {
-	Pin         flow.SessionPin
-	Snapshot    flow.Snapshot
+	Pin         agent.SessionPin
+	Snapshot    agent.Snapshot
 	Definitions []core.ToolDefinition
 	Executor    core.ToolExecutor
 	end         func(ctx context.Context, sessionID, reason string) error
@@ -122,25 +122,25 @@ func (e *sessionExecutor) close(ctx context.Context) error {
 // StartSession captures each selected MCP tool before persisting the session.
 // Required capture failures reject admission; optional failures produce no
 // wrapper. The MCP package holds the credential lease only in memory.
-func StartSession(ctx context.Context, flows *flow.Service, mcpService *mcp.Service, flowID, sessionID, caller string) (*Session, error) {
-	if flows == nil || mcpService == nil {
-		return nil, errors.New("flow and MCP services are required")
+func StartSession(ctx context.Context, agents *agent.Service, mcpService *mcp.Service, agentID, sessionID, caller string) (*Session, error) {
+	if agents == nil || mcpService == nil {
+		return nil, errors.New("agent and MCP services are required")
 	}
-	snapshot, err := flows.ResolveCurrent(ctx, flowID)
+	snapshot, err := agents.ResolveCurrent(ctx, agentID)
 	if err != nil {
 		return nil, err
 	}
-	return StartSnapshotSession(ctx, flows, mcpService, snapshot, sessionID, caller)
+	return StartSnapshotSession(ctx, agents, mcpService, snapshot, sessionID, caller)
 }
 
 // StartSnapshotSession starts a session from an already resolved snapshot: the
-// current version, or a draft over it (flow.Service.ResolveDraft).
-func StartSnapshotSession(ctx context.Context, flows *flow.Service, mcpService *mcp.Service, snapshot flow.Snapshot, sessionID, caller string) (*Session, error) {
-	if flows == nil || mcpService == nil {
-		return nil, errors.New("flow and MCP services are required")
+// current version, or a draft over it (agent.Service.ResolveDraft).
+func StartSnapshotSession(ctx context.Context, agents *agent.Service, mcpService *mcp.Service, snapshot agent.Snapshot, sessionID, caller string) (*Session, error) {
+	if agents == nil || mcpService == nil {
+		return nil, errors.New("agent and MCP services are required")
 	}
 	items := make([]captured, 0, len(snapshot.MCPTools))
-	flowCfg, _ := flow.StartConfig(snapshot.Version.Config) // already validated at publish; unusable config = no async tools
+	agentCfg, _ := agent.StartConfig(snapshot.Version.Config) // already validated at publish; unusable config = no async tools
 	for _, tool := range snapshot.MCPTools {
 		capturedTool, captureErr := mcpService.CaptureTool(ctx, tool.ServerID, tool.RemoteName, tool.SchemaHash)
 		if captureErr != nil {
@@ -156,17 +156,17 @@ func StartSnapshotSession(ctx context.Context, flows *flow.Service, mcpService *
 			}
 			continue
 		}
-		definition := core.ToolDefinition{Name: name, RemoteName: tool.RemoteName, Description: capturedTool.Description(), InputSchema: capturedTool.Schema(), Policy: core.ToolPolicy{Required: tool.Required, Async: flowCfg.IsAsyncTool(tool.ServerID, tool.RemoteName)}}
+		definition := core.ToolDefinition{Name: name, RemoteName: tool.RemoteName, Description: capturedTool.Description(), InputSchema: capturedTool.Schema(), Policy: core.ToolPolicy{Required: tool.Required, Async: agentCfg.IsAsyncTool(tool.ServerID, tool.RemoteName)}}
 		items = append(items, captured{definition: definition, handler: capturedTool})
 	}
 	definitions := make([]core.ToolDefinition, 0, len(items))
-	metadata := make([]flow.MCPToolSnapshot, 0, len(items))
-	references := make([]flow.ToolSelection, 0, len(items))
+	metadata := make([]agent.MCPToolSnapshot, 0, len(items))
+	references := make([]agent.ToolSelection, 0, len(items))
 	for _, item := range items {
 		definitions = append(definitions, item.definition)
 		tool := item.handler
-		metadata = append(metadata, flow.MCPToolSnapshot{ServerID: tool.ServerID(), ServerName: tool.ServerName(), Endpoint: tool.Endpoint(), Transport: tool.Transport(), AuthEnv: tool.AuthEnv(), RemoteName: tool.Name(), Description: tool.Description(), SchemaJSON: tool.Schema(), SchemaHash: tool.SchemaHash(), Required: item.definition.Policy.Required})
-		references = append(references, flow.ToolSelection{ServerID: tool.ServerID(), RemoteName: tool.Name(), SchemaHash: tool.SchemaHash(), Required: item.definition.Policy.Required})
+		metadata = append(metadata, agent.MCPToolSnapshot{ServerID: tool.ServerID(), ServerName: tool.ServerName(), Endpoint: tool.Endpoint(), Transport: tool.Transport(), AuthEnv: tool.AuthEnv(), RemoteName: tool.Name(), Description: tool.Description(), SchemaJSON: tool.Schema(), SchemaHash: tool.SchemaHash(), Required: item.definition.Policy.Required})
+		references = append(references, agent.ToolSelection{ServerID: tool.ServerID(), RemoteName: tool.Name(), SchemaHash: tool.SchemaHash(), Required: item.definition.Policy.Required})
 	}
 	snapshot.MCPTools = metadata
 	runtimeJSON, err := json.Marshal(metadata)
@@ -182,23 +182,23 @@ func StartSnapshotSession(ctx context.Context, flows *flow.Service, mcpService *
 		async[item.definition.Name] = item.definition.Policy.Async
 	}
 	runner := &sessionExecutor{handlers: handlers, async: async}
-	pin, err := flows.StartCapturedSession(ctx, snapshot, sessionID, string(runtimeJSON), caller, references)
+	pin, err := agents.StartCapturedSession(ctx, snapshot, sessionID, string(runtimeJSON), caller, references)
 	if err != nil {
 		return nil, err
 	}
 	runner.sessionID = pin.ID
-	return &Session{Pin: pin, Snapshot: snapshot, Definitions: definitions, Executor: runner, end: flows.EndSession, runner: runner}, nil
+	return &Session{Pin: pin, Snapshot: snapshot, Definitions: definitions, Executor: runner, end: agents.EndSession, runner: runner}, nil
 }
 
 // MCPTool is the captured MCP tool a model-facing tool name stands for; false
-// for a built-in tool (a route's transfer, end_call, send_dtmf).
-func (s *Session) MCPTool(name string) (flow.MCPToolSnapshot, bool) {
+// for a built-in tool (a handoff's transfer, end_call, send_dtmf).
+func (s *Session) MCPTool(name string) (agent.MCPToolSnapshot, bool) {
 	for _, t := range s.Snapshot.MCPTools {
 		if runtimeToolName(t.ServerID, t.RemoteName) == name {
 			return t, true
 		}
 	}
-	return flow.MCPToolSnapshot{}, false
+	return agent.MCPToolSnapshot{}, false
 }
 
 func (s *Session) Close(ctx context.Context) error {

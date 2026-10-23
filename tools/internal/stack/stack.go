@@ -186,8 +186,8 @@ func (s *Server) Call(method, path string, body any) (json.RawMessage, error) {
 }
 
 // Token mints a single-use voice token.
-func (s *Server) Token(principal, flowID string) (string, error) {
-	d, err := s.Call("POST", "voice-tokens", map[string]string{"principal": principal, "flow_id": flowID})
+func (s *Server) Token(principal, agentID string) (string, error) {
+	d, err := s.Call("POST", "voice-tokens", map[string]string{"principal": principal, "agent_id": agentID})
 	if err != nil {
 		return "", err
 	}

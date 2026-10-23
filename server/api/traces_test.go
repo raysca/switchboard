@@ -26,32 +26,32 @@ func newTestStore(t *testing.T) *storage.Store {
 	return s
 }
 
-func createTestFlowAndVersion(t *testing.T, s *storage.Store) (string, string, string) {
+func createTestAgentAndVersion(t *testing.T, s *storage.Store) (string, string, string) {
 	t.Helper()
 	ctx := context.Background()
-	flowID := storage.NewID()
-	a := storage.Flow{ID: flowID, Name: "APIAgent", Enabled: true, CreatedAt: time.Now()}
-	if err := s.Flows().Create(ctx, a); err != nil {
+	agentID := storage.NewID()
+	a := storage.Agent{ID: agentID, Name: "APIAgent", Enabled: true, CreatedAt: time.Now()}
+	if err := s.Agents().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := publishTestVersion(ctx, s, flowID, []byte(`{"llm":"test"}`), nil)
+	v, err := publishTestVersion(ctx, s, agentID, []byte(`{"llm":"test"}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return flowID, v.ID, v.ConfigHash
+	return agentID, v.ID, v.ConfigHash
 }
 
 func setupTracesHandler(t *testing.T) (*storage.Store, http.Handler, string, string) {
 	t.Helper()
 	s := newTestStore(t)
-	flowID, vID, hash := createTestFlowAndVersion(t, s)
+	agentID, vID, hash := createTestAgentAndVersion(t, s)
 
 	sessID := storage.NewID()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	sess := storage.SessionRecord{
 		ID:                  sessID,
-		FlowID:              flowID,
-		FlowVersionID:       vID,
+		AgentID:             agentID,
+		AgentVersionID:      vID,
 		ConfigHash:          hash,
 		Status:              "active",
 		StartedAt:           now,
@@ -327,13 +327,13 @@ func TestTracesMethodNotAllowedAndNotFound(t *testing.T) {
 
 func TestSessionsSayWhetherTheyWereADraft(t *testing.T) {
 	s, handler, sessID, _ := setupTracesHandler(t)
-	flowID, versionID, _ := createTestFlowAndVersion(t, s)
+	agentID, versionID, _ := createTestAgentAndVersion(t, s)
 	draftHash, _, err := storage.ConfigHash([]byte(`{"draft":"yes"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	draftID := storage.NewID()
-	if err := s.Sessions().Create(context.Background(), storage.SessionRecord{ID: draftID, FlowID: flowID, FlowVersionID: versionID, ConfigHash: draftHash, Status: "active", StartedAt: time.Now().UTC(), Draft: true}); err != nil {
+	if err := s.Sessions().Create(context.Background(), storage.SessionRecord{ID: draftID, AgentID: agentID, AgentVersionID: versionID, ConfigHash: draftHash, Status: "active", StartedAt: time.Now().UTC(), Draft: true}); err != nil {
 		t.Fatal(err)
 	}
 	for id, want := range map[string]bool{sessID: false, draftID: true} {
@@ -353,11 +353,11 @@ func TestSessionsSayWhetherTheyWereADraft(t *testing.T) {
 
 func TestSessionsCarryTheCallerTheEndReasonAndAMedianReply(t *testing.T) {
 	s := newTestStore(t)
-	flowID, vID, hash := createTestFlowAndVersion(t, s)
+	agentID, vID, hash := createTestAgentAndVersion(t, s)
 	ctx := context.Background()
 	id := storage.NewID()
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	if err := s.Sessions().Create(ctx, storage.SessionRecord{ID: id, FlowID: flowID, FlowVersionID: vID, ConfigHash: hash, Status: "active", StartedAt: now, Caller: "flow-test-abc"}); err != nil {
+	if err := s.Sessions().Create(ctx, storage.SessionRecord{ID: id, AgentID: agentID, AgentVersionID: vID, ConfigHash: hash, Status: "active", StartedAt: now, Caller: "agent-test-abc"}); err != nil {
 		t.Fatal(err)
 	}
 	for i, l := range []string{`{"voice_to_voice_ms":500}`, `{"voice_to_voice_ms":900}`, `{"voice_to_voice_ms":700}`} {
@@ -366,7 +366,7 @@ func TestSessionsCarryTheCallerTheEndReasonAndAMedianReply(t *testing.T) {
 		}
 	}
 	idle := storage.NewID() // a session with no measured turn
-	if err := s.Sessions().Create(ctx, storage.SessionRecord{ID: idle, FlowID: flowID, FlowVersionID: vID, ConfigHash: hash, Status: "active", StartedAt: now.Add(time.Second)}); err != nil {
+	if err := s.Sessions().Create(ctx, storage.SessionRecord{ID: idle, AgentID: agentID, AgentVersionID: vID, ConfigHash: hash, Status: "active", StartedAt: now.Add(time.Second)}); err != nil {
 		t.Fatal(err)
 	}
 	handler := api.NewTracesHandler(s.Sessions(), s.Traces())
@@ -386,7 +386,7 @@ func TestSessionsCarryTheCallerTheEndReasonAndAMedianReply(t *testing.T) {
 	for _, d := range list.Data {
 		byID[d.ID] = d
 	}
-	if d := byID[id]; d.Caller != "flow-test-abc" || d.EndReason != "" || d.MedianReplyMS == nil || *d.MedianReplyMS != 700 {
+	if d := byID[id]; d.Caller != "agent-test-abc" || d.EndReason != "" || d.MedianReplyMS == nil || *d.MedianReplyMS != 700 {
 		t.Fatalf("list row: %+v median %v", d, d.MedianReplyMS)
 	}
 	if d := byID[idle]; d.MedianReplyMS != nil {
@@ -397,13 +397,44 @@ func TestSessionsCarryTheCallerTheEndReasonAndAMedianReply(t *testing.T) {
 	}
 	var one struct{ Data api.SessionDTO }
 	get("/api/v1/sessions/"+id, &one)
-	if one.Data.EndReason != "silent_caller" || one.Data.MedianReplyMS == nil || *one.Data.MedianReplyMS != 700 || one.Data.Caller != "flow-test-abc" {
+	if one.Data.EndReason != "silent_caller" || one.Data.MedianReplyMS == nil || *one.Data.MedianReplyMS != 700 || one.Data.Caller != "agent-test-abc" {
 		t.Fatalf("get: %+v", one.Data)
 	}
 }
 
-// publishTestVersion publishes config (with the given MCP selection) as the flow's next version.
-func publishTestVersion(ctx context.Context, s *storage.Store, flowID string, config []byte, tools []storage.SelectedTool) (storage.FlowVersion, error) {
-	v, _, err := s.Flows().MutateAndPublish(ctx, flowID, storage.FlowMutation{Tools: &tools}, config)
+// publishTestVersion publishes config (with the given MCP selection) as the agent's next version.
+func publishTestVersion(ctx context.Context, s *storage.Store, agentID string, config []byte, tools []storage.SelectedTool) (storage.AgentVersion, error) {
+	v, _, err := s.Agents().MutateAndPublish(ctx, agentID, storage.AgentMutation{Tools: &tools}, config)
 	return v, err
+}
+
+// The per-agent call list is a query filter, the one input an unknown-key decoder
+// would not catch: ?agent_id= must filter, and the stale pre-rename key must be refused
+// rather than silently listing every call.
+func TestListSessionsAgentFilter(t *testing.T) {
+	s, handler, sessID, _ := setupTracesHandler(t)
+	otherAgent, otherVersion, otherHash := createTestAgentAndVersion(t, s)
+	otherID := storage.NewID()
+	if err := s.Sessions().Create(context.Background(), storage.SessionRecord{ID: otherID, AgentID: otherAgent, AgentVersionID: otherVersion, ConfigHash: otherHash, Status: "active", StartedAt: time.Now().UTC(), ProviderStackJSON: `{}`, RuntimeSnapshotJSON: `{}`}); err != nil {
+		t.Fatal(err)
+	}
+	list := func(query string) (int, []api.SessionDTO) {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/sessions?"+query, nil))
+		var resp struct {
+			Data []api.SessionDTO `json:"data"`
+		}
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		return w.Code, resp.Data
+	}
+	if code, all := list(""); code != http.StatusOK || len(all) != 2 {
+		t.Fatalf("unfiltered: %d %d calls", code, len(all))
+	}
+	code, got := list("agent_id=" + otherAgent)
+	if code != http.StatusOK || len(got) != 1 || got[0].ID != otherID || got[0].AgentID != otherAgent {
+		t.Fatalf("agent_id filter: %d %+v (other session %s, first session %s)", code, got, otherID, sessID)
+	}
+	if code, got := list("flow" + "_id=" + otherAgent); code != http.StatusBadRequest {
+		t.Fatalf("a stale key must be rejected, got %d with %d calls", code, len(got))
+	}
 }

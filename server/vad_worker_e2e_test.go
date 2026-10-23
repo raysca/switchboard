@@ -66,7 +66,7 @@ func (p *pinRecorder) Register(id uint64) vad.Stream {
 // cannot restart (crash loop): both callers' speech is still detected, the dead worker stays out of capacity
 // and the restarts metric counts its attempts.
 func TestCallBehaviorVADKeepsHearingCallersWhileAWorkerCrashLoops(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe())
+	r := newAgentRigE2E(t, newProbe())
 	flag := filepath.Join(t.TempDir(), "crash")
 	cfg := vad.DefaultConfig()
 	cfg.Workers = 2
@@ -79,8 +79,8 @@ func TestCallBehaviorVADKeepsHearingCallersWhileAWorkerCrashLoops(t *testing.T) 
 	t.Cleanup(func() { _ = vexec.Close() })
 	rec := &pinRecorder{Executor: vexec}
 	r.s.SetVADExecutor(rec)
-	flowID := behaviorFlow(t, r, "Listener", "listenvoice", ``)
-	calls := []*e2eCall{r.dial(flowID), r.dial(flowID)} // consecutive session ids: one per worker
+	agentID := behaviorAgent(t, r, "Listener", "listenvoice", ``)
+	calls := []*e2eCall{r.dial(agentID), r.dial(agentID)} // consecutive session ids: one per worker
 	speech := callerSpeech(t)
 	heard := func(c *e2eCall) int { return countOf(c.wireLog(), "msg:user-started-speaking") }
 	for i, c := range calls {

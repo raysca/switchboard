@@ -32,14 +32,14 @@ func TestServerConfigTellsTheEditorTheSoundNamesAndQuietCallerDefaultsWithoutPat
 		t.Fatalf("built-in quiet-caller defaults: %+v", out.Data.Idle)
 	}
 	s.cfg.Audio.Backgrounds = map[string]CueConfig{"office": {File: "/secret/dir/office.wav"}, "cafe": {File: "/secret/dir/cafe.wav"}}
-	s.cfg.Audio.AllowFlowBackground, s.cfg.Audio.BackgroundDefault = true, "cafe"
+	s.cfg.Audio.AllowAgentBackground, s.cfg.Audio.BackgroundDefault = true, "cafe"
 	s.cfg.Idle.UserTimeout, s.cfg.Idle.MaxPrompts, s.cfg.Idle.PromptMode = 8*time.Second, 3, "say"
 	body, out = get()
 	if out.Data.Audio.BackgroundDefault != "cafe" {
 		t.Fatalf("default sound: %q", out.Data.Audio.BackgroundDefault)
 	}
-	if got := strings.Join(out.Data.Audio.Backgrounds, ","); got != "cafe,office" || !out.Data.Audio.AllowFlowBackground {
-		t.Fatalf("sounds %q allow=%v", got, out.Data.Audio.AllowFlowBackground)
+	if got := strings.Join(out.Data.Audio.Backgrounds, ","); got != "cafe,office" || !out.Data.Audio.AllowAgentBackground {
+		t.Fatalf("sounds %q allow=%v", got, out.Data.Audio.AllowAgentBackground)
 	}
 	if out.Data.Idle.UserTimeoutMS != 8000 || out.Data.Idle.MaxPrompts != 3 || out.Data.Idle.PromptMode != "say" {
 		t.Fatalf("idle: %+v", out.Data.Idle)

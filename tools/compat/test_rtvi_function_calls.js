@@ -2,7 +2,7 @@
  * test_rtvi_function_calls.js
  *
  * The released @pipecat-ai/client-js@1.13.1 with @pipecat-ai/websocket-transport@1.7.2, against a running
- * Switchboard server: one text turn makes the flow call a tool; prints, as one JSON line after "EVENTS ",
+ * Switchboard server: one text turn makes the agent call a tool; prints, as one JSON line after "EVENTS ",
  * the function-call callbacks the client fired (in order), the ids its event emitter saw and the bot-tts-text payloads.
  * Driven by server/tool_events_client_e2e_test.go, which asserts them. A
  * second "barrier" turn is answered before the events are printed, so the list is complete.

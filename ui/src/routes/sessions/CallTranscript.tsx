@@ -1,6 +1,6 @@
 import type { CallLine } from "./callStats";
 
-/** What was said, each reply labelled by the step that said it; routes are marked where they happened. */
+/** What was said, each reply labelled by the step that said it; handoffs are marked where they happened. */
 export function CallTranscript({ lines }: { lines: CallLine[] }) {
   const spoken = lines.some((l) => l.kind === "say");
   return (
@@ -9,9 +9,9 @@ export function CallTranscript({ lines }: { lines: CallLine[] }) {
       {lines.length > 0 && (
         <ol className="call-transcript" aria-label="Transcript">
           {lines.map((l, i) =>
-            l.kind === "route" ? (
-              <li key={i} className="call-transcript__route">
-                <span aria-hidden="true">⇢</span> Routed {l.from} → {l.to}
+            l.kind === "handoff" ? (
+              <li key={i} className="call-transcript__handoff">
+                <span aria-hidden="true">⇢</span> Handed off {l.from} → {l.to}
               </li>
             ) : (
               <li key={i}>

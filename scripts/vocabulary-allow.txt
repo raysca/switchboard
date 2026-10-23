@@ -1,0 +1,118 @@
+# glob	ids	fragment	# reason
+docs/pipecat-parity-matrix.md	F	pipecat-flows	# Pipecat's Python DSL (proper noun)
+docs/pipecat-parity-matrix.md	F	Pipecat Flows	# proper noun
+ui/src/**	F	ReactFlow	# @xyflow/react component names
+core/frame.go	F	flow direction	# generic English: frame direction
+core/turn/mute.go	F	flowing	# audio keeps flowing (data flow)
+core/turn/mute.go	F	flow downstream	# data flow
+core/output_backlog_test.go	F	TTS flows after	# data flow
+examples/custom_processor/main.go	F	frames flowing	# data flow
+providers/deepgram/stt.go	F	until audio flows	# data flow
+providers/elevenlabs/stt.go	F	until audio flows	# data flow
+providers/nvidia/*.go	F	flow control	# HTTP/2 flow control
+providers/nvidia/*.go	F	flow-control	# HTTP/2 flow control
+tools/compat/whisker/**	F	audio_frame_flow	# Whisker conformance scenario (frame data flow)
+tools/compat/whisker/**	F	frame.flow	# debug event name for frame data flow
+tools/eval/runner_test.go	F	audio_frame_flow	# same scenario
+tools/compat/testdata/parity/mute.json	F	flow downstream	# generated golden reason (data flow)
+tools/compat/parity/gen_goldens.py	F	flow downstream	# generator of the golden above
+docs/benchmarks/container-soak-churn-chaos.md	F	traffic flows	# generic English
+server/api/**	R	route not found	# HTTP 404 message
+server/api_routes.go	R	api_routes	# HTTP routing table (file name)
+server/api_routes.go	R	routes sit under	# HTTP paths
+server/api_routes.go	R	liveCallRoute	# HTTP path matcher
+server/api_routes.go	R	route not found	# HTTP 404 message
+server/probe_routes.go	R	probe_routes	# HTTP probe endpoints (file name)
+server/api_*_test.go	R	management route	# HTTP endpoint
+server/api_routes_table_test.go	R	routing	# HTTP prefix routing
+server/adminui/*.go	R	client-side routes	# SPA paths
+server/public_admin_test.go	R	real routes still win	# SPA/HTTP paths
+server/public_admin_test.go	R	a client route must	# SPA fallback
+server/management.go	R	routes pointing	# HTTP handlers
+server/server.go	R	route handler	# HTTP handlers
+server/dtmf.go	R	routed to the tone output	# generic English
+server/config.go	R	TurnConfig routes live calls	# generic English
+core/core_test.go	R	routing	# frame direction routing
+core/turn/manager.go	R	route normally	# generic English
+vad/resilience_test.go	R	routes slog	# generic English
+docs/security/mcp.md	R	/api/v1/mcp-servers` routes	# HTTP endpoints
+docs/decisions/pipecat-evals.md	R	per-turn routing	# generic English
+e2e/tests-oneport/**	R	client route	# SPA fallback
+deploy/smoke-cloudrun.sh	R	client route	# SPA fallback
+server/api_routes_table_test.go	R	api_routes_table	# HTTP routing table test (file name)
+server/tool_frames_e2e_test.go	F	FramesFlowThrough	# frames flowing (verb)
+core/failover_test.go	R	RoutesReenter	# test name: candidates are routed to the next provider (generic English)
+core/naming_test.go	R	Route	# the naming test that bans Route in core's exported API
+server/adminui/adminui_test.go	R	ClientRoutes	# SPA client-side routes
+server/api/agents.go	R	management route handler	# HTTP handler
+server/api/traces.go	R	tracesRoute	# HTTP sub-route handler
+server/api_agent_boundary_test.go	R	*	# HTTP management-boundary test (file is HTTP-only for R)
+server/api_operations_boundary_test.go	R	*	# HTTP management-boundary test (file is HTTP-only for R)
+server/api_provider_boundary_test.go	R	*	# HTTP management-boundary test (file is HTTP-only for R)
+server/api_session_boundary_test.go	R	*	# HTTP management-boundary test (file is HTTP-only for R)
+server/api_boundary_test.go	R	AuthRoute	# HTTP route-separation test name
+server/api_mcp_boundary_test.go	R	not routed	# HTTP request routing
+server/api_routes_table_test.go	R	DemoRoutes	# HTTP routing table test
+server/live_calls_api.go	R	liveCallRoute	# HTTP path matcher
+server/live_calls_api_test.go	R	LiveCallRoutes	# HTTP routes of the live-call API
+server/live_calls_api_test.go	R	stored-session routes	# HTTP routes
+server/management.go	R	providersRoutes	# HTTP handler
+server/providers_test.go	R	providersRoutes	# HTTP handler
+server/mcp/mcptest/mcptest.go	R	would route	# generic English (request routing)
+server/mcp/sdk_client.go	R	proxy routing	# generic English (network proxy)
+server/mcp/update_test.go	R	PatchRoute	# HTTP route test name
+server/server.go	R	setupRoutes	# HTTP mux setup
+server/server.go	R	adminRoutes	# HTTP mux for the admin listener
+server/api/traces_test.go	F	"flow" + "_id="	# proves the old query key is refused (split so the guard does not read it as a live use)
+server/api_boundary_test.go	F	"flow"+"_id"	# proves the old token claim is absent
+server/api_boundary_test.go	F	"flows	# proves the old collection path is gone
+server/config_defaults_test.go	F	max_sessions_per_" + "flow	# proves the old YAML keys are refused
+server/config_defaults_test.go	F	allow_" + "flow_background	# proves the old YAML keys are refused
+server/config_defaults_test.go	F	for_" + "flows	# proves the old YAML keys are refused
+server/config.go	F	flows to VAD	# audio data flow
+server/redaction_test.go	F	flowing	# data flow
+server/turn_stop_test.go	F	flowing	# data flow
+tools/provtest/report.go	F	flowing	# data flow
+tools/provtest/stt.go	F	flowing	# data flow
+server/storage/schema_names_test.go	F	"flow"	# the test that bans the old word in the schema
+server/storage/schema_names_test.go	F	says flow	# failure text of that test
+docs/api/mcp.md	R	api_routes.go	# HTTP routing table file name
+docs/api/mcp.md	R	before routing to the handler	# HTTP request routing
+docs/api/v1.md	R	management routes	# HTTP endpoints
+docs/api/v1.md	R	agent routes are provided	# HTTP endpoints
+docs/api/v1.md	R	no route accepts	# HTTP endpoint
+docs/api/v1.md	R	pipeline import route	# HTTP endpoint
+docs/api/v1.md	R	credentials` routes no longer	# HTTP endpoints
+docs/api/v1.md	R	must route token issuance	# load balancer routing
+docs/benchmarks/nvidia-live.md	R	cold route	# network route
+docs/deployment.md	R	management route still	# HTTP endpoint
+docs/deployment.md	R	api_routes.go	# HTTP routing table file name
+docs/deployment.md	R	sticky routing	# load balancer routing
+docs/deployment.md	R	| route token issue	# load balancer routing
+docs/deployment.md	R	Alertmanager routing	# alert routing
+docs/operations.md	R	stragglers routed	# load balancer routing
+docs/operations.md	R	still routed afterwards	# load balancer routing
+docs/operations.md	R	sticky routing	# load balancer routing
+docs/operations.md	R	instances, route by	# load balancer routing
+docs/pipecat-compatibility.md	F	Audio frame flow	# generic English: data flow
+docs/pipecat-parity-matrix.md	F	keeps flowing	# generic English: data flow
+docs/pipecat-parity-matrix.md	R	dropping or routing the text	# generic English
+docs/pipecat-parity-matrix.md	R	cross-instance routing	# generic English: request routing
+docs/security/credentials.md	R	management route,	# HTTP endpoint
+docs/security/mcp.md	R	proxy routing	# HTTP proxy routing
+docs/security/mcp.md	F	Cancellation flows into	# generic English: data flow
+ui/src/**	F	React Flow	# @xyflow/react library name in comments
+ui/src/**	F	react-flow	# @xyflow/react CSS class names
+e2e/**	F	react-flow	# @xyflow/react class names and library name
+e2e/**	F	React Flow	# @xyflow/react library name in comments
+e2e/tests-agents/**	R	page.route(	# Playwright network interception API
+ui/src/app/App.test.tsx	F	/flows	# the negative test: the old path is gone
+ui/src/app/App.tsx	R	Route,	# react-router component import
+ui/src/app/App.tsx	R	Routes,	# react-router component import
+ui/src/**/*.test.tsx	R	, Route, Routes	# react-router components in the test imports
+server/mcp/http_test.go	R	DetachRoutes	# HTTP routes (test name)
+server/mcp/http_test.go	R	MCPRoutesDistinguish	# HTTP routes (test name)
+server/storage/storage.go	F	FROM flows WHERE	# refuses a pre-rename database
+server/storage/storage_test.go	F	CREATE TABLE flows	# builds a pre-rename database
+server/storage/storage_test.go	F	.flows (id	# same, in Postgres
+docs/security/mcp.md	R	api_routes.go	# HTTP routing table file name

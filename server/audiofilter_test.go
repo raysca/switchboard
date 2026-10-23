@@ -2,7 +2,7 @@ package server
 
 import (
 	"fmt"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"os"
 	"path/filepath"
 	"strings"
@@ -239,35 +239,35 @@ func tooManyCues(path string) map[string]CueConfig {
 
 func ptrB(v bool) *bool { return &v }
 
-func TestAFlowsAudioSettingsReplaceTheServersPerCall(t *testing.T) {
+func TestAnAgentsAudioSettingsReplaceTheServersPerCall(t *testing.T) {
 	zero, minusSix := 0.0, -6.0
 	strong := 0.8
 	c := DefaultConfig(ProfileDevelopment)
 	// Server defaults: nothing on.
 	if f, err := buildInputFilter(c, nil, nil); f != nil || err != nil {
-		t.Fatalf("server off, flow silent: %v %v", f, err)
+		t.Fatalf("server off, agent silent: %v %v", f, err)
 	}
-	if f, err := buildInputFilter(c, &flow.AudioSettings{Denoise: &flow.DenoiseSettings{}}, nil); f == nil || err != nil {
-		t.Fatalf("flow denoise on, server off: %v %v", f, err)
+	if f, err := buildInputFilter(c, &agent.AudioSettings{Denoise: &agent.DenoiseSettings{}}, nil); f == nil || err != nil {
+		t.Fatalf("agent denoise on, server off: %v %v", f, err)
 	}
-	if f, err := buildInputFilter(c, &flow.AudioSettings{Denoise: &flow.DenoiseSettings{Strength: &strong}}, nil); f == nil || err != nil {
-		t.Fatalf("flow denoise with a strength: %v %v", f, err)
+	if f, err := buildInputFilter(c, &agent.AudioSettings{Denoise: &agent.DenoiseSettings{Strength: &strong}}, nil); f == nil || err != nil {
+		t.Fatalf("agent denoise with a strength: %v %v", f, err)
 	}
-	if f, err := buildInputFilter(c, &flow.AudioSettings{OutputGainDB: &minusSix}, nil); f != nil || err != nil {
-		t.Fatalf("a flow without denoise leaves the server's choice: %v %v", f, err)
+	if f, err := buildInputFilter(c, &agent.AudioSettings{OutputGainDB: &minusSix}, nil); f != nil || err != nil {
+		t.Fatalf("an agent without denoise leaves the server's choice: %v %v", f, err)
 	}
-	if g, err := buildOutputGain(c, &flow.AudioSettings{OutputGainDB: &minusSix}); g == nil || err != nil {
-		t.Fatalf("flow gain, server 0: %v %v", g, err)
+	if g, err := buildOutputGain(c, &agent.AudioSettings{OutputGainDB: &minusSix}); g == nil || err != nil {
+		t.Fatalf("agent gain, server 0: %v %v", g, err)
 	}
-	// Server on: the flow's silence keeps it, an explicit 0 dB removes the gain stage.
+	// Server on: the agent's silence keeps it, an explicit 0 dB removes the gain stage.
 	c.Audio.InputFilters, c.Audio.OutputGainDB = []string{"denoise"}, -3
-	if f, _ := buildInputFilter(c, &flow.AudioSettings{OutputGainDB: &minusSix}, nil); f == nil {
-		t.Fatal("server denoise lost when the flow only sets gain")
+	if f, _ := buildInputFilter(c, &agent.AudioSettings{OutputGainDB: &minusSix}, nil); f == nil {
+		t.Fatal("server denoise lost when the agent only sets gain")
 	}
 	if g, _ := buildOutputGain(c, nil); g == nil {
-		t.Fatal("server gain lost for a flow with no audio settings")
+		t.Fatal("server gain lost for an agent with no audio settings")
 	}
-	if g, err := buildOutputGain(c, &flow.AudioSettings{OutputGainDB: &zero}); g != nil || err != nil {
+	if g, err := buildOutputGain(c, &agent.AudioSettings{OutputGainDB: &zero}); g != nil || err != nil {
 		t.Fatalf("an explicit 0 dB must override the server's -3: %v %v", g, err)
 	}
 }

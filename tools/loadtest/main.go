@@ -255,14 +255,14 @@ func run(f *flags) (*Report, error) {
 		}
 	}
 	defer srv.Stop() // also runs on panic; signal handling cancels ctx, which unwinds here
-	flow, err := srv.Provision()
+	agent, err := srv.Provision()
 	if err != nil {
 		return nil, err
 	}
 	cp := CallParams{
 		IdleRSSMB:   srv.Proc().RSSMB,
 		Server:      srv,
-		FlowID:      flow,
+		AgentID:     agent,
 		Clip:        clip,
 		Turns:       f.turns,
 		MinTurns:    f.minTurns,

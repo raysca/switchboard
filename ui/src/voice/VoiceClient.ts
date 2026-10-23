@@ -105,12 +105,12 @@ export interface VoiceClientState {
 type VoiceClientListener = (state: VoiceClientState) => void;
 
 interface ConnectOptions {
-  flowId: string;
+  agentId: string;
   principal?: string;
   wsBaseUrl?: string;
   /** Turns start and end on the hold-to-talk button instead of voice detection. */
   pushToTalk?: boolean;
-  /** An unpublished flow config to run instead of the published version (a test call). */
+  /** An unpublished agent config to run instead of the published version (a test call). */
   draft?: { config: unknown; mcp_tools?: ToolSelection[] };
   /** A text-only call (speech-to-text is `silence`): no microphone is requested and no audio is sent. */
   textOnly?: boolean;
@@ -210,11 +210,11 @@ export class VoiceClient {
       return;
     }
 
-    const flowId = options.flowId?.trim();
-    if (!flowId) {
+    const agentId = options.agentId?.trim();
+    if (!agentId) {
       this.updateState({
         sessionState: "error",
-        error: { category: "token", message: "A flow is required to start a call.", fatal: true },
+        error: { category: "token", message: "An agent is required to start a call.", fatal: true },
       });
       return;
     }
@@ -262,7 +262,7 @@ export class VoiceClient {
     try {
       const tokenResp = await this.apiClient.issueVoiceToken({
         principal,
-        flow_id: flowId,
+        agent_id: agentId,
         ...(options.draft ? { draft: options.draft } : {}),
       });
       if (attempt !== this.attempt) return;

@@ -30,14 +30,14 @@ func TestMaxCallDurationFiresOnceWithReason(t *testing.T) {
 	}
 	s.env = testProviderEnv(t)
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
-	flowID := readyTestFlow(t, s)
+	agentID := readyTestAgent(t, s)
 	for _, stage := range []string{"stt", "llm", "tts"} {
 		s.registry.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 	}
 	ts := httptest.NewServer(s.wsServer)
 	defer ts.Close()
 
-	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+flowID+`"}`)
+	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+agentID+`"}`)
 	var resp struct {
 		Data struct{ Token string } `json:"data"`
 	}
@@ -78,8 +78,8 @@ func TestMaxCallDurationFiresOnceWithReason(t *testing.T) {
 	}
 }
 
-// K10: the call's timer runs for the CallSpec's limit (the flow's, already clamped to the server's), not
-// the server's own: a flow limit tighter than the server's cannot be waited for in an e2e (60 s minimum).
+// K10: the call's timer runs for the CallSpec's limit (the agent's, already clamped to the server's), not
+// the server's own: an agent limit tighter than the server's cannot be waited for in an e2e (60 s minimum).
 func TestTheCallLimitTimerRunsForTheCallSpecsLimit(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
 	cfg.Limits.MaxCallDuration = 30 * time.Minute
@@ -102,8 +102,8 @@ func TestTheCallLimitTimerRunsForTheCallSpecsLimit(t *testing.T) {
 // K10 end to end: a 30 minute server limit and a call whose spec says 700 ms ends with the time limit,
 // so the timer reads the CallSpec, not the server's own limit.
 func TestCallBehaviorTheCallEndsAtItsSpecsLimitNotTheServers(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe(), serverIdle(0, ""), func(c *Config) { c.Limits.MaxCallDuration = 30 * time.Minute })
+	r := newAgentRigE2E(t, newProbe(), serverIdle(0, ""), func(c *Config) { c.Limits.MaxCallDuration = 30 * time.Minute })
 	r.s.adjustCall = func(call *CallSpec) { call.MaxCallDuration = 700 * time.Millisecond }
-	c := r.dial(behaviorFlow(t, r, "Plain", "plainvoice", ``))
+	c := r.dial(behaviorAgent(t, r, "Plain", "plainvoice", ``))
 	r.waitEnded(c.sessionID, storage.EndTimeLimit)
 }

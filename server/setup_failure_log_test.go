@@ -13,7 +13,7 @@ import (
 )
 
 // M2-02: a failed call setup leaves exactly one warn line naming the cause
-// category, session and flow.
+// category, session and agent.
 func TestSetupFailureLogsOneWarnWithCategory(t *testing.T) {
 	rd, err := redact.New(redact.Config{Enabled: true})
 	if err != nil {
@@ -22,8 +22,8 @@ func TestSetupFailureLogsOneWarnWithCategory(t *testing.T) {
 	var buf bytes.Buffer
 	s := &Server{redactor: rd, logger: slog.New(slog.NewTextHandler(&buf, nil))}
 
-	s.logSetupFailure(7, "flow-1", "build_pipeline", errors.New(`build pipeline: nvidia.stt: parse "https://u:sk-live-SECRET@host": invalid port`))
-	s.logSetupFailure(8, "flow-1", "resolve", fmt.Errorf("resolve: %w", context.DeadlineExceeded))
+	s.logSetupFailure(7, "agent-1", "build_pipeline", errors.New(`build pipeline: nvidia.stt: parse "https://u:sk-live-SECRET@host": invalid port`))
+	s.logSetupFailure(8, "agent-1", "resolve", fmt.Errorf("resolve: %w", context.DeadlineExceeded))
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	if len(lines) != 2 {
@@ -31,7 +31,7 @@ func TestSetupFailureLogsOneWarnWithCategory(t *testing.T) {
 	}
 	for i, want := range []string{"category=build_pipeline", "category=timeout"} {
 		l := lines[i]
-		if !strings.Contains(l, "level=WARN") || !strings.Contains(l, "call setup failed") || !strings.Contains(l, want) || !strings.Contains(l, "flow=flow-1") {
+		if !strings.Contains(l, "level=WARN") || !strings.Contains(l, "call setup failed") || !strings.Contains(l, want) || !strings.Contains(l, "agent=agent-1") {
 			t.Errorf("line %d = %s", i, l)
 		}
 	}

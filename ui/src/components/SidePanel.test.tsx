@@ -19,7 +19,7 @@ function Harness({ autoFocusField = false }: { autoFocusField?: boolean }) {
         Open
       </button>
       {open && (
-        <SidePanel title="Flow settings" onClose={() => setOpen(false)} wide={wide} onToggleWide={() => setWide((w) => !w)} returnFocusTo={opener} footer={<button>Done</button>}>
+        <SidePanel title="Agent settings" onClose={() => setOpen(false)} wide={wide} onToggleWide={() => setWide((w) => !w)} returnFocusTo={opener} footer={<button>Done</button>}>
           <label>
             Name
             <input autoFocus={autoFocusField} />
@@ -35,8 +35,8 @@ describe("SidePanel", () => {
     const user = userEvent.setup();
     render(<Harness />);
     await user.click(screen.getByRole("button", { name: "Open" }));
-    const panel = screen.getByRole("complementary", { name: "Flow settings" });
-    expect(screen.getByRole("heading", { name: "Flow settings" })).toHaveFocus();
+    const panel = screen.getByRole("complementary", { name: "Agent settings" });
+    expect(screen.getByRole("heading", { name: "Agent settings" })).toHaveFocus();
     expect(panel).toContainElement(screen.getByRole("button", { name: "Done" }));
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("complementary")).toBeNull();
@@ -57,7 +57,7 @@ describe("SidePanel", () => {
     await user.click(screen.getByRole("button", { name: "Widen" }));
     expect(screen.getByRole("button", { name: "Narrow" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("complementary")).toHaveClass("side-panel--wide");
-    await user.click(screen.getByRole("button", { name: "Close Flow settings" }));
+    await user.click(screen.getByRole("button", { name: "Close Agent settings" }));
     expect(screen.queryByRole("complementary")).toBeNull();
   });
 });

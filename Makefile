@@ -56,11 +56,11 @@ test: build ## build|Vet (with and without xaispeech) + race-test every module w
 	echo "=== All modules passed ==="
 	@$(MAKE) --no-print-directory test-e2e-go
 
-# End to end in Go with the echo provider: a real server, stored flows and a WebSocket client
-# (routes, failed step build, caller speaking mid-route, hang-up mid-route, republish, MCP tool calls,
+# End to end in Go with the echo provider: a real server, stored agents and a WebSocket client
+# (handoffs, failed step build, caller speaking mid-handoff, hang-up mid-handoff, republish, MCP tool calls,
 # no secret leaving the server). `make test` runs it; `make e2e-echo` runs it with the browser suite.
 test-e2e-go: ## free|Go end-to-end tests (real server + WebSocket) against the echo provider (about 45 s)
-	cd server && go test -race -count=1 -tags "$(GOTAGS)" -run 'FlowE2E|NoSecretLeavesTheServer|MCPCall|ContextInjection|CallBehavior|CallRecords|TheOrphanSweep|ATypedTurnLeaves' .
+	cd server && go test -race -count=1 -tags "$(GOTAGS)" -run 'AgentE2E|NoSecretLeavesTheServer|MCPCall|ContextInjection|CallBehavior|CallRecords|TheOrphanSweep|ATypedTurnLeaves' .
 
 # Black-box pipecat.evals run against the Go server on the echo provider (docs/decisions/pipecat-evals.md).
 eval-pipecat: ## free|pipecat.evals black-box run against the server (echo provider)
@@ -96,6 +96,8 @@ verify: test ## build|test + gofmt + manifest/fixture checks: run before a PR
 	node tools/compat/probe_playback_clear.js
 	@echo "=== Docs links and paths ==="
 	node scripts/check-links.mjs --paths
+	@echo "=== Vocabulary guard (allowlist scripts/vocabulary-allow.txt) ==="
+	node scripts/check-vocabulary.mjs
 	@echo "=== All verify checks passed ==="
 
 deadcode: ## build|Unreachable functions not in scripts/deadcode-allow.txt (advisory in CI)
@@ -158,24 +160,24 @@ e2e: ## paid|Playwright browser e2e against REAL Google (GOVOICE_LIVE=1; the mos
 	@test "$$GOVOICE_LIVE" = 1 || { echo "e2e drives real Google providers and spends API credit: run GOVOICE_LIVE=1 make e2e"; exit 1; }
 	cd e2e && npm install --no-audit --no-fund && npx playwright install chromium && npx playwright test
 
-# Routed flows in a real browser against the echo provider: free and offline (about 1 min). Builds
-# bin/server-echo (the echo provider), starts it with the admin UI, then drives the flow designer, a
-# live call with a route, republish, a failed route and a plain flow (e2e/tests-flows).
+# Agents with handoffs in a real browser against the echo provider: free and offline (about 1 min). Builds
+# bin/server-echo (the echo provider), starts it with the admin UI, then drives the agent designer, a
+# live call with a handoff, republish, a failed handoff and a plain agent (e2e/tests-agents).
 E2E_SETUP = cd e2e && npm ci --no-audit --no-fund && npm run typecheck && npx playwright install chromium
-e2e-fake: ui-embed ## free|Playwright browser e2e for routed flows and the one-port server against the echo provider (about 2 min)
+e2e-fake: ui-embed ## free|Playwright browser e2e for agents with handoffs and the one-port server against the echo provider (about 2 min)
 	$(E2E_SETUP)
 	@# Run both suites so a failure in one cannot hide the other; fail if either did.
-	@cd e2e && rc=0; npx playwright test -c playwright.flows.config.ts || rc=1; npx playwright test -c playwright.oneport.config.ts || rc=1; exit $$rc
+	@cd e2e && rc=0; npx playwright test -c playwright.agents.config.ts || rc=1; npx playwright test -c playwright.oneport.config.ts || rc=1; exit $$rc
 
 # Every free end-to-end test: the Go suite, then the browser suite (echo provider, offline, about 2 min).
 e2e-echo: test-e2e-go e2e-fake ## free|Every end-to-end test on the echo provider: Go (test-e2e-go) then browser (e2e-fake)
 
 # The same specs against LIVE xAI (STT, Grok, TTS): the model itself must call the transfer tool. Needs
 # XAI_API_KEY (env or examples/.env; XAI_MODEL optional). Roughly 20 provider requests per run.
-e2e-xai: ## paid|Playwright browser e2e for routed flows against REAL xAI (GOVOICE_LIVE=1; about 20 requests)
+e2e-xai: ## paid|Playwright browser e2e for agents with handoffs against REAL xAI (GOVOICE_LIVE=1; about 20 requests)
 	@test "$$GOVOICE_LIVE" = 1 || { echo "e2e-xai drives real xAI providers and spends API credit: run GOVOICE_LIVE=1 make e2e-xai"; exit 1; }
 	cd ui && npm ci --no-audit --no-fund
-	cd e2e && npm ci --no-audit --no-fund && npx playwright install chromium && E2E_PROVIDER=xai npx playwright test -c playwright.flows.config.ts
+	cd e2e && npm ci --no-audit --no-fund && npx playwright install chromium && E2E_PROVIDER=xai npx playwright test -c playwright.agents.config.ts
 
 e2e-oneport: ui-embed ## free|Playwright e2e of the one-port server (embedded UI, same-origin API and socket) on the echo provider
 	$(E2E_SETUP) && npx playwright test -c playwright.oneport.config.ts
@@ -184,7 +186,7 @@ e2e-oneport: ui-embed ## free|Playwright e2e of the one-port server (embedded UI
 
 # Local development (scripts/dev.sh): `make dev` runs the server and admin UI with
 # generated secrets and a local SQLite store in .govoice-dev/, seeded with a
-# "Dev Assistant" flow from examples/.env. Examples call that flow.
+# "Dev Assistant" agent from examples/.env. Examples call that agent.
 mcp-test: ## dev|Run the MCP test servers on 127.0.0.1:18765 (/ok /open /fail/* /slow) and a black hole on :18766
 	go run ./cmd/mcptest -addr 127.0.0.1:18765 -blackhole-addr 127.0.0.1:18766
 

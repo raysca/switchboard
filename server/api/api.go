@@ -6,7 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"govoice/server/flow"
+	"fmt"
+	"govoice/server/agent"
 	"io"
 	"net/http"
 	"strconv"
@@ -64,17 +65,17 @@ type Pagination struct {
 
 type VoiceTokenRequest struct {
 	Principal string `json:"principal"`
-	FlowID    string `json:"flow_id"`
+	AgentID   string `json:"agent_id"`
 	// Draft, when set, makes a token for a call that runs this config instead of
-	// the flow's published version (a test call). It is validated like a publish.
+	// the agent's published version (a test call). It is validated like a publish.
 	Draft *DraftRequest `json:"draft,omitempty"`
 }
 
-// DraftRequest is an unpublished flow config to test.
+// DraftRequest is an unpublished agent config to test.
 type DraftRequest struct {
 	Config json.RawMessage `json:"config"`
-	// MCPTools is the draft's own tool selection; absent, the flow's current selection applies.
-	MCPTools *[]flow.ToolSelection `json:"mcp_tools,omitempty"`
+	// MCPTools is the draft's own tool selection; absent, the agent's current selection applies.
+	MCPTools *[]agent.ToolSelection `json:"mcp_tools,omitempty"`
 }
 type VoiceTokenResponse struct {
 	Token     string    `json:"token"`
@@ -89,14 +90,14 @@ type ServerConfig struct {
 	MCPSyncIntervalSeconds       int    `json:"mcp_sync_interval_seconds"` // 0: automatic MCP syncs are off
 	ClientIP                     string `json:"client_ip"`
 	Secure                       bool   `json:"secure"`
-	// Audio and Idle tell the editor what a flow can choose from and what a call does when the flow says
+	// Audio and Idle tell the editor what an agent can choose from and what a call does when the agent says
 	// nothing. Names and numbers only: never a file path or prompt text.
 	Audio ServerAudio `json:"audio"`
 	Idle  ServerIdle  `json:"idle"`
 	Turn  ServerTurn  `json:"turn"`
 }
 
-// ServerTurn is the server's effective turn-taking: what a call does when its flow says nothing. Numbers
+// ServerTurn is the server's effective turn-taking: what a call does when its agent says nothing. Numbers
 // are never a raw 0 for "default"; Mute is always a list.
 type ServerTurn struct {
 	Manager         bool     `json:"manager"`
@@ -104,7 +105,7 @@ type ServerTurn struct {
 	Mute            []string `json:"mute"`
 	MaxMuteMS       int      `json:"max_mute_ms"`
 	SpeechTimeoutMS int      `json:"speech_timeout_ms"`
-	// EndOfTurn is the server's detector: smart, eager or default. SmartTurnAvailable is whether a flow
+	// EndOfTurn is the server's detector: smart, eager or default. SmartTurnAvailable is whether an agent
 	// may choose smart; SmartHoldMS is the hold a smart call uses.
 	EndOfTurn          string `json:"end_of_turn"`
 	SmartTurnAvailable bool   `json:"smart_turn_available"`
@@ -112,10 +113,10 @@ type ServerTurn struct {
 }
 
 type ServerAudio struct {
-	Backgrounds         []string `json:"backgrounds"`
-	Cues                []string `json:"cues"` // sound names a flow's route_cue may use
-	AllowFlowBackground bool     `json:"allow_flow_background"`
-	// BackgroundDefault is the sound every call plays unless its flow picks another or none ("" = none).
+	Backgrounds          []string `json:"backgrounds"`
+	Cues                 []string `json:"cues"` // sound names an agent's handoff_cue may use
+	AllowAgentBackground bool     `json:"allow_agent_background"`
+	// BackgroundDefault is the sound every call plays unless its agent picks another or none ("" = none).
 	BackgroundDefault string `json:"background_default"`
 }
 
@@ -160,6 +161,15 @@ func DecodeJSON(r *http.Request, dst any) error {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
+		// encoding/json reports `json: unknown field "x"` as a plain error with no type to match.
+		if q, ok := strings.CutPrefix(err.Error(), "json: unknown field "); ok {
+			if name, uerr := strconv.Unquote(q); uerr == nil {
+				if len(name) > 64 {
+					name = name[:64] + "..."
+				}
+				return fmt.Errorf("unknown field %q", name)
+			}
+		}
 		return errors.New("invalid JSON body")
 	}
 	var extra any

@@ -7,14 +7,14 @@ import (
 	"time"
 )
 
-// A draft may select MCP tools the flow has not published: the call captures exactly the draft's
-// tools, the published flow stays without them, and an ordinary call cannot use them.
+// A draft may select MCP tools the agent has not published: the call captures exactly the draft's
+// tools, the published agent stays without them, and an ordinary call cannot use them.
 func TestADraftCallCanUseAToolThatIsNotPublished(t *testing.T) {
 	r := newMCPCallRig(t)
 	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
-	a := r.flowWith(id, hashes, false, nil) // no tools attached
+	a := r.agentWith(id, hashes, false, nil) // no tools attached
 	cfg := `{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"P"},"tts":{"provider":"echo","voice":"v"}}`
-	payload, _ := json.Marshal(map[string]any{"principal": "alice", "flow_id": a.ID, "draft": map[string]any{
+	payload, _ := json.Marshal(map[string]any{"principal": "alice", "agent_id": a.ID, "draft": map[string]any{
 		"config":    json.RawMessage(cfg),
 		"mcp_tools": []map[string]any{{"mcp_server_id": id, "remote_name": "lookup_order", "schema_hash": hashes["lookup_order"], "required": false}},
 	}})
@@ -35,12 +35,12 @@ func TestADraftCallCanUseAToolThatIsNotPublished(t *testing.T) {
 		rec, err := r.s.store.Sessions().Get(t.Context(), c.sessionID)
 		return err == nil && rec.Draft && len(rec.RuntimeTools) == 1 && rec.RuntimeTools[0].RemoteName == "lookup_order"
 	})
-	published, err := r.s.flows.Get(t.Context(), a.ID)
+	published, err := r.s.agents.Get(t.Context(), a.ID)
 	if err != nil || len(published.Version.MCPTools) != 0 {
-		t.Fatalf("the published flow gained tools: %+v err %v", published.Version.MCPTools, err)
+		t.Fatalf("the published agent gained tools: %+v err %v", published.Version.MCPTools, err)
 	}
 
-	// An ordinary call on the same flow has no such tool.
+	// An ordinary call on the same agent has no such tool.
 	before := len(r.mcp.Records())
 	c2 := r.dial(a.ID)
 	c2.say(`call tool lookup_order {"order_id":"42"}`)

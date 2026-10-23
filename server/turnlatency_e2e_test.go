@@ -4,14 +4,14 @@ import (
 	"encoding/json"
 	"testing"
 
-	"govoice/server/flow"
+	"govoice/server/agent"
 )
 
 func TestAReplyIsStoredWithItsLatencies(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe())
-	f, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "Latency", Config: json.RawMessage(echoFlowConfig("LAT"))})
-	if err != nil || f.Readiness.State != flow.ReadinessReady {
-		t.Fatalf("flow: %+v err %v", f.Readiness, err)
+	r := newAgentRigE2E(t, newProbe())
+	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Latency", Config: json.RawMessage(echoAgentConfig("LAT"))})
+	if err != nil || f.Readiness.State != agent.ReadinessReady {
+		t.Fatalf("agent: %+v err %v", f.Readiness, err)
 	}
 	c := r.dial(f.ID)
 	c.say("hello")

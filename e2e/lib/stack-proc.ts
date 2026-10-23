@@ -3,7 +3,7 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 
-// Shared by the free suites' global setups (flows, one-port): process start-up and readiness.
+// Shared by the free suites' global setups (agents, one-port): process start-up and readiness.
 
 export async function portOpen(port: number): Promise<boolean> {
   return new Promise((resolve) => {

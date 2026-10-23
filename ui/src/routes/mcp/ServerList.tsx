@@ -5,7 +5,7 @@ import { ago, serverStatus } from "./mcpStats";
 export type ServerListProps = {
   servers: MCPServerDTO[];
   toolCounts: Record<string, number | undefined>;
-  /** Per server: how many tools have a changed schema in some flow. */
+  /** Per server: how many tools have a changed schema in some agent. */
   changed: Record<string, number>;
   selectedId: string | undefined;
   now: number;

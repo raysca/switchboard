@@ -176,7 +176,7 @@
   <div class="container">
     <header>
       <h1>Switchboard — Pipecat RTVI Test Client</h1>
-      <p class="subtitle">End-to-End WebSocket Voice &amp; Text Conversation with a Stored Flow</p>
+      <p class="subtitle">End-to-End WebSocket Voice &amp; Text Conversation with a Stored Agent</p>
     </header>
 
     <div class="card controls">
@@ -187,8 +187,8 @@
         <label class="field">Management key
           <input id="managementKey" type="password" autocomplete="off">
         </label>
-        <label class="field">Flow ID
-          <input id="flowId" type="text" autocomplete="off">
+        <label class="field">Agent ID
+          <input id="agentId" type="text" autocomplete="off">
         </label>
         <label class="field">Server WebSocket URL
           <input id="wsUrl" type="url" value="ws://127.0.0.1:8080/ws" autocomplete="off">
@@ -219,7 +219,7 @@
         <div id="transcriptBox" class="transcript-box" aria-live="polite">
           <div class="message bot">
             <div class="meta">System</div>
-            Enter the admin URL, management key and flow ID, then click <strong>Connect</strong>. Speak, or type a message and click <strong>Send text</strong>.
+            Enter the admin URL, management key and agent ID, then click <strong>Connect</strong>. Speak, or type a message and click <strong>Send text</strong>.
           </div>
         </div>
         <form id="textForm" class="text-row">
@@ -241,8 +241,8 @@
 
     const btnConnect = document.getElementById('btnConnect');
     const btnDisconnect = document.getElementById('btnDisconnect');
-    const configInputs = ['adminUrl', 'managementKey', 'flowId', 'wsUrl'].map(id => document.getElementById(id));
-    const [adminUrlInput, managementKeyInput, flowIdInput, wsUrlInput] = configInputs;
+    const configInputs = ['adminUrl', 'managementKey', 'agentId', 'wsUrl'].map(id => document.getElementById(id));
+    const [adminUrlInput, managementKeyInput, agentIdInput, wsUrlInput] = configInputs;
     const errorMsg = document.getElementById('errorMsg');
 
     // Prefill from the client server (make example-web); the page still works
@@ -251,7 +251,7 @@
       if (!d) return;
       adminUrlInput.value = d.adminUrl || adminUrlInput.value;
       wsUrlInput.value = d.wsUrl || wsUrlInput.value;
-      flowIdInput.value = flowIdInput.value || d.flowId || '';
+      agentIdInput.value = agentIdInput.value || d.agentId || '';
       if (d.serverKey) managementKeyInput.placeholder = 'Held by the client server (optional)';
     }).catch(() => {});
     const textForm = document.getElementById('textForm');
@@ -317,7 +317,7 @@
           body: JSON.stringify({
             adminUrl: adminUrlInput.value.trim(),
             managementKey: managementKeyInput.value,
-            flowId: flowIdInput.value.trim()
+            agentId: agentIdInput.value.trim()
           })
         });
         const body = await res.json().catch(() => ({}));

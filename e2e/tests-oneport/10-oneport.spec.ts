@@ -1,6 +1,6 @@
 import http from "node:http";
 import { test, expect } from "../lib/oneport-stack";
-import { api, botReply, connectAdmin, openFlowTest, sendText, startCall, stage } from "../lib/flows-helpers";
+import { api, botReply, connectAdmin, openAgentTest, sendText, startCall, stage } from "../lib/agents-helpers";
 
 // The one-port server: the embedded UI, the management API and the voice socket all on the
 // public origin, with the browser admitted only by origin_allow_same_host. Serial: the last
@@ -15,16 +15,16 @@ test("the UI, its API calls and the voice socket all work from the one public or
 
   await page.goto(stack.publicUrl); // the embedded UI, not Vite
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-  await page.goto(`${stack.publicUrl}/flows`); // a client route survives a hard load (SPA fallback)
-  await expect(page).toHaveURL(/\/flows$/);
+  await page.goto(`${stack.publicUrl}/agents`); // a client route survives a hard load (SPA fallback)
+  await expect(page).toHaveURL(/\/agents$/);
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
 
-  await api(stack, "/flows", {
+  await api(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({ name: "E2E One Port", config: { stt: stage({ model: "chirp" }), llm: stage({ model: "fake-llm", system_prompt: "You are ONEPORT. Answer in one short sentence." }), tts: stage() } }),
   });
   await connectAdmin(page, stack); // the key goes to the same-origin API
-  await openFlowTest(page, "E2E One Port");
+  await openAgentTest(page, "E2E One Port");
   await startCall(page); // the socket is same-origin, admitted only by origin_allow_same_host
   await sendText(page, "hello");
   await expect(botReply(page, /./)).toBeVisible({ timeout: 15_000 });

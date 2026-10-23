@@ -4,7 +4,7 @@ Captured 2026-10-07 on an Apple M4 Pro (12 cores), darwin/arm64, go1.27.1. **Mac
 
 ## What this measures, and what it does not
 
-`tools/loadtest` starts a real server child (`go build ./cmd/server`, plus `vadworker`), provisions an echo-provider flow through the management API with a generated key, and drives N concurrent calls over the real protocol: single-use voice token, WebSocket upgrade, binary protobuf frames (`transport/ws` encoders), RTVI `client-ready`/`bot-ready`, then a real-time 20 ms microphone stream. Each caller plays a real speech clip ("What is two plus two?", `e2e/fixtures/voice-debug.wav`, 1.6 s after silence trim), waits for the bot reply, thinks, and repeats.
+`tools/loadtest` starts a real server child (`go build ./cmd/server`, plus `vadworker`), provisions an echo-provider agent through the management API with a generated key, and drives N concurrent calls over the real protocol: single-use voice token, WebSocket upgrade, binary protobuf frames (`transport/ws` encoders), RTVI `client-ready`/`bot-ready`, then a real-time 20 ms microphone stream. Each caller plays a real speech clip ("What is two plus two?", `e2e/fixtures/voice-debug.wav`, 1.6 s after silence trim), waits for the bot reply, thinks, and repeats.
 
 Exercised: transport and pacing, input handling, Silero VAD in the `vadworker` child (onnxruntime), the VAD stop hangover, STT/LLM/TTS stages (echo provider), output pacer, admission, metrics.
 

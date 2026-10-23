@@ -43,8 +43,8 @@ function getArg(flag, defaultValue) {
   return defaultValue;
 }
 
-const usage = `Usage: node cli.js --flow <flow-id> [--text "<message>"] [--audio <wav>]
-  --flow <flow-id>      stored flow to call (required)
+const usage = `Usage: node cli.js --agent <agent-id> [--text "<message>"] [--audio <wav>]
+  --agent <agent-id>      stored agent to call (required)
   --admin <url>     management API base URL (default http://127.0.0.1:9090)
   --ws <url>        public WebSocket URL (default ws://127.0.0.1:8080/ws)
   --principal <p>   token principal (default rtvi-cli-tester)
@@ -58,7 +58,7 @@ if (args.includes('--help') || args.includes('-h')) {
   process.exit(0);
 }
 
-const flowId = getArg('--flow', null);
+const agentId = getArg('--agent', null);
 const adminUrl = getArg('--admin', 'http://127.0.0.1:9090').replace(/\/+$/, '');
 const wsBaseUrl = getArg('--ws', 'ws://127.0.0.1:8080/ws');
 const principal = getArg('--principal', 'rtvi-cli-tester');
@@ -67,18 +67,18 @@ const textTurn = getArg('--text', null);
 const audioPath = getArg('--audio', path.resolve(__dirname, '../../assets/speech/clip1.wav'));
 const replyTimeoutMs = Number(getArg('--timeout', '20000'));
 
-if (!flowId || !managementKey) {
-  console.error(!flowId ? 'Missing --flow <flow-id>' : 'Missing management key: set GOVOICE_MANAGEMENT_API_KEY or pass --key');
+if (!agentId || !managementKey) {
+  console.error(!agentId ? 'Missing --agent <agent-id>' : 'Missing management key: set GOVOICE_MANAGEMENT_API_KEY or pass --key');
   console.error(usage);
   process.exit(2);
 }
 
-// Issues a single-use voice token for the flow through the management API.
+// Issues a single-use voice token for the agent through the management API.
 async function issueVoiceToken() {
   const res = await fetch(`${adminUrl}/api/v1/voice-tokens`, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${managementKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ principal, flow_id: flowId })
+    body: JSON.stringify({ principal, agent_id: agentId })
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok || !body?.data?.token) {
@@ -91,7 +91,7 @@ async function issueVoiceToken() {
 async function main() {
   console.log('================================================================');
   console.log(` Switchboard: Standalone RTVI Client Test Driver`);
-  console.log(` Flow:        ${flowId}`);
+  console.log(` Agent:       ${agentId}`);
   console.log(` Turn:        ${textTurn !== null ? 'text: "' + textTurn + '"' : 'audio: ' + audioPath}`);
   console.log('================================================================\n');
 
@@ -298,7 +298,7 @@ async function main() {
   const waitResponseStart = Date.now();
   // A spoken reply is complete when the bot stops speaking. bot-llm-stopped
   // arrives before the speech does, so it ends the reply only if no speech
-  // starts within SPEECH_GRACE_MS (a flow that does not speak).
+  // starts within SPEECH_GRACE_MS (an agent that does not speak).
   const SPEECH_GRACE_MS = 3000;
   let llmStoppedAt = 0;
   let replyComplete = false;
@@ -317,7 +317,7 @@ async function main() {
   await client.disconnect();
 
   console.log('\n================================================================');
-  console.log(` Call Test Results Summary: [flow ${flowId}]`);
+  console.log(` Call Test Results Summary: [agent ${agentId}]`);
   console.log('================================================================');
   console.log(` Handshake Success:       ${botReadyReceived ? 'PASS (' + (t_bot_ready - t0_connect) + 'ms)' : 'FAIL'}`);
   console.log(` User Speech Detected:    ${userStartedSpeaking ? 'PASS' : 'SKIPPED'}`);

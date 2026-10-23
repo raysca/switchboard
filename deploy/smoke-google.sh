@@ -1,7 +1,7 @@
 #!/bin/bash
 # Release smoke test: builds the image, starts deploy/docker-compose.yaml (server,
-# postgres flow store, nginx) with a Google service account mounted read-only, then
-# creates a flow through the management API (it must be ready: the server found
+# postgres agent store, nginx) with a Google service account mounted read-only, then
+# creates an agent through the management API (it must be ready: the server found
 # the account through GOOGLE_APPLICATION_CREDENTIALS) and issues a voice token for it.
 #
 # Required: TOKEN_SECRET, GOOGLE_APPLICATION_CREDENTIALS (host path of a Google
@@ -59,16 +59,16 @@ api() {
 
 docker exec govoice-server curl -fsS http://127.0.0.1:9090/ready
 
-# No credential is sent anywhere: the flow names providers, the server reads the environment.
-flow="$(jq -n '{name: "smoke", config: {
+# No credential is sent anywhere: the agent names providers, the server reads the environment.
+agent="$(jq -n '{name: "smoke", config: {
   stt: {provider: "google", model: "chirp_2", language: "en-US"},
   llm: {provider: "google", model: "gemini-2.5-flash", system_prompt: "You are a release smoke test."},
   tts: {provider: "google", voice: "en-US-Chirp3-HD-Aoede"}}}' |
-  api POST /api/v1/flows)"
-flow_id="$(jq -er .data.id <<<"$flow")"
-test "$(jq -r .data.readiness.state <<<"$flow")" = "ready"
+  api POST /api/v1/agents)"
+agent_id="$(jq -er .data.id <<<"$agent")"
+test "$(jq -r .data.readiness.state <<<"$agent")" = "ready"
 
-token="$(jq -n --arg a "$flow_id" '{principal: "smoke", flow_id: $a}' |
+token="$(jq -n --arg a "$agent_id" '{principal: "smoke", agent_id: $a}' |
   api POST /api/v1/voice-tokens | jq -er .data.token)"
 test -n "$token"
 

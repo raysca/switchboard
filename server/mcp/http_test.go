@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"context"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/server/storage"
 )
 
@@ -71,12 +71,12 @@ func TestMCPDisableDeleteConflictAndConfirmedDetachRoutes(t *testing.T) {
 	if err != nil || len(servers) != 1 {
 		t.Fatalf("servers=%+v err=%v", servers, err)
 	}
-	flowService := flow.NewService(svc.store, allAvailable{})
-	created, err := flowService.Create(context.Background(), flow.CreateRequest{Name: "uses mcp", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`)})
+	agentService := agent.NewService(svc.store, allAvailable{})
+	created, err := agentService.Create(context.Background(), agent.CreateRequest{Name: "uses mcp", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := flowService.SetMCPTools(context.Background(), created.ID, []flow.ToolSelection{{ServerID: servers[0].ID, RemoteName: "lookup", SchemaHash: discovery.Tools[0].SchemaHash, Required: true}}); err != nil {
+	if _, err := agentService.SetMCPTools(context.Background(), created.ID, []agent.ToolSelection{{ServerID: servers[0].ID, RemoteName: "lookup", SchemaHash: discovery.Tools[0].SchemaHash, Required: true}}); err != nil {
 		t.Fatal(err)
 	}
 	h := Handler(svc)
@@ -101,6 +101,20 @@ func TestMCPDisableDeleteConflictAndConfirmedDetachRoutes(t *testing.T) {
 	if _, err := svc.store.MCP().Server(context.Background(), servers[0].ID); err != nil {
 		t.Fatalf("blocked delete removed server: %v", err)
 	}
+	// The 409 details are a wire contract (the console reads agent_id/agent_name): explicit keys, not Go field names.
+	var conflict struct {
+		Error struct {
+			Code    string           `json:"code"`
+			Details []map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(blocked.Body.Bytes(), &conflict); err != nil || conflict.Error.Code != "mcp_server_in_use" || len(conflict.Error.Details) != 1 {
+		t.Fatalf("conflict body=%s err=%v", blocked.Body.String(), err)
+	}
+	d := conflict.Error.Details[0]
+	if d["agent_id"] != created.ID || d["agent_name"] != "uses mcp" || d["remote_name"] != "lookup" || d["required"] != true || d["agent_version_id"] == "" || d["agent_version_id"] == nil || len(d) != 5 {
+		t.Fatalf("details keys/values = %v", d)
+	}
 	missingConfirmation := do("POST", "/api/v1/mcp-servers/"+servers[0].ID+"/detach-delete", `{"confirm":false}`)
 	if missingConfirmation.Code != 400 {
 		t.Fatalf("confirmation status=%d body=%s", missingConfirmation.Code, missingConfirmation.Body.String())
@@ -109,9 +123,9 @@ func TestMCPDisableDeleteConflictAndConfirmedDetachRoutes(t *testing.T) {
 	if detached.Code != 200 || !strings.Contains(detached.Body.String(), `"deleted":true`) {
 		t.Fatalf("detach=%d %s", detached.Code, detached.Body.String())
 	}
-	updated, err := flowService.Get(context.Background(), created.ID)
+	updated, err := agentService.Get(context.Background(), created.ID)
 	if err != nil || len(updated.Version.MCPTools) != 0 || updated.Version.Number != 3 {
-		t.Fatalf("detached flow=%+v err=%v", updated, err)
+		t.Fatalf("detached agent=%+v err=%v", updated, err)
 	}
 }
 
@@ -185,7 +199,7 @@ func TestAuthenticatedMCPCreateValidateDetailAndExecuteJSONContract(t *testing.T
 // allAvailable is an environment where every provider service can run.
 type allAvailable struct{}
 
-func (allAvailable) Check(string, string) flow.Unavailable { return flow.Unavailable{} }
+func (allAvailable) Check(string, string) agent.Unavailable { return agent.Unavailable{} }
 
 // A deleted detach result carries no server object (omitempty is a no-op on structs).
 func TestDetachDeleteResultOmitsServerWhenDeleted(t *testing.T) {
@@ -219,17 +233,17 @@ func TestMCPRoutesDistinguishNotFoundFromStoreFailure(t *testing.T) {
 		h.ServeHTTP(w, r)
 		return w.Code
 	}
-	routes := [][3]string{{"DELETE", "", ""}, {"GET", "", ""}, {"POST", "/detach-delete", `{"confirm":true}`},
+	reqs := [][3]string{{"DELETE", "", ""}, {"GET", "", ""}, {"POST", "/detach-delete", `{"confirm":true}`},
 		{"POST", "/disable", ""}, {"POST", "/enable", ""},
 		{"POST", "/validate", ""}, {"POST", "/tools/lookup/test", `{"arguments":{}}`}}
-	for _, rt := range routes {
+	for _, rt := range reqs {
 		if code := do(rt[0], "/api/v1/mcp-servers/"+storage.NewID()+rt[1], rt[2]); code != 404 {
 			t.Errorf("%s%s missing server: %d, want 404", rt[0], rt[1], code)
 		}
 	}
 	id := mustCreateMCP(t, svc)
 	_ = store.Close()
-	for _, rt := range routes {
+	for _, rt := range reqs {
 		if code := do(rt[0], "/api/v1/mcp-servers/"+id+rt[1], rt[2]); code != 500 {
 			t.Errorf("%s%s closed store: %d, want 500", rt[0], rt[1], code)
 		}

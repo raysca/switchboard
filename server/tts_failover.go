@@ -10,7 +10,7 @@ import (
 	"govoice/providers/cartesia"
 	"govoice/providers/elevenlabs"
 	"govoice/providers/nvidia"
-	"govoice/server/flow"
+	"govoice/server/agent"
 )
 
 // defaultTTSRate is the output rate every TTS provider defaults to; the
@@ -33,7 +33,7 @@ func ttsClassify(err error) string {
 		errors.As(err, &cp) && cp.ClientError ||
 		errors.As(err, &ep) && ep.ClientError ||
 		errors.As(err, &np) && np.ClientError
-	return flow.ClassOf(err, resilience.Verdict{ClientError: client})
+	return agent.ClassOf(err, resilience.Verdict{ClientError: client})
 }
 
 // ttsBreaker is the breaker a TTS stage of this provider uses (nil if unknown).

@@ -27,7 +27,7 @@ sed -e "s|^public_listen_addr:.*|public_listen_addr: \"127.0.0.1:$PUB\"|" \
 grep -q 'echo: {mimic: instant' "$OUT/server.yaml" || { echo "eval-pipecat: config/development.yaml has no top-level providers: line to add providers.echo to" >&2; exit 1; }
 
 export GOVOICE_DEV_DIR="$OUT/data" GOVOICE_MANAGEMENT_API_KEY="$(openssl rand -hex 32)" TOKEN_SECRET="$(openssl rand -hex 32)"
-# The flow uses the echo provider (no keys). ENV_FILE=/dev/null stops the development server loading examples/.env itself.
+# The agent uses the echo provider (no keys). ENV_FILE=/dev/null stops the development server loading examples/.env itself.
 export ENV_FILE=/dev/null
 mkdir -p "$GOVOICE_DEV_DIR"; chmod 700 "$GOVOICE_DEV_DIR"
 "$OUT/server-echo" -config "$OUT/server.yaml" -vad-mode inprocess >"$OUT/server.log" 2>&1 &
@@ -38,12 +38,12 @@ for _ in $(seq 1 100); do curl -fsS "http://127.0.0.1:$ADM/ready" >/dev/null 2>&
 
 api() { curl -fsS -X POST "http://127.0.0.1:$ADM/api/v1/$1" -H "Authorization: Bearer $GOVOICE_MANAGEMENT_API_KEY" -H 'Content-Type: application/json' -d "$2"; }
 jid() { python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["id"])'; }
-FLOW=$(api flows '{"name":"Eval Echo","description":"echo provider","config":{"stt":{"provider":"echo","model":"chirp_2","language":"en-US"},"llm":{"provider":"echo","model":"fake","system_prompt":"fake"},"tts":{"provider":"echo","voice":"fake"}}}' | jid)
+AGENT=$(api agents '{"name":"Eval Echo","description":"echo provider","config":{"stt":{"provider":"echo","model":"chirp_2","language":"en-US"},"llm":{"provider":"echo","model":"fake","system_prompt":"fake"},"tts":{"provider":"echo","voice":"fake"}}}' | jid)
 
 fail=0
 for f in tools/eval/pipecat/scenarios/*.yaml; do
   # Voice tokens are single-use: one token (and one invocation) per scenario file.
-  TOKEN=$(api voice-tokens "{\"principal\":\"pipecat-eval\",\"flow_id\":\"$FLOW\"}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["token"])')
+  TOKEN=$(api voice-tokens "{\"principal\":\"pipecat-eval\",\"agent_id\":\"$AGENT\"}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["token"])')
   # The harness echoes the bot URL; mask the (single-use, 60 s) token.
   pc run "$ROOT/$f" --bot-url "ws://127.0.0.1:$PUB/ws?token=$TOKEN" --logs-dir "$OUT" 2>&1 | sed -E 's/token=[A-Za-z0-9._-]+/token=***/g' || fail=1
 done

@@ -1,4 +1,4 @@
-// livecheck is the flow-level provider-matrix harness. It runs ONE standard flow
+// livecheck is the agent-level provider-matrix harness. It runs ONE standard agent
 // (standard system prompt, fixed scenario set S1-S8) against a real server child for each
 // provider PROFILE in profiles.yaml, over the real WebSocket/RTVI protocol, and reports
 // pass/fail assertions plus latency per profile x scenario x turn-manager mode.

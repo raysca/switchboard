@@ -111,7 +111,7 @@ LIMIT ?`
 // PurgeMetadata deletes ended sessions and all associated child records (trace_events, trace_spans,
 // tool_calls, turns, session_mcp_tools) whose ended_at is at or before cutoff, up to limit sessions.
 // It also cleans up standalone trace_events and trace_spans older than cutoff.
-// Deletion invariants: active/draining sessions, flow versions, and discoveries are never deleted.
+// Deletion invariants: active/draining sessions, agent versions, and discoveries are never deleted.
 func (r RetentionRepository) PurgeMetadata(ctx context.Context, cutoff time.Time, limit int) (stats PurgeMetadataStats, err error) {
 	if limit <= 0 {
 		limit = 500

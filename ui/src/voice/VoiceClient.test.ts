@@ -37,7 +37,7 @@ describe("VoiceClient connect cancelled by disconnect", () => {
     const { client, token, capture, audio, sockets } = setup();
     const issue = (client as unknown as { apiClient: { issueVoiceToken: ReturnType<typeof vi.fn> } }).apiClient
       .issueVoiceToken;
-    const done = client.connect({ flowId: "a1" });
+    const done = client.connect({ agentId: "a1" });
     await vi.waitFor(() => expect(audio.startCapture).toHaveBeenCalled());
     expect(issue).not.toHaveBeenCalled();
     capture.resolve();
@@ -49,7 +49,7 @@ describe("VoiceClient connect cancelled by disconnect", () => {
 
   it("says it is waiting for the microphone, then for the token", async () => {
     const { client, token, capture, audio } = setup();
-    const done = client.connect({ flowId: "a1" });
+    const done = client.connect({ agentId: "a1" });
     await vi.waitFor(() => expect(audio.startCapture).toHaveBeenCalled());
     expect(client.getState().sessionState).toBe("requesting_microphone");
     capture.resolve();
@@ -66,14 +66,14 @@ describe("VoiceClient connect cancelled by disconnect", () => {
       type: "permission_denied",
       message: "Microphone permission was denied.",
     });
-    await client.connect({ flowId: "a1" });
+    await client.connect({ agentId: "a1" });
     expect(issue).not.toHaveBeenCalled();
     expect(client.getState().error?.category).toBe("mic");
   });
 
   it("a token failure after the mic releases the mic", async () => {
     const { client, token, capture, audio } = setup();
-    const done = client.connect({ flowId: "a1" });
+    const done = client.connect({ agentId: "a1" });
     capture.resolve();
     await vi.waitFor(() => expect(audio.startCapture).toHaveBeenCalled());
     await vi.waitFor(() =>
@@ -91,7 +91,7 @@ describe("VoiceClient connect cancelled by disconnect", () => {
     const { client, capture, audio, sockets } = setup();
     const issue = (client as unknown as { apiClient: { issueVoiceToken: ReturnType<typeof vi.fn> } }).apiClient
       .issueVoiceToken;
-    const done = client.connect({ flowId: "a1" });
+    const done = client.connect({ agentId: "a1" });
     await vi.waitFor(() => expect(audio.startCapture).toHaveBeenCalled());
     await client.disconnect();
     capture.resolve();
@@ -103,7 +103,7 @@ describe("VoiceClient connect cancelled by disconnect", () => {
 
   it("releases the mic and opens no socket when disconnected while the token is fetched", async () => {
     const { client, token, capture, audio, sockets } = setup();
-    const done = client.connect({ flowId: "a1" });
+    const done = client.connect({ agentId: "a1" });
     capture.resolve();
     await vi.waitFor(() =>
       expect(
@@ -143,10 +143,10 @@ describe("VoiceClient connect cancelled by disconnect", () => {
     const audio = new BrowserAudioController();
     const client = new VoiceClient(api, audio);
 
-    const first = client.connect({ flowId: "a", wsBaseUrl: "ws://h" });
+    const first = client.connect({ agentId: "a", wsBaseUrl: "ws://h" });
     await vi.waitFor(() => expect(calls).toBe(1));
     await client.disconnect();
-    const second = client.connect({ flowId: "a", wsBaseUrl: "ws://h" });
+    const second = client.connect({ agentId: "a", wsBaseUrl: "ws://h" });
     await vi.waitFor(() => expect(calls).toBe(2));
     gum[0].resolve(stream());
     await new Promise((r) => setTimeout(r, 0));
@@ -165,10 +165,10 @@ describe("VoiceClient connect cancelled by disconnect", () => {
       .issueVoiceToken;
     capture.resolve();
     token.resolve(TOKEN);
-    await client.connect({ flowId: "f", draft: { config: { a: 1 } } });
+    await client.connect({ agentId: "f", draft: { config: { a: 1 } } });
     await client.disconnect();
-    await client.connect({ flowId: "f" });
-    expect(issue.mock.calls[0][0]).toMatchObject({ flow_id: "f", draft: { config: { a: 1 } } });
+    await client.connect({ agentId: "f" });
+    expect(issue.mock.calls[0][0]).toMatchObject({ agent_id: "f", draft: { config: { a: 1 } } });
     expect(issue.mock.calls[1][0]).not.toHaveProperty("draft");
   });
 });

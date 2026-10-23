@@ -48,7 +48,7 @@ func TestLoadConfig_DocumentedDefaults(t *testing.T) {
 		"idle 15s":              c.Idle.UserTimeout == 15*time.Second,
 		"idle prompt":           c.Idle.Prompt == "Are you still there?",
 		"idle goodbye":          c.Idle.Goodbye == "I'll end the call now. Goodbye.",
-		"flow backgrounds dev":  c.Audio.AllowFlowBackground == (c.Profile == ProfileDevelopment),
+		"agent backgrounds dev": c.Audio.AllowAgentBackground == (c.Profile == ProfileDevelopment),
 		"analyzer defaults":     c.Turn.Analyzer.Workers == 1 && c.Turn.Analyzer.Hold == 3*time.Second && c.Turn.Analyzer.Budget == 150*time.Millisecond,
 		"analyzer mode derived": c.TurnAnalyzerMode() == "inprocess",
 		"recording 7d/1h/256M":  c.Recording.RetentionDays == 7 && c.Recording.MaxDuration == time.Hour && c.Recording.MaxBytes == 256<<20,
@@ -201,5 +201,18 @@ func TestMCPAllowLocalHTTPIsForDevelopmentOnly(t *testing.T) {
 	}
 	if c.MCP.Timeout != 15*time.Second {
 		t.Fatalf("mcp.timeout default = %v, want 15s", c.MCP.Timeout)
+	}
+}
+
+// The pre-agent YAML keys are unknown fields now (no alias), and the agent forms are accepted.
+func TestLoadConfig_PreAgentKeysAreRejected(t *testing.T) {
+	for _, old := range []string{"limits: {max_sessions_per_" + "flow: 2}", "audio: {allow_" + "flow_background: true}", "turn: {analyzer: {for_" + "flows: true}}"} {
+		if _, err := loadYAML(t, "profile: development\n"+old+"\n"); err == nil || !strings.Contains(err.Error(), "not found") {
+			t.Errorf("%s: want an unknown-field error, got %v", old, err)
+		}
+	}
+	c, err := loadYAML(t, "profile: development\nlimits: {max_sessions_per_agent: 2}\naudio: {allow_agent_background: true}\n")
+	if err != nil || c.Limits.MaxSessionsPerAgent != 2 || !c.Audio.AllowAgentBackground {
+		t.Fatalf("agent keys: %v %+v", err, c)
 	}
 }

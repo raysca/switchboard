@@ -1,6 +1,6 @@
 # Switchboard on Cloud Run: ONE instance (live calls are in memory), CPU always allocated (a call
 # is a long-lived request that needs CPU between requests), 60-minute request timeout (a call is a
-# WebSocket request; the server caps a call at 20 minutes itself). Flows and call history live in
+# WebSocket request; the server caps a call at 20 minutes itself). Agents and call history live in
 # Cloud SQL (Postgres), so a deploy or a restart loses nothing. Sizing: max_sessions (config/cloudrun.yaml)
 # is below containerConcurrency on purpose, so admin and probe requests never wait behind calls.
 # Rendered with envsubst by .github/workflows/deploy.yml; ${...} placeholders are checked by

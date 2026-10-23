@@ -11,8 +11,8 @@ import (
 func seedWithCaller(t *testing.T, s *Store, caller string) (string, error) {
 	t.Helper()
 	ctx := context.Background()
-	a := Flow{ID: NewID(), Name: "A", Enabled: true, CreatedAt: time.Now()}
-	if err := s.Flows().Create(ctx, a); err != nil {
+	a := Agent{ID: NewID(), Name: "A", Enabled: true, CreatedAt: time.Now()}
+	if err := s.Agents().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
 	v, err := publishTestVersion(ctx, s, a.ID, []byte(`{}`), nil)
@@ -20,7 +20,7 @@ func seedWithCaller(t *testing.T, s *Store, caller string) (string, error) {
 		t.Fatal(err)
 	}
 	id := NewID()
-	return id, s.Sessions().Create(ctx, SessionRecord{ID: id, FlowID: a.ID, FlowVersionID: v.ID, ConfigHash: v.ConfigHash, StartedAt: time.Now(), Status: "active", Caller: caller})
+	return id, s.Sessions().Create(ctx, SessionRecord{ID: id, AgentID: a.ID, AgentVersionID: v.ID, ConfigHash: v.ConfigHash, StartedAt: time.Now(), Status: "active", Caller: caller})
 }
 
 func TestASessionStoresItsCallerAndTheReasonItEnded(t *testing.T) {

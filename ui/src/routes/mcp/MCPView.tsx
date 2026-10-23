@@ -10,8 +10,8 @@ import { drifts, formatApiError } from "./mcpStats";
 
 export type MCPViewProps = { client: ApiClient; keyValue: string | null };
 
-// GET /flows returns at most this many flows; a list that reaches it may be missing some.
-const FLOW_CAP = 100;
+// GET /agents returns at most this many agents; a list that reaches it may be missing some.
+const AGENT_CAP = 100;
 
 /** MCP servers on the left, the selected one on the right: its tools, and a review of changed schemas. */
 export function MCPView({ client, keyValue }: MCPViewProps) {
@@ -22,7 +22,7 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
   const [connectError, setConnectError] = useState<string | null>(null);
 
   const serversQuery = useQuery({ queryKey: ["mcp-servers"], queryFn: () => client.getMCPServers(), enabled: !!keyValue, retry: false });
-  const flowsQuery = useQuery({ queryKey: ["flows"], queryFn: () => client.getFlows(), enabled: !!keyValue, retry: false });
+  const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: () => client.getAgents(), enabled: !!keyValue, retry: false });
   const servers = serversQuery.data ?? [];
   // The list endpoint has no tool counts, so each server's detail is read; the selected one reuses the same cache entry.
   const details = useQueries({
@@ -43,7 +43,7 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
   const head = (
     <header className="page-head">
       <h1 tabIndex={-1}>MCP tools</h1>
-      <span className="subtext">Remote servers whose tools flows can call mid-conversation.</span>
+      <span className="subtext">Remote servers whose tools agents can call mid-conversation.</span>
       <span className="grow" />
       {keyValue && (
         <button
@@ -83,18 +83,18 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
     return page(
       <section className="message-panel">
         <h2>No MCP servers yet.</h2>
-        <p>Connect a remote MCP server by its endpoint to let flows call its tools. Tokens are read only from MCP_TOKEN_* environment variables.</p>
+        <p>Connect a remote MCP server by its endpoint to let agents call its tools. Tokens are read only from MCP_TOKEN_* environment variables.</p>
       </section>,
     );
   }
 
-  const flows = flowsQuery.data;
+  const agents = agentsQuery.data;
   const now = Date.now();
   const selectedIndex = serverId ? servers.findIndex((s) => s.id === serverId) : 0;
   const selected = selectedIndex >= 0 ? servers[selectedIndex] : undefined;
   const selectedDetail = selectedIndex >= 0 ? details[selectedIndex] : undefined;
   const toolCounts = Object.fromEntries(servers.map((s, i) => [s.id, details[i]?.data?.discovery?.tools.length ?? (details[i]?.isSuccess ? 0 : undefined)]));
-  const changed = Object.fromEntries(servers.map((s) => [s.id, flows ? new Set(drifts(flows, s.id).filter((d) => d.kind === "changed").map((d) => d.dep.remote_name)).size : 0]));
+  const changed = Object.fromEntries(servers.map((s) => [s.id, agents ? new Set(drifts(agents, s.id).filter((d) => d.kind === "changed").map((d) => d.dep.remote_name)).size : 0]));
 
   return page(
       <div className="mcp-layout">
@@ -103,7 +103,7 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
         </nav>
         <div className="mcp-main">
           {!selected ? (
-            <section className="flow-missing">
+            <section className="agent-missing">
               <p role="status">That MCP server was not found.</p>
               <Link to="/mcp-servers" className="action-button-small">
                 Back to MCP tools
@@ -118,9 +118,9 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
               key={selected.id}
               client={client}
               server={selectedDetail.data}
-              flows={flows}
-              flowsFailed={flowsQuery.isError}
-              flowsCapped={(flows?.length ?? 0) >= FLOW_CAP}
+              agents={agents}
+              agentsFailed={agentsQuery.isError}
+              agentsCapped={(agents?.length ?? 0) >= AGENT_CAP}
               now={now}
               onDeleted={() => navigate("/mcp-servers")}
             />

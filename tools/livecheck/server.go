@@ -57,8 +57,8 @@ var (
 	// classFailover runs S13 in its own server: its broken primary key must not open the
 	// process-wide breaker for the other scenarios.
 	classFailover = serverClass{"failover", ""}
-	// classFlow runs S14 in its own server: its flow is a two-step flow.
-	classFlow = serverClass{"graph", ""}
+	// classAgent runs S14 in its own server: its agent is a two-step agent.
+	classAgent = serverClass{"graph", ""}
 )
 
 const pingIdleTimeout = 3 * time.Second
@@ -67,7 +67,7 @@ type server struct {
 	st            *stack.Server
 	public, admin string
 	log           string
-	data          string // flow store; removed at stop, even with -keep-work
+	data          string // agent store; removed at stop, even with -keep-work
 	calls         int
 	lastReq       atomic.Int64 // last good requestTotal
 }
@@ -184,13 +184,13 @@ func startServer(ctx context.Context, sp serverSpec) (*server, error) {
 	return &server{st: ss, public: ss.Public, admin: ss.Admin, log: ss.Log, data: ss.Data}, nil
 }
 
-// stop terminates the process group (server and its workers) and deletes the flow store.
+// stop terminates the process group (server and its workers) and deletes the agent store.
 func (s *server) stop() {
 	if s == nil || s.st == nil {
 		return
 	}
 	s.st.Stop()
-	_ = os.RemoveAll(s.data) // the run's flow store never outlives it
+	_ = os.RemoveAll(s.data) // the run's agent store never outlives it
 }
 
 func (s *server) api(path string, body any) (json.RawMessage, error) {

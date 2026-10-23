@@ -53,7 +53,7 @@
   "MaxSessions": 250,
   "MaxSessionsPerPrincipal": 5,
   "MaxSessionsPerIP": 5,
-  "MaxSessionsPerFlow": 0,
+  "MaxSessionsPerAgent": 0,
   "StartRatePerPrincipal": 0,
   "StartBurstPerPrincipal": 0,
   "HandshakeRatePerIP": 20,
@@ -107,7 +107,7 @@
    "ModelPath": "",
    "Hold": 3000000000,
    "Budget": 150000000,
-   "ForFlows": false
+   "ForAgents": false
   }
  },
  "FirstClauseChars": 0,
@@ -122,7 +122,7 @@
   "OutputGainDB": 0,
   "Backgrounds": null,
   "BackgroundDefault": "",
-  "AllowFlowBackground": false,
+  "AllowAgentBackground": false,
   "Cues": null
  },
  "Idle": {

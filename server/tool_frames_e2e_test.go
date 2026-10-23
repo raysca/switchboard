@@ -9,7 +9,7 @@ import (
 func TestMCPCallToolFramesFlowThroughTheCallPipeline(t *testing.T) {
 	r := newMCPCallRig(t)
 	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
-	c := r.dial(r.flowWith(id, hashes, true, nil, "lookup_order").ID)
+	c := r.dial(r.agentWith(id, hashes, true, nil, "lookup_order").ID)
 	c.say(`call tool lookup_order {"order_id":"42"}`)
 	c.waitReplies("shipped", 1)
 	eventually(t, "the call and its result at the voice stage", func() bool { return len(r.probe.toolFrames("v")) >= 2 })

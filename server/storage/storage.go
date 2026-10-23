@@ -49,6 +49,9 @@ type Store struct {
 // moved to the environment.
 var ErrPreEnvironmentCredentials = errors.New("database predates environment credentials; recreate it (see release note)")
 
+// ErrPreAgentSchema refuses a database made before the agent rename.
+var ErrPreAgentSchema = errors.New("database predates the agent rename; recreate it (nothing migrates it)")
+
 func Open(ctx context.Context, cfg Config) (*Store, error) {
 	if cfg.DSN == "" {
 		return nil, errors.New("storage DSN required")
@@ -105,6 +108,11 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 	// database still has it and nothing would migrate it.
 	if _, err := db.ExecContext(ctx, "SELECT 1 FROM provider_credentials WHERE 1=0"); err == nil {
 		return fail(ErrPreEnvironmentCredentials)
+	}
+	// Same for the agent rename: the old tables were renamed in place in the
+	// migrations, so an older database still has them and goose reports it current.
+	if _, err := db.ExecContext(ctx, "SELECT 1 FROM flows WHERE 1=0"); err == nil {
+		return fail(ErrPreAgentSchema)
 	}
 	fsys, err := fs.Sub(migrations.Files, subdir)
 	if err != nil {

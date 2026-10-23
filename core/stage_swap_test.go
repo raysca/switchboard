@@ -25,7 +25,7 @@ func (p *probeStage) Close() error                        { p.closed.Add(1); ret
 
 type fakeSession struct{ SessionController }
 
-func TestStageSwapRoutesToCurrent(t *testing.T) {
+func TestStageSwapSendsFramesToCurrent(t *testing.T) {
 	a, b := &probeStage{}, &probeStage{}
 	s := NewStageSwap(a)
 	if err := s.Attach(fakeSession{}, 3); err != nil {

@@ -77,20 +77,20 @@ func TestSessionRoutesUseManagementBoundaryAndServeQueries(t *testing.T) {
 	}
 
 	// 7. Create a session and verify detail endpoint through server
-	flowID := storage.NewID()
-	a := storage.Flow{ID: flowID, Name: "A", Enabled: true, CreatedAt: time.Now()}
-	if err := store.Flows().Create(context.Background(), a); err != nil {
+	agentID := storage.NewID()
+	a := storage.Agent{ID: agentID, Name: "A", Enabled: true, CreatedAt: time.Now()}
+	if err := store.Agents().Create(context.Background(), a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := publishTestVersion(context.Background(), store, flowID, []byte(`{"llm":"test"}`), nil)
+	v, err := publishTestVersion(context.Background(), store, agentID, []byte(`{"llm":"test"}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sessID := storage.NewID()
 	sess := storage.SessionRecord{
 		ID:                  sessID,
-		FlowID:              flowID,
-		FlowVersionID:       v.ID,
+		AgentID:             agentID,
+		AgentVersionID:      v.ID,
 		ConfigHash:          v.ConfigHash,
 		Status:              "active",
 		StartedAt:           time.Now().UTC(),

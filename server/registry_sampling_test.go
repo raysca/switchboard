@@ -3,12 +3,12 @@ package server
 import (
 	"testing"
 
-	"govoice/server/flow"
+	"govoice/server/agent"
 )
 
-func testSampling() flow.LLMSampling {
+func testSampling() agent.LLMSampling {
 	temp, topP, n := 0.0, 0.9, 200
-	return flow.LLMSampling{Temperature: &temp, TopP: &topP, MaxOutputTokens: &n}
+	return agent.LLMSampling{Temperature: &temp, TopP: &topP, MaxOutputTokens: &n}
 }
 
 // Every LLM builder maps the stage's sampling onto its provider config; an

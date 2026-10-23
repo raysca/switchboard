@@ -30,15 +30,15 @@ func TestSQLite_VacuumIntoBackupAndRestore(t *testing.T) {
 	}
 	defer s.Close()
 
-	// Seed initial flow and version
-	fl := Flow{
+	// Seed initial agent and version
+	fl := Agent{
 		ID:        NewID(),
 		Name:      "Backup-Agent",
 		Enabled:   true,
 		CreatedAt: time.Now(),
 	}
-	if err := s.Flows().Create(ctx, fl); err != nil {
-		t.Fatalf("create flow: %v", err)
+	if err := s.Agents().Create(ctx, fl); err != nil {
+		t.Fatalf("create agent: %v", err)
 	}
 	ver, err := publishTestVersion(ctx, s, fl.ID, []byte(`{"voice":"default","prompt":"hello"}`), nil)
 	if err != nil {
@@ -62,12 +62,12 @@ func TestSQLite_VacuumIntoBackupAndRestore(t *testing.T) {
 				default:
 					turnCount++
 					sess := SessionRecord{
-						ID:            NewID(),
-						FlowID:        fl.ID,
-						FlowVersionID: ver.ID,
-						ConfigHash:    ver.ConfigHash,
-						StartedAt:     time.Now(),
-						Status:        "active",
+						ID:             NewID(),
+						AgentID:        fl.ID,
+						AgentVersionID: ver.ID,
+						ConfigHash:     ver.ConfigHash,
+						StartedAt:      time.Now(),
+						Status:         "active",
 					}
 					if err := s.Sessions().Create(ctx, sess); err != nil {
 						select {
@@ -135,13 +135,13 @@ func TestSQLite_VacuumIntoBackupAndRestore(t *testing.T) {
 		t.Fatalf("expected migration version >= 5 in restored backup, got %d", diag.MigrationVersion)
 	}
 
-	// Verify flow exists
-	restoredFlow, err := backupStore.Flows().Current(ctx, fl.ID)
+	// Verify agent exists
+	restoredAgent, err := backupStore.Agents().Current(ctx, fl.ID)
 	if err != nil {
-		t.Fatalf("fetch flow in restored store: %v", err)
+		t.Fatalf("fetch agent in restored store: %v", err)
 	}
-	if restoredFlow.Name != fl.Name {
-		t.Fatalf("restored flow name mismatch: got %s, want %s", restoredFlow.Name, fl.Name)
+	if restoredAgent.Name != fl.Name {
+		t.Fatalf("restored agent name mismatch: got %s, want %s", restoredAgent.Name, fl.Name)
 	}
 
 	// Verify integrity check (PRAGMA foreign_key_check and quick_check)

@@ -60,26 +60,26 @@ func TestAdmission_NoisyTenantCannotStarveOthers(t *testing.T) {
 	}
 }
 
-func TestAdmission_FlowCap(t *testing.T) {
+func TestAdmission_AgentCap(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
-	cfg.Limits.MaxSessionsPerFlow = 1
+	cfg.Limits.MaxSessionsPerAgent = 1
 	m := NewMetrics()
 	ac := NewAdmissionController(cfg, m)
-	if err := ac.AcquireSession("u1", "flow", true); err != nil {
+	if err := ac.AcquireSession("u1", "agent", true); err != nil {
 		t.Fatal(err)
 	}
-	if err := ac.AcquireSession("u2", "flow", true); !errors.Is(err, ErrFlowLimit) {
+	if err := ac.AcquireSession("u2", "agent", true); !errors.Is(err, ErrAgentLimit) {
 		t.Fatalf("want ErrAgentLimit, got %v", err)
 	}
 	if err := ac.AcquireSession("u2", "other", true); err != nil {
-		t.Fatalf("other flow: %v", err)
+		t.Fatalf("other agent: %v", err)
 	}
-	ac.ReleaseSession("u1", "flow")
-	if err := ac.AcquireSession("u2", "flow", true); err != nil {
+	ac.ReleaseSession("u1", "agent")
+	if err := ac.AcquireSession("u2", "agent", true); err != nil {
 		t.Fatalf("after release: %v", err)
 	}
-	if m.AdmissionRejectsFlow.Load() != 1 {
-		t.Fatal("flow reject metric")
+	if m.AdmissionRejectsAgent.Load() != 1 {
+		t.Fatal("agent reject metric")
 	}
 }
 
@@ -119,7 +119,7 @@ func TestAdmission_StartRate(t *testing.T) {
 
 func TestAdmission_DisabledByDefault(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
-	if cfg.Limits.MaxSessionsPerFlow != 0 || cfg.Limits.StartRatePerPrincipal != 0 {
+	if cfg.Limits.MaxSessionsPerAgent != 0 || cfg.Limits.StartRatePerPrincipal != 0 {
 		t.Fatal("new limits must default to disabled")
 	}
 	if err := ValidateConfig(cfg); err != nil {
@@ -129,8 +129,8 @@ func TestAdmission_DisabledByDefault(t *testing.T) {
 	if err := ValidateConfig(cfg); err == nil {
 		t.Fatal("rate > 0 with burst 0 must be rejected")
 	}
-	cfg.Limits.StartRatePerPrincipal, cfg.Limits.MaxSessionsPerFlow = 0, -1
+	cfg.Limits.StartRatePerPrincipal, cfg.Limits.MaxSessionsPerAgent = 0, -1
 	if err := ValidateConfig(cfg); err == nil {
-		t.Fatal("negative flow cap must be rejected")
+		t.Fatal("negative agent cap must be rejected")
 	}
 }

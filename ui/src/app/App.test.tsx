@@ -24,7 +24,7 @@ const operationsStatus = {
 
 describe("admin shell", () => {
   it("explains what the management key is for and where it goes", () => {
-    render(<App initialPath="/flows" />);
+    render(<App initialPath="/agents" />);
     const strip = screen.getByRole("region", { name: "Management access" });
     expect(within(strip).getByLabelText("Management key")).toHaveAttribute("type", "password");
     expect(within(strip).getByRole("button", { name: "Connect" })).toBeVisible();
@@ -32,19 +32,27 @@ describe("admin shell", () => {
     expect(within(strip).getByText("/api/v1")).toBeVisible();
   });
 
-  it("keeps old /agents bookmarks working", async () => {
-    render(<App initialPath="/agents/abc" />);
-    const nav = within(screen.getByRole("navigation", { name: "Main navigation" }));
-    const flowsLink = await nav.findByRole("link", { name: "Flows" });
-    await waitFor(() => expect(flowsLink).toHaveAttribute("aria-current", "page"));
-    expect(screen.queryByText("Area not found")).toBeNull();
+  it("renders the agents list at /agents and an agent at /agents/:id", async () => {
+    for (const path of ["/agents", "/agents/abc"]) {
+      const { unmount } = render(<App initialPath={path} />);
+      const nav = within(screen.getByRole("navigation", { name: "Main navigation" }));
+      const agentsLink = await nav.findByRole("link", { name: "Agents" });
+      await waitFor(() => expect(agentsLink).toHaveAttribute("aria-current", "page"));
+      expect(screen.queryByText("Area not found")).toBeNull();
+      unmount();
+    }
   });
 
-  it("shows all six routes and keeps keyboard navigation visible", async () => {
+  it("has no /flows page", () => {
     render(<App initialPath="/flows" />);
+    expect(screen.getByText("Area not found")).toBeVisible();
+  });
+
+  it("shows all six sections and keeps keyboard navigation visible", async () => {
+    render(<App initialPath="/agents" />);
     for (const name of [
       "Dashboard",
-      "Flows",
+      "Agents",
       "Providers",
       "MCP tools",
       "Calls",
@@ -52,7 +60,7 @@ describe("admin shell", () => {
     ]) {
       expect(screen.getByRole("link", { name })).toBeVisible();
     }
-    expect(screen.getByRole("link", { name: "Flows" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute(
       "aria-current",
       "page",
     );
@@ -73,7 +81,7 @@ describe("admin shell", () => {
     expect(screen.getByText(/The key stays in this tab only/i)).toBeVisible();
   });
 
-  it("puts the key entry above the page content, and names every route link by its text", () => {
+  it("puts the key entry above the page content, and names every nav link by its text", () => {
     render(<App initialPath="/dashboard" />);
     const field = screen.getByLabelText(/management key/i);
     const heading = screen.getByRole("heading", { name: "Dashboard" });

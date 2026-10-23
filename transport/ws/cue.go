@@ -7,7 +7,7 @@ import (
 )
 
 // CueUnderlay mixes an optional background with a cue the server starts and
-// stops at run time (the route gap sound). Mix, Active and Rate run on the
+// stops at run time (the handoff gap sound). Mix, Active and Rate run on the
 // paced writer's goroutine; Start and Stop may be called from any goroutine.
 type CueUnderlay struct {
 	bg      atomic.Pointer[background] // the session's ambience; set at accept or later (SetBackground)
@@ -28,7 +28,7 @@ type background struct{ u Underlay }
 func NewCueUnderlay() *CueUnderlay { return &CueUnderlay{} }
 
 // SetBackground replaces the session's ambience (nil: none). Safe to call while the writer mixes, so a
-// server that learns the call's flow after the connection was accepted can choose the sound then.
+// server that learns the call's agent after the connection was accepted can choose the sound then.
 func (c *CueUnderlay) SetBackground(u Underlay) {
 	if u == nil {
 		c.bg.Store(nil)

@@ -1,14 +1,14 @@
 import type { ReactNode } from "react";
 import { Link, useSearchParams } from "react-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import type { FlowDTO, ApiClient, ApiError, ProviderStatus, ProviderTest } from "../../api/client";
+import type { AgentDTO, ApiClient, ApiError, ProviderStatus, ProviderTest } from "../../api/client";
 import { EmptyState, ErrorState, LoadingState } from "../../components/primitives";
 import {
   SERVICES,
   SERVICE_NAMES,
   catalogLines,
   credential,
-  flowsUsing,
+  agentsUsing,
   hasService,
   missingEnv,
   serviceList,
@@ -18,8 +18,8 @@ import {
 
 export type ProvidersViewProps = { client: ApiClient; keyValue: string | null };
 
-// GET /flows returns at most this many flows; a count that reaches it is a floor.
-const FLOW_CAP = 100;
+// GET /agents returns at most this many agents; a count that reaches it is a floor.
+const AGENT_CAP = 100;
 
 const CIRCUIT_TEXT: Partial<Record<ProviderTest["results"][number]["circuit"], string>> = { open: "Circuit open", half_open: "Circuit half open" };
 
@@ -50,7 +50,7 @@ function ConnectionTest({ p, client }: { p: ProviderStatus; client: ApiClient })
       <div role="status" aria-live="polite">
         {test.data && (
           <>
-            <ul className="provider-flows" aria-label="Connection test results">
+            <ul className="provider-agents" aria-label="Connection test results">
               {test.data.results.map((r) => (
                 <li key={r.stage}>{resultText(r)}</li>
               ))}
@@ -63,10 +63,10 @@ function ConnectionTest({ p, client }: { p: ProviderStatus; client: ApiClient })
   );
 }
 
-function Panel({ p, flows, flowsCapped, client }: { p: ProviderStatus; flows: FlowDTO[] | undefined; flowsCapped: boolean; client: ApiClient }) {
+function Panel({ p, agents, agentsCapped, client }: { p: ProviderStatus; agents: AgentDTO[] | undefined; agentsCapped: boolean; client: ApiClient }) {
   const cred = credential(p);
   const missing = new Set(missingEnv(p));
-  const using = flows ? flowsUsing(flows, p.id) : undefined;
+  const using = agents ? agentsUsing(agents, p.id) : undefined;
   return (
     <aside aria-labelledby="provider-title" className="provider-panel">
       <div>
@@ -74,7 +74,7 @@ function Panel({ p, flows, flowsCapped, client }: { p: ProviderStatus; flows: Fl
         <h2 id="provider-title">{p.display_name}</h2>
         <p className="provider-panel__health">
           <span className="lamp" data-tone={cred.ok ? "ok" : undefined} aria-hidden="true" />
-          {cred.ok ? "Credential found in the server environment." : "No credential. Flows cannot use it yet."}
+          {cred.ok ? "Credential found in the server environment." : "No credential. Agents cannot use it yet."}
         </p>
       </div>
 
@@ -119,19 +119,19 @@ function Panel({ p, flows, flowsCapped, client }: { p: ProviderStatus; flows: Fl
       <section aria-labelledby="provider-used-by">
         <h3 id="provider-used-by">Used by</h3>
         {using === undefined ? (
-          <p className="subtext">The flows could not be loaded, so which flows use this provider is unknown.</p>
+          <p className="subtext">The agents could not be loaded, so which agents use this provider is unknown.</p>
         ) : using.length === 0 ? (
-          <p className="subtext">{flowsCapped ? `No flow among the first ${FLOW_CAP} uses this provider; later flows were not checked.` : "No flow uses this provider yet."}</p>
+          <p className="subtext">{agentsCapped ? `No agent among the first ${AGENT_CAP} uses this provider; later agents were not checked.` : "No agent uses this provider yet."}</p>
         ) : (
           <>
-            <ul className="provider-flows">
+            <ul className="provider-agents">
               {using.map((f) => (
                 <li key={f.id}>
-                  <Link to={`/flows/${encodeURIComponent(f.id)}`}>{f.name}</Link>
+                  <Link to={`/agents/${encodeURIComponent(f.id)}`}>{f.name}</Link>
                 </li>
               ))}
             </ul>
-            {flowsCapped && <p className="subtext">Only the first {FLOW_CAP} flows were checked.</p>}
+            {agentsCapped && <p className="subtext">Only the first {AGENT_CAP} agents were checked.</p>}
           </>
         )}
       </section>
@@ -143,7 +143,7 @@ function Panel({ p, flows, flowsCapped, client }: { p: ProviderStatus; flows: Fl
 export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
   const [params, setParams] = useSearchParams();
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: client.getProviders, enabled: !!keyValue, retry: false });
-  const flowsQuery = useQuery({ queryKey: ["flows"], queryFn: () => client.getFlows(), enabled: !!keyValue, retry: false });
+  const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: () => client.getAgents(), enabled: !!keyValue, retry: false });
 
   const rawService = params.get("service");
   const service: Service | "" = SERVICES.find((s) => s === rawService) ?? "";
@@ -200,12 +200,12 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
   const providers = providersQuery.data;
   const shown = service ? providers.filter((p) => hasService(p, service)) : providers;
   const selected = providers.find((p) => p.id === params.get("provider")) ?? providers.find((p) => p.detected && p.id !== "echo") ?? providers.find((p) => p.detected) ?? providers[0];
-  const flows = flowsQuery.data;
-  const capped = (flows?.length ?? 0) >= FLOW_CAP;
+  const agents = agentsQuery.data;
+  const capped = (agents?.length ?? 0) >= AGENT_CAP;
   const detected = providers.filter((p) => p.detected).length;
   const countFor = (p: ProviderStatus) => {
-    if (!flows) return "—";
-    const n = flowsUsing(flows, p.id).length;
+    if (!agents) return "—";
+    const n = agentsUsing(agents, p.id).length;
     return capped ? `${n}+` : String(n);
   };
 
@@ -240,7 +240,7 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
                   <th scope="col">Services</th>
                   <th scope="col">Credential</th>
                   <th scope="col" className="num">
-                    Flows
+                    Agents
                   </th>
                 </tr>
               </thead>
@@ -269,7 +269,7 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
             Catalog providers are defined in YAML and can be overlaid per deployment. An OpenAI-compatible provider with OPENAI_BASE_URL set covers Groq, Together and local servers.
           </p>
         </section>
-        {selected && <Panel key={selected.id} p={selected} flows={flows} flowsCapped={capped} client={client} />}
+        {selected && <Panel key={selected.id} p={selected} agents={agents} agentsCapped={capped} client={client} />}
       </div>
     </>,
   );

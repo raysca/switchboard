@@ -7,7 +7,7 @@ import { TurnTimeline } from "../../components/timeline/TurnTimeline";
 import { CallTranscript } from "./CallTranscript";
 import { LiveCallControls } from "./LiveCallControls";
 import { ReplyWaterfall } from "./ReplyWaterfall";
-import { callerLabel, clock, endReasonText, endedByFlow, failedRoutes, formatMs, interruptedCount, medianReplyMs, outcome, path, stepsFor, transcript, turnRows, versionLabel } from "./callStats";
+import { callerLabel, clock, endReasonText, endedByAgent, failedHandoffs, formatMs, interruptedCount, medianReplyMs, outcome, path, stepsFor, transcript, turnRows, versionLabel } from "./callStats";
 import { useNow } from "./useNow";
 
 export type CallViewProps = { client: ApiClient; keyValue: string | null };
@@ -40,7 +40,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
     retry: false,
     refetchInterval: running ? LIVE_POLL_MS : false,
   });
-  const flowsQuery = useQuery({ queryKey: ["flows"], queryFn: () => client.getFlows(), enabled: on, retry: false });
+  const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: () => client.getAgents(), enabled: on, retry: false });
 
   // Polling stops with the status, and its last fetch predates the final replies: fetch once more.
   const status = sessionQuery.data?.status;
@@ -59,7 +59,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
   // The heading and the way back are always there, so focus and the page's outline never depend on loading.
   const top = (state?: ReactNode, status?: ReactNode) => (
     <div className="call-page">
-      <nav aria-label="Breadcrumb" className="flow-page__crumb">
+      <nav aria-label="Breadcrumb" className="agent-page__crumb">
         <Link to="/sessions">Calls</Link>
       </nav>
       <header className="call-bar">
@@ -76,7 +76,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
     const err = sessionQuery.error as ApiError;
     if (err.status === 404) {
       return top(
-        <section className="flow-missing">
+        <section className="agent-missing">
           <p role="status">That call was not found.</p>
           <Link to="/sessions" className="action-button-small">
             Back to calls
@@ -88,16 +88,16 @@ export function CallView({ client, keyValue }: CallViewProps) {
   }
 
   const s = sessionQuery.data;
-  const flow = (flowsQuery.data ?? []).find((f) => f.id === s.flow_id);
-  const fallback = flow?.name ?? "Assistant";
-  const st = stepsFor(s, flow);
+  const agent = (agentsQuery.data ?? []).find((f) => f.id === s.agent_id);
+  const fallback = agent?.name ?? "Assistant";
+  const st = stepsFor(s, agent);
   const turns = turnsQuery.data ?? [];
   const median = medianReplyMs(turns);
   const traces = tracesQuery.data ?? null;
   const o = outcome(s);
   const label = (id: string) => st.names.get(id) ?? id;
-  const ended = endedByFlow(traces);
-  const failed = failedRoutes(traces);
+  const ended = endedByAgent(traces);
+  const failed = failedHandoffs(traces);
 
   const stateBar = (
     <span className="call-state">
@@ -111,10 +111,10 @@ export function CallView({ client, keyValue }: CallViewProps) {
     <>
       <dl className="call-figures">
         <div>
-          <dt>Flow</dt>
+          <dt>Agent</dt>
           <dd>
-            {flow && !flow.archived ? <Link to={`/flows/${encodeURIComponent(flow.id)}`}>{flow.name}</Link> : <span>{flow ? `${flow.name} (archived)` : "Unknown flow"}</span>}{" "}
-            <span className="chip">{versionLabel(s, flow)}</span>
+            {agent && !agent.archived ? <Link to={`/agents/${encodeURIComponent(agent.id)}`}>{agent.name}</Link> : <span>{agent ? `${agent.name} (archived)` : "Unknown agent"}</span>}{" "}
+            <span className="chip">{versionLabel(s, agent)}</span>
             {s.draft && <> <span className="chip">Draft</span></>}
           </dd>
         </div>
@@ -133,7 +133,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
         {s.status === "ended" && (s.end_reason || ended) && (
           <div>
             <dt>Ended</dt>
-            <dd>{endReasonText(s.end_reason || "ended_by_flow", ended ? label(ended.step) : undefined)}</dd>
+            <dd>{endReasonText(s.end_reason || "ended_by_agent", ended ? label(ended.step) : undefined)}</dd>
           </div>
         )}
         <div>
@@ -154,10 +154,10 @@ export function CallView({ client, keyValue }: CallViewProps) {
 
       {failed.map((f, i) => (
         <p key={i} role="note" className="call-note">
-          A route to {label(f.to)} failed. The caller stayed with {label(f.from)}.
+          A handoff to {label(f.to)} failed. The caller stayed with {label(f.from)}.
         </p>
       ))}
-      {tracesQuery.isError && <p role="note" className="call-note">Steps and routes could not be loaded, so the transcript is not labelled by step.</p>}
+      {tracesQuery.isError && <p role="note" className="call-note">Steps and handoffs could not be loaded, so the transcript is not labelled by step.</p>}
 
       {s.status === "active" && <LiveCallControls key={sessionId} client={client} sessionId={sessionId} onEnded={() => void sessionQuery.refetch()} />}
 

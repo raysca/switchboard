@@ -16,7 +16,7 @@ type AsyncTriggerConfig struct {
 	// (AssistantContextProcessor.Active). May be nil.
 	Busy func() bool
 	// MaxQueue bounds pending results (default 8). On overflow the oldest tool result or
-	// route flip is injected into history at once without its own turn (the next triggered
+	// handoff flip is injected into history at once without its own turn (the next triggered
 	// turn's model sees it), so a result is never silently lost. Operator items count
 	// against a separate cap of the same size and are refused when it is full.
 	MaxQueue int
@@ -153,7 +153,7 @@ func (t *AsyncTrigger) rideTurn() {
 	}
 }
 
-// Deliver queues a finished async call or a route flip. It blocks only on queue overflow,
+// Deliver queues a finished async call or a handoff flip. It blocks only on queue overflow,
 // while the oldest such item is injected (at most one tool round). Operator items never count
 // toward that overflow and are never evicted by it.
 func (t *AsyncTrigger) Deliver(r AsyncToolResult) {

@@ -26,7 +26,7 @@ func buildPlan(profs []Profile, ms []mode, scs []scenario, repeat int, o *opts) 
 	var plan []planItem
 	for _, p := range profs {
 		for _, m := range ms {
-			for _, class := range []serverClass{classBase, classIdle, classPing, classFailover, classFlow} {
+			for _, class := range []serverClass{classBase, classIdle, classPing, classFailover, classAgent} {
 				for _, sc := range scs {
 					if sc.class.name != class.name {
 						continue
@@ -72,7 +72,7 @@ type runCfg struct {
 	logLevel        string
 }
 
-// runPlan executes the plan: one fresh server (ephemeral ports, own flow store and provider env) per
+// runPlan executes the plan: one fresh server (ephemeral ports, own agent store and provider env) per
 // profile x mode x server class. Failures are recorded per result and never abort other profiles.
 func runPlan(ctx context.Context, cfg runCfg, rep *Report) {
 	spent := cfg.spentBase
@@ -190,8 +190,8 @@ func runGroup(ctx context.Context, cfg runCfg, rep *Report, name string, items [
 	var fl string
 	if first.sc.class.name == classFailover.name {
 		fl, err = srv.provisionFailover(first.prof)
-	} else if first.sc.class.name == classFlow.name {
-		fl, err = srv.provisionFlow(first.prof)
+	} else if first.sc.class.name == classAgent.name {
+		fl, err = srv.provisionAgent(first.prof)
 	} else {
 		fl, err = srv.provision(first.prof, mcp)
 	}

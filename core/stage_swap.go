@@ -15,7 +15,7 @@ var (
 )
 
 // StageSwap is one pipeline stage whose implementation can be replaced while
-// the call runs (a route swaps the LLM and the TTS). Frames go to the
+// the call runs (a handoff swaps the LLM and the TTS). Frames go to the
 // current inner stage; a replaced stage is retired once its in-flight frames
 // finish, or after a timeout.
 type StageSwap struct {

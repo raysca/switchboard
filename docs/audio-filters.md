@@ -8,7 +8,7 @@ audio:
   denoise_strength: 0.5      # 0..1, 0 = default (0.5)
 ```
 
-A flow can turn denoise on for its own calls (`audio.denoise` on the start step, optional `strength` 0..1, default 0.5); the server's `input_filters` still apply to every call. See "Per-flow audio" below.
+An agent can turn denoise on for its own calls (`audio.denoise` on the start step, optional `strength` 0..1, default 0.5); the server's `input_filters` still apply to every call. See "Per-agent audio" below.
 
 ## Pipeline order
 
@@ -61,14 +61,14 @@ Package `core/audio/mixer`; mixing hook in `transport/ws/pacing.go`. Both are of
 
 ```yaml
 audio:
-  output_gain_db: -3        # -30..+6, 0 = off (no processor inserted); a flow can override it
-  backgrounds:              # named sounds (at most 8); a call plays one, never a path a flow gives
+  output_gain_db: -3        # -30..+6, 0 = off (no processor inserted); an agent can override it
+  backgrounds:              # named sounds (at most 8); a call plays one, never a path an agent gives
     office:
       file: /etc/govoice/office.wav   # PCM16 mono WAV, 8..192 kHz, <= 10 MB
       gain_db: -30          # -60..0; unset = -30, 0 = full level
       loop: true            # default true
-  background_default: office   # every call plays this unless its flow picks another; empty (default) = none
-  allow_flow_background: false # a flow may choose a sound from `backgrounds` (default false; true in the development profile)
+  background_default: office   # every call plays this unless its agent picks another; empty (default) = none
+  allow_agent_background: false # an agent may choose a sound from `backgrounds` (default false; true in the development profile)
 ```
 
 Validated at config load; every file is read when the server starts (a bad file stops startup). The single `audio.background` key of earlier builds is gone: an old file that still has it fails to load (unknown field).
@@ -99,24 +99,24 @@ Cost and limits:
 - A one-shot also starts with that 5 ms blend. A one-shot (`loop: false`) ends in silence and the writer stops emitting.
 - An ambience write failure ends the connection like any slow-client error.
 
-## Per-flow audio
+## Per-agent audio
 
-The start step of a flow can carry an `audio` object; each member overrides the server's setting for that flow's calls only when present:
+The start step of an agent can carry an `audio` object; each member overrides the server's setting for that agent's calls only when present:
 
 ```json
 "audio": { "denoise": { "strength": 0.5 }, "output_gain_db": -3, "background": { "name": "office", "gain_db": -30, "loop": true } }
 ```
 
-- `denoise`: present turns noise reduction on (`strength` above 0 up to 1, default 0.5). A flow cannot turn off a server-wide `input_filters` denoise.
-- `output_gain_db`: -30..+6; an explicit `0` removes a server-wide gain for this flow.
-- `background`: `name` must be a key of `audio.backgrounds` (lowercase letters, digits, `-`, `_`, up to 32): never a path; `{"name": ""}` means no background for this flow even when `background_default` is set. `gain_db` -60..0 and `loop` override the catalogue entry. Publishing a flow that names an unknown sound fails with `400 invalid_request` listing the available names; while `audio.allow_flow_background` is false any `background` is refused. If the catalogue or the ceiling changes after publishing, the flow stays ready and its calls play the server default (or none) instead, with a warning in the log.
-- `tool_cue`: `{name, after_ms}`, a name from `audio.cues`. Plays that cue while a slow synchronous MCP tool runs (see the hold sound in `docs/api/v1.md`). It shares the route sound's player: it ends when a route starts preparing and never starts while the route sound waits. `after_ms` 0..10000, 0 = 1000 ms (the route sound's own wait is 300 ms because a route gap is always silent; most tool calls return within a second).
-- Any step may set `audio.background` (it is the only `audio` member a step other than the start step may set). The sound switches when a route makes the step active; a step that sets none keeps what is playing; a route back to the start step restores the bed the call began with (its own, else the server default). A switch to the sound already playing at the same level is skipped, because each switch restarts the sound from its beginning. The same publish rules apply to every step (the step is named in the refusal). If the server refuses a step's sound at call time (flow sounds turned off, or the sound dropped after publishing), the step keeps the current sound; only the start step falls back to the server default. A step's `gain_db` and `loop` can be set through the API; the editor sets the step's sound name only and keeps any gain and loop already stored. Known limitation: a switch is an instant swap (the route sound fades over 30 ms, the background does not).
-- Because the transport accepts the connection before the call's flow is known, the call's background is set once the flow is resolved (`Connection.SetBackground`), without disturbing the paced writer.
+- `denoise`: present turns noise reduction on (`strength` above 0 up to 1, default 0.5). An agent cannot turn off a server-wide `input_filters` denoise.
+- `output_gain_db`: -30..+6; an explicit `0` removes a server-wide gain for this agent.
+- `background`: `name` must be a key of `audio.backgrounds` (lowercase letters, digits, `-`, `_`, up to 32): never a path; `{"name": ""}` means no background for this agent even when `background_default` is set. `gain_db` -60..0 and `loop` override the catalogue entry. Publishing an agent that names an unknown sound fails with `400 invalid_request` listing the available names; while `audio.allow_agent_background` is false any `background` is refused. If the catalogue or the ceiling changes after publishing, the agent stays ready and its calls play the server default (or none) instead, with a warning in the log.
+- `tool_cue`: `{name, after_ms}`, a name from `audio.cues`. Plays that cue while a slow synchronous MCP tool runs (see the hold sound in `docs/api/v1.md`). It shares the handoff sound's player: it ends when a handoff starts preparing and never starts while the handoff sound waits. `after_ms` 0..10000, 0 = 1000 ms (the handoff sound's own wait is 300 ms because a handoff gap is always silent; most tool calls return within a second).
+- Any step may set `audio.background` (it is the only `audio` member a step other than the start step may set). The sound switches when a handoff makes the step active; a step that sets none keeps what is playing; a handoff back to the start step restores the bed the call began with (its own, else the server default). A switch to the sound already playing at the same level is skipped, because each switch restarts the sound from its beginning. The same publish rules apply to every step (the step is named in the refusal). If the server refuses a step's sound at call time (agent sounds turned off, or the sound dropped after publishing), the step keeps the current sound; only the start step falls back to the server default. A step's `gain_db` and `loop` can be set through the API; the editor sets the step's sound name only and keeps any gain and loop already stored. Known limitation: a switch is an instant swap (the handoff sound fades over 30 ms, the background does not).
+- Because the transport accepts the connection before the call's agent is known, the call's background is set once the agent is resolved (`Connection.SetBackground`), without disturbing the paced writer.
 
-## Route cues
+## Handoff cues
 
-A flow with steps can play a sound while the call is between steps, so the caller never hears dead air. Sounds are operator files named under `audio.cues` (PCM16 mono WAV, resampled once at startup):
+An agent with steps can play a sound while the call is between steps, so the caller never hears dead air. Sounds are operator files named under `audio.cues` (PCM16 mono WAV, resampled once at startup):
 
 ```yaml
 audio:
@@ -127,4 +127,4 @@ audio:
       loop: false    # default true; a one-shot chime vs a bed that loops until the new step speaks
 ```
 
-The flow picks one with `route_cue: {name: chime, after_ms: 300}` in its config. The cue starts only if the gap after the old step's last audio outlasts `after_ms` (default 300), so quick routes stay silent. It fades out (30 ms) on the new step's first audio, when the caller speaks, if the route fails, or after 10 s. Cue frames are non-speech, uninterruptible output like the background: recordings and heard-text ignore them. The timeline records `cue_start` and `cue_stop` (with the reason). Publishing a flow whose `route_cue.name` is not one of these cues is refused (`400`, naming the available ones); a stored flow whose cue the server no longer has logs a warning and the call runs without a cue. At most 8 cues; names match `[a-z0-9_-]{1,32}`.
+The agent picks one with `handoff_cue: {name: chime, after_ms: 300}` in its config. The cue starts only if the gap after the old step's last audio outlasts `after_ms` (default 300), so quick handoffs stay silent. It fades out (30 ms) on the new step's first audio, when the caller speaks, if the handoff fails, or after 10 s. Cue frames are non-speech, uninterruptible output like the background: recordings and heard-text ignore them. The timeline records `cue_start` and `cue_stop` (with the reason). Publishing an agent whose `handoff_cue.name` is not one of these cues is refused (`400`, naming the available ones); a stored agent whose cue the server no longer has logs a warning and the call runs without a cue. At most 8 cues; names match `[a-z0-9_-]{1,32}`.

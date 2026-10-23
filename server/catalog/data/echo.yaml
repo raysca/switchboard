@@ -1,5 +1,5 @@
 # The simulated provider (providers/echo): needs no key and mirrors Google's models, voices and
-# languages, so a flow built for Google runs on echo by changing only the provider. A test keeps
+# languages, so an agent built for Google runs on echo by changing only the provider. A test keeps
 # these lists identical to google.yaml. They are closed (custom: false): the console offers no "Other…".
 id: echo
 name: Echo (simulated)

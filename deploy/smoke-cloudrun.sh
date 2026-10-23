@@ -20,7 +20,7 @@ for _ in $(seq 1 30); do curl -fsS --max-time 5 "${base}/health" >/dev/null 2>&1
 curl -fsS "${base}/health" | jq -e '.status == "live"' >/dev/null || fail "/health is not live"
 page="$(curl -fsS "${base}/")" || fail "GET / failed"
 [[ "$page" == *'<div id="root"'* ]] || fail "the admin UI is not served at /"
-page="$(curl -fsS "${base}/flows")" || fail "GET /flows failed"
+page="$(curl -fsS "${base}/agents")" || fail "GET /agents failed"
 [[ "$page" == *'<div id="root"'* ]] || fail "a client route does not fall back to the UI"
 
 # 2. the operational surfaces are not on the public port
@@ -45,14 +45,14 @@ for id in google xai elevenlabs; do
   echo "$prov" | jq -e --arg id "$id" '.data[] | select(.id == $id and .detected == true)' >/dev/null || fail "provider ${id} is not detected (missing secret?)"
 done
 
-# 5. the demo flow was installed by the server and is ready (the install runs in the background after start)
+# 5. the demo agent was installed by the server and is ready (the install runs in the background after start)
 ready=""
 for _ in $(seq 1 30); do
-  ready="$(api /api/v1/flows | jq -r '.data[] | select(.name == "Smile Dental front desk") | .readiness.state' || true)"
+  ready="$(api /api/v1/agents | jq -r '.data[] | select(.name == "Smile Dental front desk") | .readiness.state' || true)"
   [[ "$ready" == "ready" ]] && break
   sleep 2
 done
-[[ "$ready" == "ready" ]] || fail "the flow 'Smile Dental front desk' is not ready (state: ${ready:-missing})"
+[[ "$ready" == "ready" ]] || fail "the agent 'Smile Dental front desk' is not ready (state: ${ready:-missing})"
 
 # 6b. (after the wait: the same background install discovers the tools) the dentistry MCP server is registered, has its token, and its tools were discovered
 mcp="$(api /api/v1/mcp-servers)"

@@ -20,7 +20,7 @@ The codebase is strictly bifurcated into an independent **Core Library** and an 
 │                       server/                               │
 │  (Configuration-based Agentic Voice AI Server)              │
 │  - REST Management API (/api/v1)                            │
-│  - Flow Storage (SQLite / Postgres) & Env-Only Secrets      │
+│  - Agent Storage (SQLite / Postgres) & Env-Only Secrets     │
 │  - MCP Tools & Runtime Session Pinning                      │
 │  - WebSocket Transport (/ws) & RTVI Framing                 │
 └──────────────────────────────┬──────────────────────────────┘
@@ -44,10 +44,10 @@ The codebase is strictly bifurcated into an independent **Core Library** and an 
   - Operates purely on `Frame` abstractions (`ProcessFrame`, `Emitter`, `Direction`), generation counters, audio buffers, and provider interfaces.
 
 ### 2. `server/` (The Agentic Voice AI Server)
-- **Role:** The orchestration daemon that manages stored flows, provider configuration, and live calls.
+- **Role:** The orchestration daemon that manages stored agents, provider configuration, and live calls.
 - **Invariants:**
   - Consumes `core/` exactly as an external 3rd-party client would.
-  - Dynamically builds and configures `core.Pipeline` instances for incoming calls according to the caller's pinned flow version (`server/call.go`, `server/registry.go`).
+  - Dynamically builds and configures `core.Pipeline` instances for incoming calls according to the caller's pinned agent version (`server/call.go`, `server/registry.go`).
   - Encapsulates database storage (`server/storage`), provider catalog (`server/catalog`; secrets are read from the environment only, see `docs/security/credentials.md`), MCP servers (`server/mcp`), and management endpoints (`server/api`).
 
 ---
@@ -126,7 +126,7 @@ All engineering tasks, features, and refactors must conclude with an **independe
    - Error handling, recover blocks, and resource cleanup (`Close()`, `defer cancel()`).
 4. **Verification Gate:**
    - `gofmt -w .`
-   - `make verify`: vet and `go test -race` in every module of the Makefile's `MODULES`, the Go end-to-end tests, gofmt, the protobuf fixture and manifest checks, and the docs link checker (`scripts/check-links.mjs`).
+   - `make verify`: vet and `go test -race` in every module of the Makefile's `MODULES`, the Go end-to-end tests, gofmt, the protobuf fixture and manifest checks, and the docs link checker (`scripts/check-links.mjs`), and the vocabulary guard (`scripts/check-vocabulary.mjs`, exceptions in `scripts/vocabulary-allow.txt`).
    - `make deadcode`: no unreachable function outside `scripts/deadcode-allow.txt` (advisory in CI).
    - `make e2e-echo` (Go and browser end-to-end on the free echo provider) and, when the offline stack is running, `make offline-test`. Paid/live targets only when asked.
    - Clean git status with descriptive conventional commit messages.

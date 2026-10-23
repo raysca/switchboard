@@ -41,10 +41,10 @@ func indexFrom(log []string, entry string, from int) int {
 // within a second and the whole reply plays for several seconds, so a later turn cuts it off mid-play.
 var longReply = strings.TrimSpace(strings.Repeat("This sentence keeps the reply going. ", 10))
 
-// bargeInRig is the flow rig with the echo providers on Google-like timing: "instant" synthesis makes two
+// bargeInRig is the agent rig with the echo providers on Google-like timing: "instant" synthesis makes two
 // 20 ms frames per piece, too little audio for a reply to still be playing when the next turn arrives.
-func bargeInRig(t *testing.T) *flowRigE2E {
-	return newFlowRigE2E(t, newProbe(), func(c *Config) { c.Providers.Echo.Mimic = "google" })
+func bargeInRig(t *testing.T) *agentRigE2E {
+	return newAgentRigE2E(t, newProbe(), func(c *Config) { c.Providers.Echo.Mimic = "google" })
 }
 
 // within is eventually with its own deadline: on Google-like timing one barge-in test takes about 7 s, so the
@@ -63,7 +63,7 @@ func within(t *testing.T, d time.Duration, what string, ok func() bool) {
 // nothing played, sends none (its InterruptionFrame reaches the transport without a flush).
 func TestCallBehaviorBargeInSendsBotInterruptedOnceAfterTheCutReplysAudio(t *testing.T) {
 	r := bargeInRig(t)
-	c := r.dial(behaviorFlow(t, r, "Talker", "talkvoice", ``))
+	c := r.dial(behaviorAgent(t, r, "Talker", "talkvoice", ``))
 	c.say(longReply)
 	within(t, 20*time.Second, "the long reply to play", func() bool { return countOf(c.wireLog(), "audio") >= 10 })
 	if n := countOf(c.wireLog(), "msg:bot-interrupted"); n != 0 {

@@ -200,7 +200,7 @@ func TestMCPToolPayloads(t *testing.T) {
 	// the agent config carries the stage fields and no credential reference
 	p := Profile{Name: "x"}
 	p.Stages.STT, p.Stages.LLM, p.Stages.TTS = Stage{Provider: "deepgram", Language: "en"}, Stage{Provider: "openai", Model: "m"}, Stage{Provider: "cartesia"}
-	b, _ := json.Marshal(flowConfig(p))
+	b, _ := json.Marshal(agentConfig(p))
 	if !strings.Contains(string(b), `"model":"m"`) || strings.Contains(string(b), "credential") {
 		t.Errorf("config = %s", b)
 	}

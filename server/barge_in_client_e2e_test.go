@@ -22,11 +22,11 @@ func TestCallBehaviorPipecatClientTakesABargeInWithoutErrors(t *testing.T) {
 		t.Fatalf("the pinned Pipecat client is not installed (run: npm ci --prefix tools/compat): %v", err)
 	}
 	r := bargeInRig(t)
-	flowID := behaviorFlow(t, r, "Talker", "talkvoice", ``)
+	agentID := behaviorAgent(t, r, "Talker", "talkvoice", ``)
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "node", filepath.Join(compat, "test_rtvi_barge_in.js"),
-		"--url", "ws"+strings.TrimPrefix(r.ts.URL, "http"), "--token", r.voiceToken(flowID),
+		"--url", "ws"+strings.TrimPrefix(r.ts.URL, "http"), "--token", r.voiceToken(agentID),
 		"--long", longReply, "--barge", "barrier").CombinedOutput()
 	if err != nil {
 		t.Fatalf("client-js run failed: %v\n%s", err, out)

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { ApiError, type FlowDTO, type MCPServerDTO, type ToolDependencyDTO } from "../../api/client";
-import { ago, drifts, flowsUsingServer, flowsUsingTool, formatApiError, referencedFlows, repin, serverStatus } from "./mcpStats";
+import { ApiError, type AgentDTO, type MCPServerDTO, type ToolDependencyDTO } from "../../api/client";
+import { ago, drifts, agentsUsingServer, agentsUsingTool, formatApiError, referencedAgents, repin, serverStatus } from "./mcpStats";
 
 const server = (over: Partial<MCPServerDTO> = {}): MCPServerDTO => ({
   id: "crm",
@@ -23,7 +23,7 @@ const dep = (over: Partial<ToolDependencyDTO> = {}): ToolDependencyDTO => ({
   selected_schema_hash: "aaaaaaaa11",
   ...over,
 });
-const flow = (id: string, tools: { server: string; name: string; hash: string; required: boolean }[], deps: ToolDependencyDTO[] = [], archived = false): FlowDTO => ({
+const agent = (id: string, tools: { server: string; name: string; hash: string; required: boolean }[], deps: ToolDependencyDTO[] = [], archived = false): AgentDTO => ({
   id,
   name: id,
   description: "",
@@ -80,17 +80,17 @@ describe("ago", () => {
 });
 
 describe("usage", () => {
-  const a = flow("a", [{ server: "crm", name: "lookup", hash: "h1", required: true }, { server: "billing", name: "pay", hash: "h2", required: false }]);
-  const b = flow("b", [{ server: "crm", name: "notes", hash: "h3", required: false }]);
-  const gone = flow("gone", [{ server: "crm", name: "lookup", hash: "h1", required: true }], [], true);
-  const bare = { ...flow("bare", []), current_version: undefined } as FlowDTO;
-  it("lists the flows that pin a server's tools, once each, never an archived one", () => {
-    expect(flowsUsingServer([a, b, gone, bare], "crm").map((f) => f.id)).toEqual(["a", "b"]);
-    expect(flowsUsingServer([a, b], "billing").map((f) => f.id)).toEqual(["a"]);
+  const a = agent("a", [{ server: "crm", name: "lookup", hash: "h1", required: true }, { server: "billing", name: "pay", hash: "h2", required: false }]);
+  const b = agent("b", [{ server: "crm", name: "notes", hash: "h3", required: false }]);
+  const gone = agent("gone", [{ server: "crm", name: "lookup", hash: "h1", required: true }], [], true);
+  const bare = { ...agent("bare", []), current_version: undefined } as AgentDTO;
+  it("lists the agents that pin a server's tools, once each, never an archived one", () => {
+    expect(agentsUsingServer([a, b, gone, bare], "crm").map((f) => f.id)).toEqual(["a", "b"]);
+    expect(agentsUsingServer([a, b], "billing").map((f) => f.id)).toEqual(["a"]);
   });
-  it("lists the flows that pin one tool", () => {
-    expect(flowsUsingTool([a, b], "crm", "lookup").map((f) => f.id)).toEqual(["a"]);
-    expect(flowsUsingTool([a, b], "crm", "nope")).toEqual([]);
+  it("lists the agents that pin one tool", () => {
+    expect(agentsUsingTool([a, b], "crm", "lookup").map((f) => f.id)).toEqual(["a"]);
+    expect(agentsUsingTool([a, b], "crm", "nope")).toEqual([]);
   });
 });
 
@@ -99,10 +99,10 @@ describe("drifts and acceptedSelection", () => {
   const missing = dep({ remote_name: "gone", state: "tool_missing" });
   const ok = dep({ remote_name: "fine" });
   const other = dep({ mcp_server_id: "billing", state: "schema_drift", current_schema_hash: "z" });
-  const f = flow("f", [{ server: "crm", name: "lookup", hash: "aaaaaaaa11", required: true }, { server: "billing", name: "pay", hash: "p1", required: false }], [changed, missing, ok, other]);
-  it("finds the changed and missing tools of one server, for live flows only", () => {
-    const archived = flow("old", [], [changed], true);
-    expect(drifts([f, archived], "crm").map((d) => [d.flow.id, d.dep.remote_name, d.kind])).toEqual([
+  const f = agent("f", [{ server: "crm", name: "lookup", hash: "aaaaaaaa11", required: true }, { server: "billing", name: "pay", hash: "p1", required: false }], [changed, missing, ok, other]);
+  it("finds the changed and missing tools of one server, for live agents only", () => {
+    const archived = agent("old", [], [changed], true);
+    expect(drifts([f, archived], "crm").map((d) => [d.agent.id, d.dep.remote_name, d.kind])).toEqual([
       ["f", "lookup", "changed"],
       ["f", "gone", "missing"],
     ]);
@@ -111,7 +111,7 @@ describe("drifts and acceptedSelection", () => {
 });
 
 describe("repin", () => {
-  const two = flow(
+  const two = agent(
     "two",
     [
       { server: "crm", name: "lookup", hash: "aaaaaaaa11", required: true },
@@ -124,7 +124,7 @@ describe("repin", () => {
       dep({ mcp_server_id: "billing", remote_name: "pay", required: false, state: "ready", selected_schema_hash: "p1" }),
     ],
   );
-  it("re-pins every changed tool of the flow in one list, and keeps the rest as they were", () => {
+  it("re-pins every changed tool of the agent in one list, and keeps the rest as they were", () => {
     const plan = repin(two);
     expect(plan.tools).toEqual(["lookup", "notes"]);
     expect(plan.blockedBy).toEqual([]);
@@ -135,31 +135,33 @@ describe("repin", () => {
     ]);
   });
   it("names what would still make the server refuse: a tool that is gone, or a server that is down", () => {
-    const f = flow("blocked", [{ server: "crm", name: "lookup", hash: "a", required: true }, { server: "crm", name: "gone", hash: "g", required: false }], [
+    const f = agent("blocked", [{ server: "crm", name: "lookup", hash: "a", required: true }, { server: "crm", name: "gone", hash: "g", required: false }], [
       dep({ state: "schema_drift", current_schema_hash: "b" }),
       dep({ remote_name: "gone", required: false, state: "tool_missing" }),
     ]);
     expect(repin(f).blockedBy.map((d) => d.remote_name)).toEqual(["gone"]);
   });
   it("has nothing to re-pin when no tool changed, or the current hash is unknown", () => {
-    expect(repin(flow("none", [{ server: "crm", name: "lookup", hash: "a", required: true }], [dep()])).selection).toBeNull();
-    expect(repin(flow("nohash", [{ server: "crm", name: "lookup", hash: "a", required: true }], [dep({ state: "schema_drift" })])).selection).toBeNull();
+    expect(repin(agent("none", [{ server: "crm", name: "lookup", hash: "a", required: true }], [dep()])).selection).toBeNull();
+    expect(repin(agent("nohash", [{ server: "crm", name: "lookup", hash: "a", required: true }], [dep({ state: "schema_drift" })])).selection).toBeNull();
   });
 });
 
-describe("referencedFlows", () => {
-  it("reads the flows the server names when it refuses a delete, once each", () => {
+describe("referencedAgents", () => {
+  it("reads the agents the server names when it refuses a delete, once each", () => {
     const details = [
-      { FlowID: "a1", FlowName: "Front desk", RemoteName: "lookup", Required: true },
-      { FlowID: "a1", FlowName: "Front desk", RemoteName: "notes", Required: false },
-      { FlowID: "a2", FlowName: "Old line", RemoteName: "lookup", Required: false },
+      { agent_id: "a1", agent_name: "Front desk", remote_name: "lookup", required: true },
+      { agent_id: "a1", agent_name: "Front desk", remote_name: "notes", required: false },
+      { agent_id: "a2", agent_name: "Old line", remote_name: "lookup", required: false },
     ];
-    expect(referencedFlows(details)).toEqual([{ id: "a1", name: "Front desk" }, { id: "a2", name: "Old line" }]);
+    expect(referencedAgents(details)).toEqual([{ id: "a1", name: "Front desk" }, { id: "a2", name: "Old line" }]);
   });
   it("is empty for anything else", () => {
-    expect(referencedFlows(null)).toEqual([]);
-    expect(referencedFlows("x")).toEqual([]);
-    expect(referencedFlows([{ nope: 1 }, null])).toEqual([]);
+    expect(referencedAgents(null)).toEqual([]);
+    expect(referencedAgents("x")).toEqual([]);
+    expect(referencedAgents([{ nope: 1 }, null])).toEqual([]);
+    // the Go-field-name keys the server used to send are not read any more
+    expect(referencedAgents([{ ["Agent" + "ID"]: "a1", ["Agent" + "Name"]: "Front desk" }, { AgentID: "a1", AgentName: "Front desk" }])).toEqual([]);
   });
 });
 

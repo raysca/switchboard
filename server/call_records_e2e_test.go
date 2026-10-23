@@ -12,14 +12,14 @@ import (
 
 	"github.com/coder/websocket"
 
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/server/storage"
 )
 
 // What a call leaves behind: who called and why it ended, for every way a call can end, over real
 // WebSocket calls on the echo provider.
 
-func (r *flowRigE2E) session(id string) storage.SessionRecord {
+func (r *agentRigE2E) session(id string) storage.SessionRecord {
 	r.t.Helper()
 	rec, err := r.s.store.Sessions().Get(context.Background(), id)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -28,7 +28,7 @@ func (r *flowRigE2E) session(id string) storage.SessionRecord {
 	return rec // zero until the row exists
 }
 
-func (r *flowRigE2E) waitEnded(id, reason string) storage.SessionRecord {
+func (r *agentRigE2E) waitEnded(id, reason string) storage.SessionRecord {
 	r.t.Helper()
 	var rec storage.SessionRecord
 	eventually(r.t, "session "+id+" ended with "+reason, func() bool {
@@ -39,8 +39,8 @@ func (r *flowRigE2E) waitEnded(id, reason string) storage.SessionRecord {
 }
 
 func TestCallRecordsTheCallersLabelAndAHangUp(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe(), serverIdle(0, ""))
-	id := behaviorFlow(t, r, "Plain", "plainvoice", ``)
+	r := newAgentRigE2E(t, newProbe(), serverIdle(0, ""))
+	id := behaviorAgent(t, r, "Plain", "plainvoice", ``)
 	c := r.dial(id) // the token's principal is "alice"
 	eventually(t, "the row", func() bool { return r.session(c.sessionID).ID != "" })
 	if rec := r.session(c.sessionID); rec.Caller != "alice" || rec.EndReason != "" || rec.Status != "active" {
@@ -54,8 +54,8 @@ func TestCallRecordsTheCallersLabelAndAHangUp(t *testing.T) {
 }
 
 func TestCallRecordsASilentCallerAndKeepsTheFirstCause(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe(), serverIdle(time.Minute, "server prompt"))
-	quiet := behaviorFlow(t, r, "Quiet", "quietvoice", `,"idle":{"user_timeout_ms":1000,"max_prompts":1,"prompt_mode":"say"}`)
+	r := newAgentRigE2E(t, newProbe(), serverIdle(time.Minute, "server prompt"))
+	quiet := behaviorAgent(t, r, "Quiet", "quietvoice", `,"idle":{"user_timeout_ms":1000,"max_prompts":1,"prompt_mode":"say"}`)
 	c := r.dial(quiet)
 	r.waitEnded(c.sessionID, storage.EndSilentCaller)
 	_ = c.conn.CloseNow() // the socket closing after the server hung up must not rewrite the reason
@@ -65,29 +65,29 @@ func TestCallRecordsASilentCallerAndKeepsTheFirstCause(t *testing.T) {
 	}
 }
 
-func TestCallRecordsAFlowThatEndedTheCall(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe(), serverIdle(0, ""))
-	a, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "Closer", Config: endCallFlowJSON(true, false)})
-	if err != nil || a.Readiness.State != flow.ReadinessReady {
-		t.Fatalf("flow: %+v err=%v", a.Readiness, err)
+func TestCallRecordsAnAgentThatEndedTheCall(t *testing.T) {
+	r := newAgentRigE2E(t, newProbe(), serverIdle(0, ""))
+	a, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Closer", Config: endCallAgentJSON(true, false)})
+	if err != nil || a.Readiness.State != agent.ReadinessReady {
+		t.Fatalf("agent: %+v err=%v", a.Readiness, err)
 	}
-	r.flowID = a.ID
+	r.agentID = a.ID
 	c := r.dial(a.ID)
 	c.say("hello")
 	c.waitReplies("[FRONT", 1)
 	c.say("please end the call")
-	r.waitEnded(c.sessionID, storage.EndedByFlow)
+	r.waitEnded(c.sessionID, storage.EndedByAgent)
 }
 
 func TestCallRecordsTheTimeLimit(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe(), serverIdle(0, ""), func(c *Config) { c.Limits.MaxCallDuration = time.Second })
-	c := r.dial(behaviorFlow(t, r, "Plain", "plainvoice", ``))
+	r := newAgentRigE2E(t, newProbe(), serverIdle(0, ""), func(c *Config) { c.Limits.MaxCallDuration = time.Second })
+	c := r.dial(behaviorAgent(t, r, "Plain", "plainvoice", ``))
 	r.waitEnded(c.sessionID, storage.EndTimeLimit)
 }
 
 func TestCallRecordsAServerShutdown(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe(), serverIdle(0, ""), func(c *Config) { c.Limits.DrainTimeout = 500 * time.Millisecond })
-	c := r.dial(behaviorFlow(t, r, "Plain", "plainvoice", ``))
+	r := newAgentRigE2E(t, newProbe(), serverIdle(0, ""), func(c *Config) { c.Limits.DrainTimeout = 500 * time.Millisecond })
+	c := r.dial(behaviorAgent(t, r, "Plain", "plainvoice", ``))
 	eventually(t, "the call is live", func() bool { return r.activeSessions() == 1 })
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -107,16 +107,16 @@ func TestCallRecordsAServerShutdown(t *testing.T) {
 func TestCallRecordsACallThatCouldNotStart(t *testing.T) {
 	p := newProbe()
 	p.failTTS = "failvoice"
-	r := newFlowRigE2E(t, p, serverIdle(0, ""))
-	id := behaviorFlow(t, r, "Broken", "failvoice", ``)
+	r := newAgentRigE2E(t, p, serverIdle(0, ""))
+	id := behaviorAgent(t, r, "Broken", "failvoice", ``)
 	c := r.dial(id)
 	r.waitEnded(c.sessionID, storage.EndSetupFailed)
 }
 
 func TestTheOrphanSweepRecordsAServerRestart(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe(), serverIdle(0, ""))
-	id := behaviorFlow(t, r, "Plain", "plainvoice", ``)
-	pin, err := r.s.flows.StartSession(context.Background(), id, "")
+	r := newAgentRigE2E(t, newProbe(), serverIdle(0, ""))
+	id := behaviorAgent(t, r, "Plain", "plainvoice", ``)
+	pin, err := r.s.agents.StartSession(context.Background(), id, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,8 +129,8 @@ func TestTheOrphanSweepRecordsAServerRestart(t *testing.T) {
 }
 
 func TestATypedTurnLeavesStageOffsetsAndAMedianInTheAPI(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe(), serverIdle(0, ""))
-	c := r.dial(behaviorFlow(t, r, "Plain", "plainvoice", ``))
+	r := newAgentRigE2E(t, newProbe(), serverIdle(0, ""))
+	c := r.dial(behaviorAgent(t, r, "Plain", "plainvoice", ``))
 	c.say("hello")
 	c.waitReplies("[Plain", 1)
 	var l map[string]int64
@@ -168,11 +168,11 @@ func hasKeys(m map[string]int64, keys ...string) bool {
 
 func TestCallRecordsAnAgentThatStoppedResponding(t *testing.T) {
 	// The echo model's token delay is longer than the stuck-bot watchdog, so the reply never starts speaking.
-	r := newFlowRigE2E(t, newProbe(), serverIdle(0, ""), func(c *Config) {
+	r := newAgentRigE2E(t, newProbe(), serverIdle(0, ""), func(c *Config) {
 		c.Providers.Echo.LLMExtraDelay = 30 * time.Second
 		c.Idle.BotTimeout, c.Idle.BotMaxStuck = 400*time.Millisecond, 1
 	})
-	c := r.dial(behaviorFlow(t, r, "Slow", "slowvoice", ``))
+	c := r.dial(behaviorAgent(t, r, "Slow", "slowvoice", ``))
 	c.say("hello there")
 	r.waitEnded(c.sessionID, storage.EndAgentStuck)
 }

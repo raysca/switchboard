@@ -43,7 +43,7 @@ type Metrics struct {
 	AdmissionRejectsLimit                                     atomic.Uint64
 	AdmissionRejectsPrincipal                                 atomic.Uint64
 	AdmissionRejectsVAD                                       atomic.Uint64
-	AdmissionRejectsFlow                                      atomic.Uint64
+	AdmissionRejectsAgent                                     atomic.Uint64
 	AdmissionRejectsRate                                      atomic.Uint64
 
 	// VAD Metrics
@@ -128,7 +128,7 @@ type Metrics struct {
 
 	filters filterMetrics
 	summary summaryMetrics
-	route   routeMetrics
+	handoff handoffMetrics
 	// completion verdicts: complete, incomplete_short, incomplete_long, no_marker.
 	completion [4]atomic.Uint64
 }
@@ -199,7 +199,7 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "voice_admission_rejects_total{reason=\"session_limit\"} %d\n", m.AdmissionRejectsLimit.Load())
 	fmt.Fprintf(w, "voice_admission_rejects_total{reason=\"principal_limit\"} %d\n", m.AdmissionRejectsPrincipal.Load())
 	fmt.Fprintf(w, "voice_admission_rejects_total{reason=\"vad_unavailable\"} %d\n", m.AdmissionRejectsVAD.Load())
-	fmt.Fprintf(w, "voice_admission_rejects_total{reason=\"flow_limit\"} %d\n", m.AdmissionRejectsFlow.Load())
+	fmt.Fprintf(w, "voice_admission_rejects_total{reason=\"agent_limit\"} %d\n", m.AdmissionRejectsAgent.Load())
 	fmt.Fprintf(w, "voice_admission_rejects_total{reason=\"start_rate_limit\"} %d\n", m.AdmissionRejectsRate.Load())
 
 	fmt.Fprintf(w, "# HELP voice_context_evictions_total Total number of oldest turn pairs evicted.\n")
@@ -363,7 +363,7 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 
 	m.filters.write(w)
 	m.summary.write(w)
-	m.route.write(w)
+	m.handoff.write(w)
 
 	// Transport
 

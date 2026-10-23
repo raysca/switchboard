@@ -77,7 +77,7 @@ func (c *callInjector) Inject(notes []string, run bool) error {
 
 // serverMarkers are the phrases (letters only) that introduce text the server itself places in a
 // call's history as a user-role message: operator notes, the idle / turn-completion notices, the
-// summary of earlier turns and the greeting after a route.
+// summary of earlier turns and the greeting after a handoff.
 var serverMarkers = []string{"notefromtheoperator", "turncompletionnotice", "idlenotice", "systemnotice",
 	"summaryoftheearlierconversation", "thecallerwasjusttransferredtoyou"}
 

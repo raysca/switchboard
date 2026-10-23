@@ -23,16 +23,16 @@ describe("DemoCard", () => {
     expect(screen.queryByRole("button", { name: /load demo/i })).toBeNull();
   });
 
-  it("installs the demo and links to the flow", async () => {
+  it("installs the demo and links to the agent", async () => {
     const getDemo = vi
       .fn()
       .mockResolvedValueOnce({ dental: { available: true, installed: false } })
-      .mockResolvedValue({ dental: { available: true, installed: true, flow_id: "f1" } });
-    const installDentalDemo = vi.fn().mockResolvedValue({ mcp_server_id: "m", mcp_created: true, tools: 7, flow_id: "f1", flow_created: true });
+      .mockResolvedValue({ dental: { available: true, installed: true, agent_id: "f1" } });
+    const installDentalDemo = vi.fn().mockResolvedValue({ mcp_server_id: "m", mcp_created: true, tools: 7, agent_id: "f1", agent_created: true });
     renderWithProviders(<DemoCard client={{ getDemo, installDentalDemo } as unknown as ApiClient} />);
     await userEvent.click(await screen.findByRole("button", { name: /load demo/i }));
     expect(installDentalDemo).toHaveBeenCalledTimes(1);
-    expect(await screen.findByRole("link", { name: /smile dental front desk/i })).toHaveAttribute("href", "/flows/f1");
+    expect(await screen.findByRole("link", { name: /smile dental front desk/i })).toHaveAttribute("href", "/agents/f1");
   });
 
   it("shows the failure and lets the user retry", async () => {

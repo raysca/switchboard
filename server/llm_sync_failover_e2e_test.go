@@ -11,7 +11,7 @@ import (
 
 	"govoice/core"
 	"govoice/providers/google"
-	"govoice/server/flow"
+	"govoice/server/agent"
 )
 
 // syncDownLLM is a primary whose request cannot start: it forwards the user turn, then reports a provider
@@ -59,7 +59,7 @@ func (u userTurnCounter) ProcessFrame(ctx context.Context, f core.Frame, dir cor
 
 // A primary LLM failing synchronously on every turn: the fallback answers each turn and the call lives on.
 func TestCallBehaviorASynchronousLLMFailureFailsOverAndTheCallSurvives(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe())
+	r := newAgentRigE2E(t, newProbe())
 	down := &syncDownLLM{}
 	healthy := r.s.registry.factories["echo.llm"]
 	r.s.registry.Register("echo.llm", func(cfg *Config, spec StageSpec) (core.Processor, error) {
@@ -77,12 +77,12 @@ func TestCallBehaviorASynchronousLLMFailureFailsOverAndTheCallSurvives(t *testin
 		}
 		return userTurnCounter{Processor: p, n: &userTurns}, nil
 	})
-	f, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "Failover", Config: json.RawMessage(
+	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Failover", Config: json.RawMessage(
 		`{"stt":{"provider":"echo","model":"s"},` +
 			`"llm":{"provider":"echo","model":"downmodel","system_prompt":"Failover","fallbacks":[{"provider":"echo","model":"m"}]},` +
 			`"tts":{"provider":"echo","voice":"failvoice"}}`)})
-	if err != nil || f.Readiness.State != flow.ReadinessReady {
-		t.Fatalf("flow: %+v err=%v", f.Readiness, err)
+	if err != nil || f.Readiness.State != agent.ReadinessReady {
+		t.Fatalf("agent: %+v err=%v", f.Readiness, err)
 	}
 	c := r.dial(f.ID)
 	c.say("first question")
@@ -151,7 +151,7 @@ func (p *refuseFirstTurnLLM) ProcessFrame(ctx context.Context, f core.Frame, dir
 
 // A refused task loses that turn only: no fallback answers it, the call lives, the next turn is answered.
 func TestCallBehaviorARefusedTaskLosesTheTurnNotTheCall(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe())
+	r := newAgentRigE2E(t, newProbe())
 	var primary atomic.Pointer[refuseFirstTurnLLM]
 	healthy := r.s.registry.factories["echo.llm"]
 	r.s.registry.Register("echo.llm", func(cfg *Config, spec StageSpec) (core.Processor, error) {
@@ -167,12 +167,12 @@ func TestCallBehaviorARefusedTaskLosesTheTurnNotTheCall(t *testing.T) {
 		}
 		return inner, nil
 	})
-	f, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "Refused", Config: json.RawMessage(
+	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Refused", Config: json.RawMessage(
 		`{"stt":{"provider":"echo","model":"s"},` +
 			`"llm":{"provider":"echo","model":"refusemodel","system_prompt":"Refused","fallbacks":[{"provider":"echo","model":"m"}]},` +
 			`"tts":{"provider":"echo","voice":"refusevoice"}}`)})
-	if err != nil || f.Readiness.State != flow.ReadinessReady {
-		t.Fatalf("flow: %+v err=%v", f.Readiness, err)
+	if err != nil || f.Readiness.State != agent.ReadinessReady {
+		t.Fatalf("agent: %+v err=%v", f.Readiness, err)
 	}
 	c := r.dial(f.ID)
 	c.say("first question")
@@ -240,7 +240,7 @@ func (p *refuseFirstUnitTTS) ProcessFrame(ctx context.Context, f core.Frame, dir
 // A TTS unit refused by the session's own task budget is lost, not failed over: the healthy primary keeps
 // the later units, no fallback speaks, no failover is counted, and the call lives.
 func TestCallBehaviorARefusedTTSUnitIsLostWithoutFailover(t *testing.T) {
-	r := newFlowRigE2E(t, newProbe())
+	r := newAgentRigE2E(t, newProbe())
 	var primary atomic.Pointer[refuseFirstUnitTTS]
 	healthy := r.s.registry.factories["echo.tts"]
 	r.s.registry.Register("echo.tts", func(cfg *Config, spec StageSpec) (core.Processor, error) {
@@ -252,11 +252,11 @@ func TestCallBehaviorARefusedTTSUnitIsLostWithoutFailover(t *testing.T) {
 		primary.Store(p)
 		return p, nil
 	})
-	f, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "RefusedTTS", Config: json.RawMessage(
+	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "RefusedTTS", Config: json.RawMessage(
 		`{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"RefusedTTS"},` +
 			`"tts":{"provider":"echo","voice":"refusevoice","fallbacks":[{"provider":"echo","voice":"okvoice"}]}}`)})
-	if err != nil || f.Readiness.State != flow.ReadinessReady {
-		t.Fatalf("flow: %+v err=%v", f.Readiness, err)
+	if err != nil || f.Readiness.State != agent.ReadinessReady {
+		t.Fatalf("agent: %+v err=%v", f.Readiness, err)
 	}
 	c := r.dial(f.ID)
 	c.say("First sentence here. Second sentence here.")

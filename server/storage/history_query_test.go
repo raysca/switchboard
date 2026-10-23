@@ -23,31 +23,31 @@ func newTestStore(t *testing.T) *storage.Store {
 	return s
 }
 
-func createTestFlowAndVersion(t *testing.T, s *storage.Store) (string, string, string) {
+func createTestAgentAndVersion(t *testing.T, s *storage.Store) (string, string, string) {
 	t.Helper()
 	ctx := context.Background()
-	flowID := storage.NewID()
-	a := storage.Flow{ID: flowID, Name: "TestAgent", Enabled: true, CreatedAt: time.Now()}
-	if err := s.Flows().Create(ctx, a); err != nil {
+	agentID := storage.NewID()
+	a := storage.Agent{ID: agentID, Name: "TestAgent", Enabled: true, CreatedAt: time.Now()}
+	if err := s.Agents().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, _, err := s.Flows().MutateAndPublish(ctx, flowID, storage.FlowMutation{}, []byte(`{"llm":"test"}`))
+	v, _, err := s.Agents().MutateAndPublish(ctx, agentID, storage.AgentMutation{}, []byte(`{"llm":"test"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return flowID, v.ID, v.ConfigHash
+	return agentID, v.ID, v.ConfigHash
 }
 
 func TestSessionRepositoryPaginationAndFilters(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	flow1, v1, hash1 := createTestFlowAndVersion(t, s)
-	flow2, v2, hash2 := createTestFlowAndVersion(t, s)
+	agent1, v1, hash1 := createTestAgentAndVersion(t, s)
+	agent2, v2, hash2 := createTestAgentAndVersion(t, s)
 
 	baseTime := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
 
-	// Create 3 sessions for flow1 (2 active, 1 ended)
+	// Create 3 sessions for agent1 (2 active, 1 ended)
 	for i := 0; i < 3; i++ {
 		status := "active"
 		if i == 2 {
@@ -55,8 +55,8 @@ func TestSessionRepositoryPaginationAndFilters(t *testing.T) {
 		}
 		sess := storage.SessionRecord{
 			ID:                  storage.NewID(),
-			FlowID:              flow1,
-			FlowVersionID:       v1,
+			AgentID:             agent1,
+			AgentVersionID:      v1,
 			ConfigHash:          hash1,
 			Status:              status,
 			StartedAt:           baseTime.Add(time.Duration(i) * time.Hour),
@@ -70,12 +70,12 @@ func TestSessionRepositoryPaginationAndFilters(t *testing.T) {
 		}
 	}
 
-	// Create 2 sessions for flow2 (both ended)
+	// Create 2 sessions for agent2 (both ended)
 	for i := 0; i < 2; i++ {
 		sess := storage.SessionRecord{
 			ID:                  storage.NewID(),
-			FlowID:              flow2,
-			FlowVersionID:       v2,
+			AgentID:             agent2,
+			AgentVersionID:      v2,
 			ConfigHash:          hash2,
 			Status:              "ended",
 			StartedAt:           baseTime.Add(time.Duration(i+10) * time.Hour),
@@ -114,13 +114,13 @@ func TestSessionRepositoryPaginationAndFilters(t *testing.T) {
 		t.Fatalf("expected 1 session on page 3, got %d", len(page3))
 	}
 
-	// Test 2: Filter by FlowID
-	flow1Sessions, err := s.Sessions().List(ctx, storage.SessionFilter{FlowID: flow1, Limit: 50})
+	// Test 2: Filter by AgentID
+	agent1Sessions, err := s.Sessions().List(ctx, storage.SessionFilter{AgentID: agent1, Limit: 50})
 	if err != nil {
-		t.Fatalf("list flow1: %v", err)
+		t.Fatalf("list agent1: %v", err)
 	}
-	if len(flow1Sessions) != 3 {
-		t.Fatalf("expected 3 sessions for flow1, got %d", len(flow1Sessions))
+	if len(agent1Sessions) != 3 {
+		t.Fatalf("expected 3 sessions for agent1, got %d", len(agent1Sessions))
 	}
 
 	// Test 3: Filter by Status
@@ -132,13 +132,13 @@ func TestSessionRepositoryPaginationAndFilters(t *testing.T) {
 		t.Fatalf("expected 2 active sessions, got %d", len(activeSessions))
 	}
 
-	// Test 4: Filter by FlowID AND Status
-	flow1Active, err := s.Sessions().List(ctx, storage.SessionFilter{FlowID: flow1, Status: "active", Limit: 50})
+	// Test 4: Filter by AgentID AND Status
+	agent1Active, err := s.Sessions().List(ctx, storage.SessionFilter{AgentID: agent1, Status: "active", Limit: 50})
 	if err != nil {
-		t.Fatalf("list flow1 active: %v", err)
+		t.Fatalf("list agent1 active: %v", err)
 	}
-	if len(flow1Active) != 2 {
-		t.Fatalf("expected 2 active sessions for flow1, got %d", len(flow1Active))
+	if len(agent1Active) != 2 {
+		t.Fatalf("expected 2 active sessions for agent1, got %d", len(agent1Active))
 	}
 }
 
@@ -146,14 +146,14 @@ func TestSessionRepositoryGetDetailAndTurns(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	flowID, vID, hash := createTestFlowAndVersion(t, s)
+	agentID, vID, hash := createTestAgentAndVersion(t, s)
 	sessID := storage.NewID()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
 	sess := storage.SessionRecord{
 		ID:                  sessID,
-		FlowID:              flowID,
-		FlowVersionID:       vID,
+		AgentID:             agentID,
+		AgentVersionID:      vID,
 		ConfigHash:          hash,
 		Status:              "active",
 		StartedAt:           now,
@@ -171,7 +171,7 @@ func TestSessionRepositoryGetDetailAndTurns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get session: %v", err)
 	}
-	if got.ID != sessID || got.FlowID != flowID || got.Status != "active" {
+	if got.ID != sessID || got.AgentID != agentID || got.Status != "active" {
 		t.Fatalf("mismatched session record: %+v", got)
 	}
 
@@ -230,14 +230,14 @@ func TestTraceRepositorySpansEventsAndToolCalls(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	flowID, vID, hash := createTestFlowAndVersion(t, s)
+	agentID, vID, hash := createTestAgentAndVersion(t, s)
 	sessID := storage.NewID()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
 	sess := storage.SessionRecord{
 		ID:                  sessID,
-		FlowID:              flowID,
-		FlowVersionID:       vID,
+		AgentID:             agentID,
+		AgentVersionID:      vID,
 		ConfigHash:          hash,
 		Status:              "active",
 		StartedAt:           now,

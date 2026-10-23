@@ -1,4 +1,4 @@
-import { ApiError, type FlowDTO, type MCPServerDTO, type ToolDependencyDTO, type ToolSelection } from "../../api/client";
+import { ApiError, type AgentDTO, type MCPServerDTO, type ToolDependencyDTO, type ToolSelection } from "../../api/client";
 
 type Tone = "ok" | "bad" | "idle";
 
@@ -35,29 +35,29 @@ export function ago(iso: string | null | undefined, now: number): string {
   return `${Math.floor(seconds / 86400)} d ago`;
 }
 
-const live = (flows: FlowDTO[]) => flows.filter((f) => !f.archived);
+const live = (agents: AgentDTO[]) => agents.filter((f) => !f.archived);
 
-export function flowsUsingServer(flows: FlowDTO[], serverId: string): FlowDTO[] {
-  return live(flows).filter((f) => (f.current_version?.mcp_tools ?? []).some((t) => t.mcp_server_id === serverId));
+export function agentsUsingServer(agents: AgentDTO[], serverId: string): AgentDTO[] {
+  return live(agents).filter((f) => (f.current_version?.mcp_tools ?? []).some((t) => t.mcp_server_id === serverId));
 }
 
-export function flowsUsingTool(flows: FlowDTO[], serverId: string, remoteName: string): FlowDTO[] {
-  return live(flows).filter((f) => (f.current_version?.mcp_tools ?? []).some((t) => t.mcp_server_id === serverId && t.remote_name === remoteName));
+export function agentsUsingTool(agents: AgentDTO[], serverId: string, remoteName: string): AgentDTO[] {
+  return live(agents).filter((f) => (f.current_version?.mcp_tools ?? []).some((t) => t.mcp_server_id === serverId && t.remote_name === remoteName));
 }
 
-export type Drift = { flow: FlowDTO; dep: ToolDependencyDTO; kind: "changed" | "missing" };
+export type Drift = { agent: AgentDTO; dep: ToolDependencyDTO; kind: "changed" | "missing" };
 
 /** Pinned tools of this server whose schema changed, or that the server no longer offers. */
-export function drifts(flows: FlowDTO[], serverId: string): Drift[] {
-  return live(flows).flatMap((flow) =>
-    (flow.readiness.tool_dependencies ?? [])
+export function drifts(agents: AgentDTO[], serverId: string): Drift[] {
+  return live(agents).flatMap((agent) =>
+    (agent.readiness.tool_dependencies ?? [])
       .filter((dep) => dep.mcp_server_id === serverId && (dep.state === "schema_drift" || dep.state === "tool_missing"))
-      .map((dep): Drift => ({ flow, dep, kind: dep.state === "schema_drift" ? "changed" : "missing" })),
+      .map((dep): Drift => ({ agent, dep, kind: dep.state === "schema_drift" ? "changed" : "missing" })),
   );
 }
 
 type Repin = {
-  /** The flow's whole tool list with every changed tool re-pinned; `null` when nothing can be re-pinned. */
+  /** The agent's whole tool list with every changed tool re-pinned; `null` when nothing can be re-pinned. */
   selection: ToolSelection[] | null;
   /** The tools that get re-pinned. */
   tools: string[];
@@ -66,12 +66,12 @@ type Repin = {
 };
 
 /**
- * What accepting the new schemas means for one flow. The server checks every tool in the list against its latest
+ * What accepting the new schemas means for one agent. The server checks every tool in the list against its latest
  * discovery, so a list that leaves any changed tool on its old hash is refused: all of them are re-pinned together.
  */
-export function repin(flow: FlowDTO): Repin {
-  const deps = flow.readiness.tool_dependencies ?? [];
-  const tools = flow.current_version?.mcp_tools ?? [];
+export function repin(agent: AgentDTO): Repin {
+  const deps = agent.readiness.tool_dependencies ?? [];
+  const tools = agent.current_version?.mcp_tools ?? [];
   const changed = deps.filter((d) => d.state === "schema_drift" && d.current_schema_hash && tools.some((t) => t.mcp_server_id === d.mcp_server_id && t.remote_name === d.remote_name));
   const blockedBy = deps.filter((d) => d.state !== "ready" && d.state !== "schema_drift");
   if (changed.length === 0) return { selection: null, tools: [], blockedBy };
@@ -82,12 +82,12 @@ export function repin(flow: FlowDTO): Repin {
   return { selection, tools: changed.map((d) => d.remote_name), blockedBy };
 }
 
-/** The flows a refused delete names (`details` of the 409: every current flow that pins a tool of the server, archived or not). */
-export function referencedFlows(details: unknown): { id: string; name: string }[] {
+/** The agents a refused delete names (`details` of the 409: every current agent that pins a tool of the server, archived or not). */
+export function referencedAgents(details: unknown): { id: string; name: string }[] {
   if (!Array.isArray(details)) return [];
   const seen = new Map<string, string>();
-  for (const r of details as { FlowID?: unknown; FlowName?: unknown }[]) {
-    if (r && typeof r.FlowID === "string" && typeof r.FlowName === "string" && !seen.has(r.FlowID)) seen.set(r.FlowID, r.FlowName);
+  for (const r of details as { agent_id?: unknown; agent_name?: unknown }[]) {
+    if (r && typeof r.agent_id === "string" && typeof r.agent_name === "string" && !seen.has(r.agent_id)) seen.set(r.agent_id, r.agent_name);
   }
   return [...seen].map(([id, name]) => ({ id, name }));
 }

@@ -227,7 +227,7 @@ func TestToolLoopAnnouncesAnUnknownToolByItsCategory(t *testing.T) {
 	}
 }
 
-// Closing the loop (route flip, stage swap, teardown) under a running async call settles it once, cancelled.
+// Closing the loop (handoff flip, stage swap, teardown) under a running async call settles it once, cancelled.
 func TestAsyncToolIsSettledCancelledWhenTheLoopCloses(t *testing.T) {
 	running := make(chan struct{})
 	var log frameLog

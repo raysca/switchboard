@@ -20,7 +20,7 @@ import (
 )
 
 // sessionTraces and sessionTurns read a stored call through the management API, as the console does.
-func (r *flowRigE2E) sessionTraces(id string) api.SessionTracesDTO {
+func (r *agentRigE2E) sessionTraces(id string) api.SessionTracesDTO {
 	r.t.Helper()
 	w := apiRequest(r.s, http.MethodGet, "/api/v1/sessions/"+id+"/traces", e2eMgmtKey, "")
 	var resp struct {
@@ -32,7 +32,7 @@ func (r *flowRigE2E) sessionTraces(id string) api.SessionTracesDTO {
 	return resp.Data
 }
 
-func (r *flowRigE2E) sessionTurns(id string) []api.TurnDTO {
+func (r *agentRigE2E) sessionTurns(id string) []api.TurnDTO {
 	r.t.Helper()
 	w := apiRequest(r.s, http.MethodGet, "/api/v1/sessions/"+id+"/turns", e2eMgmtKey, "")
 	var resp struct {
@@ -44,7 +44,7 @@ func (r *flowRigE2E) sessionTurns(id string) []api.TurnDTO {
 	return resp.Data
 }
 
-func (r *flowRigE2E) waitTurns(id string, n int) {
+func (r *agentRigE2E) waitTurns(id string, n int) {
 	r.t.Helper()
 	eventually(r.t, fmt.Sprintf("%d stored turns", n), func() bool {
 		turns, _ := r.s.store.Sessions().Turns(context.Background(), id)
@@ -54,7 +54,7 @@ func (r *flowRigE2E) waitTurns(id string, n int) {
 
 // assertNoToolContentStored is the privacy pin: whatever the API shows, the stored tool_calls rows carry
 // no argument or result content (the summary columns stay "").
-func (r *flowRigE2E) assertNoToolContentStored() {
+func (r *agentRigE2E) assertNoToolContentStored() {
 	r.t.Helper()
 	var rows, withContent int
 	err := r.s.store.DB().QueryRowContext(context.Background(),
@@ -69,7 +69,7 @@ func (c *e2eCall) hangUp() { _ = c.conn.Close(websocket.StatusNormalClosure, "by
 func TestMCPCallToolCallsAreRecorded(t *testing.T) {
 	r := newMCPCallRig(t)
 	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
-	c := r.dial(r.flowWith(id, hashes, true, nil, "lookup_order").ID)
+	c := r.dial(r.agentWith(id, hashes, true, nil, "lookup_order").ID)
 	c.say(`call tool lookup_order {"order_id":"42"}`)
 	c.waitReplies("shipped", 1)
 	r.waitTurns(c.sessionID, 1)
@@ -108,7 +108,7 @@ func TestMCPCallToolCallsAreRecorded(t *testing.T) {
 func TestMCPCallToolErrorReachesTheModelAndIsCategorised(t *testing.T) {
 	r := newMCPCallRig(t)
 	id, hashes := r.server("fail", r.ts.URL+"/fail/tools", "")
-	c := r.dial(r.flowWith(id, hashes, false, nil, "tool_error").ID)
+	c := r.dial(r.agentWith(id, hashes, false, nil, "tool_error").ID)
 	c.say("call tool tool_error")
 	c.waitReplies("order system unavailable", 1)
 	r.waitTurns(c.sessionID, 1)
@@ -131,7 +131,7 @@ func TestMCPCallToolErrorReachesTheModelAndIsCategorised(t *testing.T) {
 func TestStoredTraceAttributesNeverCarryContent(t *testing.T) {
 	r := newMCPCallRig(t)
 	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
-	c := r.dial(r.flowWith(id, hashes, true, nil, "lookup_order").ID)
+	c := r.dial(r.agentWith(id, hashes, true, nil, "lookup_order").ID)
 	c.say(`call tool lookup_order {"order_id":"42"}`)
 	c.waitReplies("shipped", 1)
 	r.waitTurns(c.sessionID, 1)
@@ -190,7 +190,7 @@ func TestStoredTraceAttributesNeverCarryContent(t *testing.T) {
 func TestMCPCallFailedToolIsRecordedFailed(t *testing.T) {
 	r := newMCPCallRig(t)
 	id, hashes := r.server("fail", r.ts.URL+"/fail/tools", "")
-	c := r.dial(r.flowWith(id, hashes, false, nil, "tool_error").ID)
+	c := r.dial(r.agentWith(id, hashes, false, nil, "tool_error").ID)
 	c.say("call tool tool_error")
 	c.waitReplies("Tool tool_error failed", 1)
 	r.waitTurns(c.sessionID, 1)
@@ -208,7 +208,7 @@ func TestMCPCallBargeInRecordsTheToolCancelled(t *testing.T) {
 	r := newMCPCallRig(t, func(c *Config) { c.MCP.Timeout = 10 * time.Second })
 	session := r.liveSession()
 	id, hashes := r.server("slow", r.ts.URL+"/slow", "")
-	c := r.dial(r.flowWith(id, hashes, false, nil, "slow_lookup").ID)
+	c := r.dial(r.agentWith(id, hashes, false, nil, "slow_lookup").ID)
 	c.say(`call tool slow_lookup {"delay_ms":4000}`)
 	waitFnEvents(t, c, 2)
 	bargeIn(t, session())
@@ -226,7 +226,7 @@ func TestMCPCallBargeInRecordsTheToolCancelled(t *testing.T) {
 func TestMCPCallAsyncToolIsRecordedWhenItEnds(t *testing.T) {
 	r := newMCPCallRig(t)
 	id, hashes := r.server("slow", r.ts.URL+"/slow", "")
-	c := r.dial(r.flowWith(id, hashes, false, []string{id + "/slow_lookup"}, "slow_lookup").ID)
+	c := r.dial(r.agentWith(id, hashes, false, []string{id + "/slow_lookup"}, "slow_lookup").ID)
 	c.say(`call tool slow_lookup {"delay_ms":300}`)
 	assertFnEvents(t, c, []string{`started{}`, `in-progress{"tool_call_id":"#1"}`, `stopped{"cancelled":false,"tool_call_id":"#1"}`}) // the background run ended
 	r.waitTurns(c.sessionID, 1)
@@ -248,7 +248,7 @@ func TestMCPCallAsyncToolIsRecordedWhenItEnds(t *testing.T) {
 func TestMCPCallParallelToolCallsAreEachRecorded(t *testing.T) {
 	r := newMCPCallRig(t, func(c *Config) { c.Tools.MaxParallel = 4 })
 	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
-	c := r.dial(r.flowWith(id, hashes, true, nil, "lookup_order", "echo").ID)
+	c := r.dial(r.agentWith(id, hashes, true, nil, "lookup_order", "echo").ID)
 	c.say(`call tool lookup_order {"order_id":"42"} then call tool echo {"text":"hi"}`)
 	c.waitReplies("Tool echo returned", 1)
 	r.waitTurns(c.sessionID, 1)
@@ -279,7 +279,7 @@ func TestMCPCallPlaceholderIsStoredAsCategory(t *testing.T) {
 	r := newMCPCallRig(t)
 	session := r.liveSession()
 	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
-	c := r.dial(r.flowWith(id, hashes, true, nil, "lookup_order").ID)
+	c := r.dial(r.agentWith(id, hashes, true, nil, "lookup_order").ID)
 	c.say(`call tool lookup_order {"order_id":"42"}`)
 	c.waitReplies("shipped", 1)
 	r.waitTurns(c.sessionID, 1)
@@ -348,7 +348,7 @@ func TestMCPCallRealLoopInventedToolNameIsNeverStored(t *testing.T) {
 		return google.NewLLMProcessor(llmCfg)
 	})
 	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
-	c := r.dial(r.flowWith(id, hashes, true, nil, "lookup_order").ID)
+	c := r.dial(r.agentWith(id, hashes, true, nil, "lookup_order").ID)
 	c.say("please invent")
 	waitFnEvents(t, c, 3*len(inventedNames)) // started, in-progress, stopped for each
 	c.waitReplies("Connecting you.", 1)
@@ -388,7 +388,7 @@ func TestMCPCallRealLoopInventedToolNameIsNeverStored(t *testing.T) {
 func TestCallRecordsATypedTurnLeavesTheSupersededTurnRow(t *testing.T) {
 	r := newMCPCallRig(t)
 	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
-	c := r.dial(r.flowWith(id, hashes, true, nil, "lookup_order").ID)
+	c := r.dial(r.agentWith(id, hashes, true, nil, "lookup_order").ID)
 	long := "please tell me everything about the weather in every city of the world, starting with the biggest and ending with the smallest one you know"
 	c.say(long)
 	c.waitReplies("weather", 1) // the reply's text reached the client; its audio has not finished
@@ -412,7 +412,7 @@ func TestCallRecordsATypedTurnLeavesTheSupersededTurnRow(t *testing.T) {
 func TestCallRecordsATypedTurnLeavesTheToolCallAttached(t *testing.T) {
 	r := newMCPCallRig(t, func(c *Config) { c.MCP.Timeout = 10 * time.Second })
 	id, hashes := r.server("slow", r.ts.URL+"/slow", "")
-	c := r.dial(r.flowWith(id, hashes, false, nil, "slow_lookup").ID)
+	c := r.dial(r.agentWith(id, hashes, false, nil, "slow_lookup").ID)
 	c.say(`call tool slow_lookup {"delay_ms":4000}`)
 	eventually(t, "the tool call to start", func() bool { return r.lastCall("slow_lookup").Tool != "" })
 	c.say("second")

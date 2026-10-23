@@ -9,8 +9,8 @@
 #   - the probe port does not serve the management API or /debug/timeline,
 #   - xAI speech and the other launch providers are in the build (management API via docker exec),
 #   - SIGTERM drains and exits 0.
-# Containers and the network are removed on exit. For the full flow with a Google service account
-# (flow, voice token through nginx) see deploy/smoke-google.sh.
+# Containers and the network are removed on exit. For the full agent with a Google service account
+# (agent, voice token through nginx) see deploy/smoke-google.sh.
 #
 # Required: docker, curl, openssl. Optional: SMOKE_IMAGE=<already built image>.
 set -euo pipefail
@@ -74,7 +74,7 @@ for want in voice_build_info voice_active_sessions voice_llm_circuit_state; do
 done
 curl -fsS "$base/health" >/dev/null || fail "/health unreachable"
 
-for path in /debug/timeline /api/v1/flows; do
+for path in /debug/timeline /api/v1/agents; do
   code="$(curl -s -o /dev/null -w '%{http_code}' "$base$path")"
   [[ "$code" == 404 ]] || fail "probe listener serves $path ($code); it must only serve /health /ready /metrics"
 done

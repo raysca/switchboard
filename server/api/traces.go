@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,20 +30,20 @@ type TraceRepository interface {
 
 // SessionDTO represents a persisted voice session for the management API.
 type SessionDTO struct {
-	ID            string     `json:"id"`
-	FlowID        string     `json:"flow_id"`
-	FlowVersionID string     `json:"flow_version_id"`
-	ConfigHash    string     `json:"config_hash"`
-	StartedAt     time.Time  `json:"started_at"`
-	EndedAt       *time.Time `json:"ended_at,omitempty"`
-	Status        string     `json:"status"`
-	TurnCount     int        `json:"turn_count"`
-	SafeSummary   string     `json:"safe_summary"`
-	Draft         bool       `json:"draft"` // a test call on an unpublished config
+	ID             string     `json:"id"`
+	AgentID        string     `json:"agent_id"`
+	AgentVersionID string     `json:"agent_version_id"`
+	ConfigHash     string     `json:"config_hash"`
+	StartedAt      time.Time  `json:"started_at"`
+	EndedAt        *time.Time `json:"ended_at,omitempty"`
+	Status         string     `json:"status"`
+	TurnCount      int        `json:"turn_count"`
+	SafeSummary    string     `json:"safe_summary"`
+	Draft          bool       `json:"draft"` // a test call on an unpublished config
 	// Caller is the label the integration chose for the call (the voice token's principal).
 	Caller string `json:"caller"`
 	// EndReason is why the call ended (empty while it is live): caller_hung_up, silent_caller,
-	// agent_stuck, ended_by_flow, time_limit, connection_lost, server_shutdown, error, setup_failed
+	// agent_stuck, ended_by_agent, time_limit, connection_lost, server_shutdown, error, setup_failed
 	// or server_restart.
 	EndReason string `json:"end_reason"`
 	// MedianReplyMS is the median reply time over the call's measured turns; absent when none was measured.
@@ -175,6 +176,16 @@ func (h tracesHandler) collection(w http.ResponseWriter, r *http.Request, reques
 		return
 	}
 
+	// An unknown query key is refused, never ignored: a stale filter name would otherwise list every call.
+	for key := range r.URL.Query() {
+		switch key {
+		case "limit", "offset", "status", "agent_id":
+		default:
+			WriteError(w, http.StatusBadRequest, "invalid_request", "unknown query parameter "+strconv.Quote(key), requestID)
+			return
+		}
+	}
+
 	page, err := ParsePagination(r)
 	if err != nil {
 		WriteError(w, http.StatusBadRequest, "invalid_request", err.Error(), requestID)
@@ -182,10 +193,10 @@ func (h tracesHandler) collection(w http.ResponseWriter, r *http.Request, reques
 	}
 
 	filter := storage.SessionFilter{
-		Limit:  page.Limit,
-		Offset: page.Offset,
-		Status: r.URL.Query().Get("status"),
-		FlowID: r.URL.Query().Get("flow_id"),
+		Limit:   page.Limit,
+		Offset:  page.Offset,
+		Status:  r.URL.Query().Get("status"),
+		AgentID: r.URL.Query().Get("agent_id"),
 	}
 
 	records, err := h.sessions.List(r.Context(), filter)
@@ -348,17 +359,17 @@ func (h tracesHandler) tracesRoute(w http.ResponseWriter, r *http.Request, id, r
 
 func toSessionDTO(r storage.SessionRecord) SessionDTO {
 	dto := SessionDTO{
-		ID:            r.ID,
-		FlowID:        r.FlowID,
-		FlowVersionID: r.FlowVersionID,
-		ConfigHash:    r.ConfigHash,
-		StartedAt:     r.StartedAt,
-		Status:        r.Status,
-		TurnCount:     r.TurnCount,
-		SafeSummary:   r.SafeSummary,
-		Draft:         r.Draft,
-		Caller:        r.Caller,
-		EndReason:     r.EndReason,
+		ID:             r.ID,
+		AgentID:        r.AgentID,
+		AgentVersionID: r.AgentVersionID,
+		ConfigHash:     r.ConfigHash,
+		StartedAt:      r.StartedAt,
+		Status:         r.Status,
+		TurnCount:      r.TurnCount,
+		SafeSummary:    r.SafeSummary,
+		Draft:          r.Draft,
+		Caller:         r.Caller,
+		EndReason:      r.EndReason,
 	}
 	for _, t := range r.RuntimeTools {
 		dto.RuntimeTools = append(dto.RuntimeTools, RuntimeToolDTO{MCPServerID: t.ServerID, RemoteName: t.RemoteName, SchemaHash: t.SchemaHash, Required: t.Required})

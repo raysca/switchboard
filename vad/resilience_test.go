@@ -242,7 +242,9 @@ func TestWorkerProcess_SessionIsolation(t *testing.T) {
 
 	// Worker 1 runs continuous jobs
 	stopS1 := make(chan struct{})
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		seq := uint64(1)
 		for {
 			select {
@@ -264,7 +266,10 @@ func TestWorkerProcess_SessionIsolation(t *testing.T) {
 						mu.Unlock()
 					},
 				}
-				_ = st1.Submit(j)
+				if err := st1.Submit(j); err != nil {
+					jobWg.Done() // Done is never called for a rejected job
+					return
+				}
 				jobWg.Wait()
 				seq++
 				time.Sleep(10 * time.Millisecond)
@@ -280,6 +285,7 @@ func TestWorkerProcess_SessionIsolation(t *testing.T) {
 	}
 
 	close(stopS1)
+	<-done
 
 	mu.Lock()
 	s1Success := s1SuccessCount

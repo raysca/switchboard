@@ -49,9 +49,9 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
     refetchInterval: 10000,
   });
 
-  const flowsQuery = useQuery({
-    queryKey: ["flows"],
-    queryFn: () => client.getFlows(),
+  const agentsQuery = useQuery({
+    queryKey: ["agents"],
+    queryFn: () => client.getAgents(),
     enabled: !!keyValue,
     retry: false,
   });
@@ -75,7 +75,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
       <>
         <header className="section-heading">
           <h1 tabIndex={-1}>Dashboard</h1>
-          <p>Operational signals for voice sessions and flows.</p>
+          <p>Operational signals for voice sessions and agents.</p>
         </header>
         <EmptyState title="Connect to view operations">
           Enter a management key to inspect operational health, session telemetry, and provider readiness.
@@ -83,7 +83,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
         <div className="message-panel">
           <h2>First run</h2>
           <p>
-            Connect your first provider and configure a voice flow with the guided setup.
+            Connect your first provider and configure a voice agent with the guided setup.
           </p>
           <Link to="/onboarding" className="action-button-small">
             Start first run
@@ -98,7 +98,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
       <>
         <header className="section-heading">
           <h1 tabIndex={-1}>Dashboard</h1>
-          <p>Operational signals for voice sessions and flows.</p>
+          <p>Operational signals for voice sessions and agents.</p>
         </header>
         <LoadingState label="Loading operational signals" />
       </>
@@ -110,7 +110,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
       <>
         <header className="section-heading">
           <h1 tabIndex={-1}>Dashboard</h1>
-          <p>Operational signals for voice sessions and flows.</p>
+          <p>Operational signals for voice sessions and agents.</p>
         </header>
         <ErrorState
           reassure
@@ -124,19 +124,19 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
   }
 
   const op = operationsQuery.data;
-  const flows = (flowsQuery.data ?? []).filter((a) => !a.archived);
+  const agents = (agentsQuery.data ?? []).filter((a) => !a.archived);
   const providers = providersQuery.data ?? [];
   const sessions = sessionsQuery.data ?? [];
   const recent = sessions.slice(0, 5);
 
   // Readiness calculations
-  const readyFlowsCount = flows.filter((a) => a.readiness?.state === "ready").length;
-  const totalFlows = flows.length;
+  const readyAgentsCount = agents.filter((a) => a.readiness?.state === "ready").length;
+  const totalAgents = agents.length;
 
   const detectedProviders = providers.filter((p) => p.detected).length;
   const detectedList = providers.filter((p) => p.detected);
-  const known = providersQuery.isSuccess && flowsQuery.isSuccess;
-  const stepsLeft = (detectedList.length === 0 ? 1 : 0) + (flows.length === 0 ? 1 : 0);
+  const known = providersQuery.isSuccess && agentsQuery.isSuccess;
+  const stepsLeft = (detectedList.length === 0 ? 1 : 0) + (agents.length === 0 ? 1 : 0);
 
   const nearCapacity = op.capacity_utilization >= 0.9 || (op.max_sessions > 0 && op.active_sessions >= op.max_sessions);
   const utilPct = Math.round(op.capacity_utilization * 100);
@@ -154,7 +154,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
       <header className="dash-head">
         <div>
           <h1 tabIndex={-1}>Dashboard</h1>
-          <p>Operational signals for voice sessions and flows.</p>
+          <p>Operational signals for voice sessions and agents.</p>
         </div>
         <p className="health-pill" data-tone={tone} role="status">
           <span className="lamp" aria-hidden="true" />
@@ -184,15 +184,15 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
                 </Link>
               )}
             </li>
-            <li data-done={flows.length > 0 || undefined}>
+            <li data-done={agents.length > 0 || undefined}>
               <span className="setup-checklist__mark" aria-hidden="true">
-                {flows.length > 0 ? "✓" : "2"}
+                {agents.length > 0 ? "✓" : "2"}
               </span>
               <span>
-                <b>Create your first flow</b>
+                <b>Create your first agent</b>
                 <span className="subtext">Guided setup takes about three minutes.</span>
               </span>
-              {flows.length === 0 && (
+              {agents.length === 0 && (
                 <Link to="/onboarding" className="action-button-small">
                   Start first run
                 </Link>
@@ -260,7 +260,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
 
           {recent.length === 0 ? (
             <EmptyState title="No recent calls">
-              No calls recorded yet. Test a flow to see one here.
+              No calls recorded yet. Test an agent to see one here.
             </EmptyState>
           ) : (
             <DataTable
@@ -290,14 +290,14 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
             </div>
             <ul className="ledger" aria-label="Service readiness">
               <li className="ledger__row">
-                <span className="lamp" data-tone={readyFlowsCount > 0 ? "ok" : "idle"} aria-hidden="true" />
-                <span className="ledger__name">Flows</span>
+                <span className="lamp" data-tone={readyAgentsCount > 0 ? "ok" : "idle"} aria-hidden="true" />
+                <span className="ledger__name">Agents</span>
                 <span className="ledger__value">
-                  {readyFlowsCount} of {totalFlows} ready
+                  {readyAgentsCount} of {totalAgents} ready
                 </span>
-                {totalFlows === 0 && <span className="subtext">No flows created yet.</span>}
-                <Link to="/flows" className="ledger__link">
-                  View flows
+                {totalAgents === 0 && <span className="subtext">No agents created yet.</span>}
+                <Link to="/agents" className="ledger__link">
+                  View agents
                 </Link>
               </li>
               <li className="ledger__row">

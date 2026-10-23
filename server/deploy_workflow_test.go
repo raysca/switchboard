@@ -84,7 +84,7 @@ func TestSmokeScript(t *testing.T) {
 	}
 	text := string(raw)
 	for _, needle := range []string{"/health", "client_ip", ".data.secure", "/api/v1/providers", "elevenlabs", "xai", "google",
-		"/api/v1/mcp-servers", "auth_env_set", "/api/v1/flows", "/metrics", "too_many_attempts"} {
+		"/api/v1/mcp-servers", "auth_env_set", "/api/v1/agents", "/metrics", "too_many_attempts"} {
 		if !strings.Contains(text, needle) {
 			t.Errorf("smoke script lacks a check for %q", needle)
 		}

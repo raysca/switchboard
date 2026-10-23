@@ -44,7 +44,7 @@ func envOrEmpty(env []string) []string {
 func (h ProvidersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestID := RequestID(w, r)
 	if r.Method != http.MethodGet {
-		flowMethodNotAllowed(w, requestID, http.MethodGet)
+		agentMethodNotAllowed(w, requestID, http.MethodGet)
 		return
 	}
 	ps := h.Catalog.Providers()

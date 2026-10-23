@@ -12,7 +12,7 @@ import (
 	"govoice/core"
 	"govoice/core/coretest"
 	"govoice/core/resilience"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/vad"
 )
 
@@ -26,10 +26,10 @@ func TestLLMClassify(t *testing.T) {
 		err  error
 		want string
 	}{
-		{resilience.ErrTimeout, flow.ClassTimeout},
-		{fmt.Errorf("x: %w", resilience.ErrCircuitOpen), flow.ClassCircuit},
-		{clientErr{}, flow.ClassClient},
-		{errors.New("503"), flow.ClassServer},
+		{resilience.ErrTimeout, agent.ClassTimeout},
+		{fmt.Errorf("x: %w", resilience.ErrCircuitOpen), agent.ClassCircuit},
+		{clientErr{}, agent.ClassClient},
+		{errors.New("503"), agent.ClassServer},
 		{fmt.Errorf("openai llm: %w", core.ErrTooManyTasks), ""}, // the session's own task budget
 		{core.ErrSessionClosed, ""},                              // teardown
 	} {
@@ -133,7 +133,7 @@ func TestBuildLLMPolicyOptOutAndNoFallbacks(t *testing.T) {
 	}
 	// Only server_error may fail over; a timeout is the turn's failure.
 	call := CallSpec{LLM: StageSpec{Provider: "google"}, LLMFallbacks: []StageSpec{{Provider: "xai"}},
-		Failover: flow.FailoverPolicy{On: []string{flow.ClassServer}}}
+		Failover: agent.FailoverPolicy{On: []string{agent.ClassServer}}}
 	llm, err := reg.buildLLM(nil, call, call.LLM, build)
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +147,7 @@ func TestBuildLLMPolicyOptOutAndNoFallbacks(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, ok := plain.(*core.LLMFailover); ok {
-		t.Fatal("flow without fallbacks must build the old pipeline")
+		t.Fatal("agent without fallbacks must build the old pipeline")
 	}
 }
 

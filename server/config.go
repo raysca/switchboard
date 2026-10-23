@@ -72,7 +72,7 @@ type Config struct {
 	// Demo installs at start-up (the admin UI button works without it).
 	Demo DemoConfig `yaml:"demo"`
 
-	// Durable management plane (flows, MCP, session
+	// Durable management plane (agents, MCP, session
 	// history). Disabled when Storage.Dialect is empty; retention: see Retention.
 	Storage struct {
 		Dialect string `yaml:"dialect"` // "sqlite" | "postgres"
@@ -97,7 +97,7 @@ type Config struct {
 		MaxSessions             int           `yaml:"max_sessions"`
 		MaxSessionsPerPrincipal int           `yaml:"max_sessions_per_principal"`
 		MaxSessionsPerIP        int           `yaml:"max_sessions_per_ip"`
-		MaxSessionsPerFlow      int           `yaml:"max_sessions_per_flow"`     // 0 = unlimited
+		MaxSessionsPerAgent     int           `yaml:"max_sessions_per_agent"`    // 0 = unlimited
 		StartRatePerPrincipal   float64       `yaml:"start_rate_per_principal"`  // session starts/sec per principal; 0 = unlimited
 		StartBurstPerPrincipal  int           `yaml:"start_burst_per_principal"` // bucket size; required >= 1 when rate > 0
 		HandshakeRatePerIP      float64       `yaml:"handshake_rate_per_ip"`     // WebSocket upgrades/sec per source IP (burst = max(5, 2x)); default 20
@@ -124,14 +124,14 @@ type Config struct {
 		StopMS int `yaml:"stop_ms"`
 	} `yaml:"vad"`
 
-	// STT tunes failover for flows with STT fallbacks.
+	// STT tunes failover for agents with STT fallbacks.
 	STT struct {
 		// ReplayBuffer is the audio kept so a failover can replay the utterance
 		// in progress (default 10s, max 60s; 16 kHz PCM16 mono, ~32 KB/s per call).
 		ReplayBuffer time.Duration `yaml:"replay_buffer"`
 	} `yaml:"stt"`
 
-	// Failover tunes how long a flow stage with fallbacks waits on its
+	// Failover tunes how long an agent stage with fallbacks waits on its
 	// primary (see docs/operations.md). Zero means the default.
 	Failover struct {
 		// LLMBudget: no fallback is started later than this after the
@@ -173,24 +173,24 @@ type Config struct {
 	// listed order between the DTMF detector (which hears unfiltered audio)
 	// and VAD; empty (default) leaves the pipeline unchanged. Known filters:
 	// denoise. DenoiseStrength is 0..1; 0 means the default (0.5). Recordings
-	// tap the transport and keep the raw audio. A flow can turn denoise on for
-	// its calls (flow audio.denoise).
+	// tap the transport and keep the raw audio. An agent can turn denoise on for
+	// its calls (agent audio.denoise).
 	Audio struct {
 		InputFilters    []string `yaml:"input_filters"`
 		DenoiseStrength float64  `yaml:"denoise_strength"`
 		// OutputGainDB scales the bot's audio, -30..+6 dB; 0 (default) inserts
-		// no stage. A flow can override it.
+		// no stage. An agent can override it.
 		OutputGainDB float64 `yaml:"output_gain_db"`
 		// Backgrounds are named looping sounds mixed under the speech; they keep playing in silences
 		// (continuous WS traffic, ~48 kB/s at 24 kHz). BackgroundDefault names the one every call
-		// gets unless its flow picks another or none; empty (default) means none. A flow can only pick
-		// a name from this map, and only while AllowFlowBackground is true (default false; true in
+		// gets unless its agent picks another or none; empty (default) means none. An agent can only pick
+		// a name from this map, and only while AllowAgentBackground is true (default false; true in
 		// the development profile). See docs/audio-filters.md.
-		Backgrounds         map[string]CueConfig `yaml:"backgrounds"`
-		BackgroundDefault   string               `yaml:"background_default"`
-		AllowFlowBackground bool                 `yaml:"allow_flow_background"`
-		// Cues are named sounds a routed flow plays while the call is between
-		// steps (route_cue). See docs/audio-filters.md.
+		Backgrounds          map[string]CueConfig `yaml:"backgrounds"`
+		BackgroundDefault    string               `yaml:"background_default"`
+		AllowAgentBackground bool                 `yaml:"allow_agent_background"`
+		// Cues are named sounds a multi-step agent plays while the call is between
+		// steps (handoff_cue). See docs/audio-filters.md.
 		Cues map[string]CueConfig `yaml:"cues"`
 	} `yaml:"audio"`
 
@@ -210,7 +210,7 @@ type Config struct {
 
 	// Provider Configurations
 	// Provider infrastructure only. What a call runs (models, voices, prompts)
-	// comes from the stored flow and its secrets from the environment, never from YAML.
+	// comes from the stored agent and its secrets from the environment, never from YAML.
 	Providers struct {
 		// CatalogDir is an optional directory of overlay files that add or replace
 		// models, voices and languages in the provider catalog (server/catalog).
@@ -282,7 +282,7 @@ type Config struct {
 	Retention RetentionConfig `yaml:"retention"`
 
 	// Recording is the global switch for call recording (default off); an
-	// flow must also opt in. See docs/privacy.md.
+	// agent must also opt in. See docs/privacy.md.
 	Recording RecordingConfig `yaml:"recording"`
 
 	// Privacy holds the sink redaction policy (docs/privacy.md). DTMF digits
@@ -331,10 +331,10 @@ func (c *Config) TurnAnalyzerMode() string {
 	return "process"
 }
 
-// vadStop is the call's VAD stop: the flow override (ms > 0), else vad.stop_ms, rounded up to
+// vadStop is the call's VAD stop: the agent override (ms > 0), else vad.stop_ms, rounded up to
 // whole 32 ms chunks like the VAD processor.
-func (c *Config) vadStop(flowMS int) time.Duration {
-	pc := c.VADProcessorConfigForStopMS(flowMS)
+func (c *Config) vadStop(agentMS int) time.Duration {
+	pc := c.VADProcessorConfigForStopMS(agentMS)
 	return time.Duration(pc.StopChunks*vad.ChunkSamples*1000/vad.SampleRate) * time.Millisecond
 }
 
@@ -393,22 +393,22 @@ type TurnConfig struct {
 		ModelPath string        `yaml:"model_path"`
 		Hold      time.Duration `yaml:"stop_secs"` // Pipecat stop_secs
 		Budget    time.Duration `yaml:"budget"`    // per-verdict latency budget, default 150ms
-		// ForFlows loads the model although turn.stop does not list turn-analyzer, so a flow can choose
+		// ForAgent loads the model although turn.stop does not list turn-analyzer, so an agent can choose
 		// end_of_turn "smart" without making every call smart. Off by default: no worker, no model memory.
-		ForFlows bool `yaml:"for_flows"`
+		ForAgents bool `yaml:"for_agents"`
 	} `yaml:"analyzer"`
 }
 
 // LoadsSmartTurn reports whether the server loads the Smart Turn model at start-up: its own default
-// chain uses it, or flows may choose it (turn.analyzer.for_flows).
+// chain uses it, or agents may choose it (turn.analyzer.for_agents).
 func (c *Config) LoadsSmartTurn() bool {
-	return slices.Contains(c.Turn.Stop, "turn-analyzer") || c.Turn.Analyzer.ForFlows
+	return slices.Contains(c.Turn.Stop, "turn-analyzer") || c.Turn.Analyzer.ForAgents
 }
 
-// sttP99 resolves the primary STT provider's p99: flow override, server map, built-in table.
-func (c *Config) sttP99(provider string, flowMS int) time.Duration {
-	if flowMS > 0 {
-		return time.Duration(flowMS) * time.Millisecond
+// sttP99 resolves the primary STT provider's p99: agent override, server map, built-in table.
+func (c *Config) sttP99(provider string, agentMS int) time.Duration {
+	if agentMS > 0 {
+		return time.Duration(agentMS) * time.Millisecond
 	}
 	if d, ok := c.Turn.STTP99[provider]; ok && d > 0 {
 		return d
@@ -417,7 +417,7 @@ func (c *Config) sttP99(provider string, flowMS int) time.Duration {
 }
 
 // VADProcessorConfigForStopMS returns the per-call VAD config applying an
-// flow-level stop_ms override if positive, or the server-level vad.stop_ms otherwise.
+// agent-level stop_ms override if positive, or the server-level vad.stop_ms otherwise.
 func (c *Config) VADProcessorConfigForStopMS(overrideMS int) vad.ProcessorConfig {
 	pc := vad.DefaultProcessorConfig()
 	ms := c.VAD.StopMS
@@ -431,7 +431,7 @@ func (c *Config) VADProcessorConfigForStopMS(overrideMS int) vad.ProcessorConfig
 	return pc
 }
 
-// CueConfig is one route cue sound: a PCM16 mono WAV, played once or looped
+// CueConfig is one handoff cue sound: a PCM16 mono WAV, played once or looped
 // until the new step speaks. GainDB is -60..0 (default -20).
 type CueConfig struct {
 	File   string   `yaml:"file"`

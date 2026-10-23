@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"govoice/core"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/transport/ws"
 )
 
@@ -60,34 +60,34 @@ func waitCue(t *testing.T, what string, ok func() bool) {
 	}
 }
 
-func prep() core.RouteEvent {
-	return core.RouteEvent{Kind: core.RoutePreparing, From: "a", To: "b"}
+func prep() core.HandoffEvent {
+	return core.HandoffEvent{Kind: core.HandoffPreparing, From: "a", To: "b"}
 }
-func active() core.RouteEvent {
-	return core.RouteEvent{Kind: core.RouteActive, From: "a", To: "b"}
+func active() core.HandoffEvent {
+	return core.HandoffEvent{Kind: core.HandoffActive, From: "a", To: "b"}
 }
 
-func TestCueFastRoutePlaysNothing(t *testing.T) {
+func TestCueFastHandoffPlaysNothing(t *testing.T) {
 	c, p, _ := newTestCue(t)
-	c.onRoute(prep())
-	c.onRoute(active())
+	c.onHandoff(prep())
+	c.onHandoff(active())
 	c.botAudio() // the new step answers before after_ms
 	time.Sleep(60 * time.Millisecond)
 	if s, _ := p.counts(); s != 0 {
-		t.Fatal("a route faster than after_ms must stay silent")
+		t.Fatal("a handoff faster than after_ms must stay silent")
 	}
 }
 
-func TestCueSlowRoutePlaysUntilFirstAudio(t *testing.T) {
+func TestCueSlowHandoffPlaysUntilFirstAudio(t *testing.T) {
 	c, p, r := newTestCue(t)
-	c.onRoute(prep())
+	c.onHandoff(prep())
 	c.botAudio() // the old step's farewell: must not stop anything
 	waitCue(t, "cue start", func() bool { s, _ := p.counts(); return s == 1 })
 	c.botAudio() // farewell tail before the flip: still not the new step
 	if _, st := p.counts(); st != 0 {
-		t.Fatal("audio before the route is active must not stop the cue")
+		t.Fatal("audio before the handoff is active must not stop the cue")
 	}
-	c.onRoute(active())
+	c.onHandoff(active())
 	c.botAudio()
 	if s, st := p.counts(); s != 1 || st != 1 {
 		t.Fatalf("starts=%d stops=%d", s, st)
@@ -104,13 +104,13 @@ func TestCueSlowRoutePlaysUntilFirstAudio(t *testing.T) {
 func TestCueStopsOnEveryExit(t *testing.T) {
 	cases := map[string]func(*cueController){
 		"barge_in": func(c *cueController) { c.userSpeech(true) },
-		"failed":   func(c *cueController) { c.onRoute(core.RouteEvent{Kind: core.RouteFailed}) },
+		"failed":   func(c *cueController) { c.onHandoff(core.HandoffEvent{Kind: core.HandoffFailed}) },
 		"cap":      func(c *cueController) { time.Sleep(260 * time.Millisecond) },
 	}
 	for reason, trigger := range cases {
 		t.Run(reason, func(t *testing.T) {
 			c, p, r := newTestCue(t)
-			c.onRoute(prep())
+			c.onHandoff(prep())
 			waitCue(t, "cue start", func() bool { s, _ := p.counts(); return s == 1 })
 			trigger(c)
 			waitCue(t, "cue stop", func() bool { _, st := p.counts(); return st == 1 })
@@ -121,7 +121,7 @@ func TestCueStopsOnEveryExit(t *testing.T) {
 			if reason != "barge_in" {
 				time.Sleep(60 * time.Millisecond)
 				if s, _ := p.counts(); s != 1 {
-					t.Fatalf("a finished route must not restart the cue (starts=%d)", s)
+					t.Fatalf("a finished handoff must not restart the cue (starts=%d)", s)
 				}
 			}
 		})
@@ -131,7 +131,7 @@ func TestCueStopsOnEveryExit(t *testing.T) {
 func TestCueDoesNotStartWhileCallerSpeaks(t *testing.T) {
 	c, p, _ := newTestCue(t)
 	c.userSpeech(true)
-	c.onRoute(prep())
+	c.onHandoff(prep())
 	time.Sleep(80 * time.Millisecond)
 	if s, _ := p.counts(); s != 0 {
 		t.Fatal("the cue must wait for the caller to stop speaking")
@@ -144,28 +144,28 @@ func TestNilCueControllerIsInert(t *testing.T) {
 	var c *cueController
 	c.botAudio()
 	c.userSpeech(true)
-	c.onRoute(prep())
+	c.onHandoff(prep())
 }
 
-func TestNewCallCueNeedsFlowCueSoundAndOutput(t *testing.T) {
+func TestNewCallCueNeedsAgentCueSoundAndOutput(t *testing.T) {
 	s := apiTestServer(t)
 	tl := NewSessionTimeline(1, 10, time.Minute)
 	out := ws.NewCueUnderlay()
 	sound := func() ws.Underlay { return nil }
 	s.cues = map[string]func() ws.Underlay{"chime": sound}
-	cue := &flow.RouteCue{Name: "chime"}
+	cue := &agent.HandoffCue{Name: "chime"}
 	for name, got := range map[string]*cueController{
 		"no graph":         s.newCallCue(nil, out, tl),
-		"no cue":           s.newCallCue(&CallFlow{}, out, tl),
-		"unknown sound":    s.newCallCue(&CallFlow{Cue: &flow.RouteCue{Name: "nope"}}, out, tl),
-		"no cue output":    s.newCallCue(&CallFlow{Cue: cue}, (*ws.CueUnderlay)(nil), tl),
-		"no player at all": s.newCallCue(&CallFlow{Cue: cue}, nil, tl),
+		"no cue":           s.newCallCue(&CallAgent{}, out, tl),
+		"unknown sound":    s.newCallCue(&CallAgent{Cue: &agent.HandoffCue{Name: "nope"}}, out, tl),
+		"no cue output":    s.newCallCue(&CallAgent{Cue: cue}, (*ws.CueUnderlay)(nil), tl),
+		"no player at all": s.newCallCue(&CallAgent{Cue: cue}, nil, tl),
 	} {
 		if got != nil {
 			t.Errorf("%s: want no controller", name)
 		}
 	}
-	if s.newCallCue(&CallFlow{Cue: cue}, out, tl) == nil {
+	if s.newCallCue(&CallAgent{Cue: cue}, out, tl) == nil {
 		t.Fatal("a configured cue with an output must yield a controller")
 	}
 }
@@ -238,28 +238,28 @@ func TestHoldStopsOnlyWhenTheLastOfTwoToolsReturns(t *testing.T) {
 	}
 }
 
-func TestHoldStopsWhenARouteStartsPreparingAndNeverStartsWhileTheRouteCueWaits(t *testing.T) {
-	var route atomic.Bool
-	h, p, r := newTestHold(t, route.Load)
+func TestHoldStopsWhenAHandoffStartsPreparingAndNeverStartsWhileTheHandoffCueWaits(t *testing.T) {
+	var handoff atomic.Bool
+	h, p, r := newTestHold(t, handoff.Load)
 	h.toolStarted()
 	defer h.toolDone()
 	waitCue(t, "hold start", func() bool { s, _ := p.counts(); return s == 1 })
-	h.onRoute(prep())
-	if ev := r.events(); ev[len(ev)-1] != "cue_stop:route" {
-		t.Fatalf("a route preparing must finish the hold first: %v", r.events())
+	h.onHandoff(prep())
+	if ev := r.events(); ev[len(ev)-1] != "cue_stop:handoff" {
+		t.Fatalf("a handoff preparing must finish the hold first: %v", r.events())
 	}
 	time.Sleep(80 * time.Millisecond)
 	if s, _ := p.counts(); s != 1 {
-		t.Fatal("the hold must not restart while a route prepares")
+		t.Fatal("the hold must not restart while a handoff prepares")
 	}
-	route.Store(true) // the route cue waits
-	h.onRoute(core.RouteEvent{Kind: core.RouteFailed})
+	handoff.Store(true) // the handoff cue waits
+	h.onHandoff(core.HandoffEvent{Kind: core.HandoffFailed})
 	time.Sleep(80 * time.Millisecond)
 	if s, _ := p.counts(); s != 1 {
-		t.Fatal("the hold must not start while the route cue waits")
+		t.Fatal("the hold must not start while the handoff cue waits")
 	}
-	route.Store(false)
-	waitCue(t, "start once the route cue is done", func() bool { s, _ := p.counts(); return s == 2 })
+	handoff.Store(false)
+	waitCue(t, "start once the handoff cue is done", func() bool { s, _ := p.counts(); return s == 2 })
 }
 
 func TestHoldStopsAtTheCapAndStaysOffUntilAllToolsReturn(t *testing.T) {
@@ -287,7 +287,7 @@ func TestHoldIsNilSafe(t *testing.T) {
 	h.toolStarted()
 	h.botAudio()
 	h.userSpeech(true)
-	h.onRoute(prep())
+	h.onHandoff(prep())
 	h.toolDone()
 	if holdTools(nil, nil, nil) != nil {
 		t.Fatal("no hold: the executor is returned as is")
@@ -408,7 +408,7 @@ func (*panicPlayer) Start(ws.Underlay) { panic("player") }
 func TestCueTimerPanicIsRecordedNotFatal(t *testing.T) {
 	r := &cueRecorder{}
 	c := newCueController(&panicPlayer{}, func() ws.Underlay { return nil }, 20*time.Millisecond, r.record)
-	c.onRoute(prep())
+	c.onHandoff(prep())
 	waitCue(t, "panic recorded", func() bool { return len(r.events()) > 0 })
 	if ev := r.events(); ev[0] != "error:cue timer panicked" {
 		t.Fatalf("events = %v", ev)

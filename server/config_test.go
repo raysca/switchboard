@@ -111,7 +111,7 @@ func TestConfig_ValidationFailures(t *testing.T) {
 			wantErr: "max_sessions must be > 0",
 		},
 		{
-			name: "no flow store configured",
+			name: "no agent store configured",
 			modify: func(c *Config) {
 				c.Storage.Dialect = ""
 			},
@@ -133,7 +133,7 @@ func TestConfig_ValidationFailures(t *testing.T) {
 
 // YAML pipelines and per-provider models/credentials were removed: loading a
 // config that still has them fails with an actionable message.
-func TestConfig_RejectsRemovedPipelineAndFlowKeys(t *testing.T) {
+func TestConfig_RejectsRemovedPipelineAndAgentKeys(t *testing.T) {
 	base, err := os.ReadFile("../config/development.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -166,7 +166,7 @@ func TestConfig_LoadDevelopmentYAML(t *testing.T) {
 		t.Fatalf("expected profile development, got %s", cfg.Profile)
 	}
 	if cfg.Storage.Dialect == "" {
-		t.Fatalf("development config must enable the flow store")
+		t.Fatalf("development config must enable the agent store")
 	}
 }
 

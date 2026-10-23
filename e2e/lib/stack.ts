@@ -10,7 +10,7 @@ export type Stack = {
   customClientUrl: string; // examples/rtvi_client
   managementKey: string;
   tokenSecret: string;
-  devDir: string; // throwaway flow store
+  devDir: string; // throwaway agent store
   tmpDir: string;
   logDir: string;
   pids: Record<string, number>;
@@ -19,8 +19,8 @@ export type Stack = {
 };
 
 export const stackFile = path.resolve(__dirname, "../.stack.json");
-// The flow suite (playwright.flows.config.ts) has its own stack file, so it can coexist with the paid suite.
-export const flowsStackFile = path.resolve(__dirname, "../.stack-flows.json");
+// The agent suite (playwright.agents.config.ts) has its own stack file, so it can coexist with the paid suite.
+export const agentsStackFile = path.resolve(__dirname, "../.stack-agents.json");
 // The one-port suite (playwright.oneport.config.ts): the embedded UI on the public port, no Vite.
 export const oneportStackFile = path.resolve(__dirname, "../.stack-oneport.json");
 export const readStack = (file: string = stackFile): Stack => JSON.parse(fs.readFileSync(file, "utf8"));

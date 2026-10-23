@@ -1,22 +1,22 @@
 import { Fragment, useState } from "react";
 import { Link } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, type FlowDTO, type ApiClient, type MCPServerDetailDTO, type UpdateMCPServerInput } from "../../api/client";
+import { ApiError, type AgentDTO, type ApiClient, type MCPServerDetailDTO, type UpdateMCPServerInput } from "../../api/client";
 import { ErrorState } from "../../components/primitives";
 import { ConnectServerDialog } from "./ConnectServerDialog";
 import { DeleteServerDialog } from "./DeleteServerDialog";
 import { DriftPanel, MissingTools } from "./DriftPanel";
 import { ToolTestConsole } from "./ToolTestConsole";
-import { ago, drifts, flowsUsingServer, flowsUsingTool, formatApiError, referencedFlows, serverStatus } from "./mcpStats";
+import { ago, drifts, agentsUsingServer, agentsUsingTool, formatApiError, referencedAgents, serverStatus } from "./mcpStats";
 
 export type ServerDetailProps = {
   client: ApiClient;
   server: MCPServerDetailDTO;
-  /** `undefined` while the flow list loads, or when it could not be loaded (see `flowsFailed`). */
-  flows: FlowDTO[] | undefined;
-  flowsFailed: boolean;
-  /** The flow list reached the API's page size, so some flows were not checked. */
-  flowsCapped: boolean;
+  /** `undefined` while the agent list loads, or when it could not be loaded (see `agentsFailed`). */
+  agents: AgentDTO[] | undefined;
+  agentsFailed: boolean;
+  /** The agent list reached the API's page size, so some agents were not checked. */
+  agentsCapped: boolean;
   now: number;
   onDeleted: () => void;
 };
@@ -24,7 +24,7 @@ export type ServerDetailProps = {
 type Open = { tool: string; mode: "schema" | "try" } | null;
 
 /** One server: its facts, the schema-change review, and its tools. */
-export function ServerDetail({ client, server, flows, flowsFailed, flowsCapped, now, onDeleted }: ServerDetailProps) {
+export function ServerDetail({ client, server, agents, agentsFailed, agentsCapped, now, onDeleted }: ServerDetailProps) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState<Open>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -45,7 +45,7 @@ export function ServerDetail({ client, server, flows, flowsFailed, flowsCapped, 
       setEditError(null);
       void queryClient.invalidateQueries({ queryKey: ["mcp-server", server.id] }); // the edit may have re-synced: read the new state and tools
       void queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
-      void queryClient.invalidateQueries({ queryKey: ["flows"] });
+      void queryClient.invalidateQueries({ queryKey: ["agents"] });
     },
     onError: (err) => setEditError(formatApiError(err, "Could not save the server")),
   });
@@ -53,8 +53,8 @@ export function ServerDetail({ client, server, flows, flowsFailed, flowsCapped, 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
     void queryClient.invalidateQueries({ queryKey: ["mcp-server", server.id] });
-    // A sync can change schemas: the flows' readiness (drift) must be read again too.
-    void queryClient.invalidateQueries({ queryKey: ["flows"] });
+    // A sync can change schemas: the agents' readiness (drift) must be read again too.
+    void queryClient.invalidateQueries({ queryKey: ["agents"] });
   };
   const action = (mutationFn: () => Promise<unknown>, fallback: string) => ({
     mutationFn,
@@ -76,7 +76,7 @@ export function ServerDetail({ client, server, flows, flowsFailed, flowsCapped, 
       setDeleteError(null);
       void queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
       void queryClient.invalidateQueries({ queryKey: ["mcp-server", server.id] });
-      void queryClient.invalidateQueries({ queryKey: ["flows"] });
+      void queryClient.invalidateQueries({ queryKey: ["agents"] });
       // A detach that is waiting for calls to finish leaves the server in place, marked as being removed.
       if (result && (result as { pending?: boolean }).pending) setRemoving(true);
       else onDeleted();
@@ -84,7 +84,7 @@ export function ServerDetail({ client, server, flows, flowsFailed, flowsCapped, 
     onError: (err) => {
       if (err instanceof ApiError && (err.status === 409 || err.code === "mcp_server_in_use")) {
         setInUse(true);
-        setRefs(referencedFlows(err.details));
+        setRefs(referencedAgents(err.details));
         setDeleteError(null);
       } else {
         setDeleteError(formatApiError(err, "Could not delete the server"));
@@ -94,8 +94,8 @@ export function ServerDetail({ client, server, flows, flowsFailed, flowsCapped, 
 
   const st = serverStatus(server);
   const beingRemoved = server.pending_deletion || removing;
-  const users = flows ? flowsUsingServer(flows, server.id) : undefined;
-  const drift = flows ? drifts(flows, server.id) : [];
+  const users = agents ? agentsUsingServer(agents, server.id) : undefined;
+  const drift = agents ? drifts(agents, server.id) : [];
   const changedTools = new Set(drift.filter((d) => d.kind === "changed").map((d) => d.dep.remote_name));
   const missing = drift.filter((d) => d.kind === "missing");
   const tools = server.discovery?.tools ?? [];
@@ -140,14 +140,14 @@ export function ServerDetail({ client, server, flows, flowsFailed, flowsCapped, 
               <dt>Used by</dt>
               <dd>
                 {users === undefined ? (
-                  flowsFailed ? "—" : "…"
+                  agentsFailed ? "—" : "…"
                 ) : users.length === 0 ? (
-                  flowsCapped ? "No flow among the first 100" : "No flow yet"
+                  agentsCapped ? "No agent among the first 100" : "No agent yet"
                 ) : (
                   users.map((f, i) => (
                     <Fragment key={f.id}>
                       {i > 0 && ", "}
-                      <Link to={`/flows/${encodeURIComponent(f.id)}`}>{f.name}</Link>
+                      <Link to={`/agents/${encodeURIComponent(f.id)}`}>{f.name}</Link>
                     </Fragment>
                   ))
                 )}
@@ -198,8 +198,8 @@ export function ServerDetail({ client, server, flows, flowsFailed, flowsCapped, 
       {beingRemoved && <p role="note" className="call-note">Removal is waiting for calls in progress to finish.</p>}
 
       {actionError && <ErrorState title="That did not work" error={new ApiError(actionError, "action_failed", 0, "")} onRetry={() => setActionError(null)} />}
-      {flowsFailed && <p className="subtext" role="note">The flows could not be loaded, so which flows use this server, and whether any schema changed, is unknown.</p>}
-      {flowsCapped && <p className="subtext" role="note">Only the first 100 flows were checked, so some changed schemas may not be shown.</p>}
+      {agentsFailed && <p className="subtext" role="note">The agents could not be loaded, so which agents use this server, and whether any schema changed, is unknown.</p>}
+      {agentsCapped && <p className="subtext" role="note">Only the first 100 agents were checked, so some changed schemas may not be shown.</p>}
 
       {[...changedTools].map((name) => (
         <DriftPanel key={name} client={client} tool={name} schema={tools.find((t) => t.remote_name === name)?.input_schema} items={drift.filter((d) => d.kind === "changed" && d.dep.remote_name === name)} />
@@ -221,7 +221,7 @@ export function ServerDetail({ client, server, flows, flowsFailed, flowsCapped, 
                 <th scope="col">What the model sees</th>
                 <th scope="col">Schema</th>
                 <th scope="col" className="num">
-                  Flows
+                  Agents
                 </th>
                 <th scope="col">
                   <span className="visually-hidden">Actions</span>
@@ -240,7 +240,7 @@ export function ServerDetail({ client, server, flows, flowsFailed, flowsCapped, 
                       </td>
                       <td className="mcp-tool__description">{t.description}</td>
                       <td>{changedTools.has(t.remote_name) ? <span className="mcp-tool__changed">changed</span> : <code>{t.schema_hash.slice(0, 8)}</code>}</td>
-                      <td className="num">{flows ? `${flowsUsingTool(flows, server.id, t.remote_name).length}${flowsCapped ? "+" : ""}` : flowsFailed ? "—" : "…"}</td>
+                      <td className="num">{agents ? `${agentsUsingTool(agents, server.id, t.remote_name).length}${agentsCapped ? "+" : ""}` : agentsFailed ? "—" : "…"}</td>
                       <td className="mcp-tool__actions">
                         <button type="button" className="action-button-small" aria-label={`${schemaOpen ? "Hide schema" : "Schema"} for ${t.remote_name}`} aria-expanded={schemaOpen} onClick={() => setOpen(schemaOpen ? null : { tool: t.remote_name, mode: "schema" })}>
                           {schemaOpen ? "Hide schema" : "Schema"}
@@ -276,7 +276,7 @@ export function ServerDetail({ client, server, flows, flowsFailed, flowsCapped, 
       {deleting && (
         <DeleteServerDialog
           name={server.name}
-          flows={refs.length > 0 ? refs : users?.map((f) => ({ id: f.id, name: f.name }))}
+          agents={refs.length > 0 ? refs : users?.map((f) => ({ id: f.id, name: f.name }))}
           inUse={inUse}
           pending={remove.isPending}
           error={deleteError}

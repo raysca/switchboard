@@ -18,7 +18,7 @@ import (
 	"govoice/providers/elevenlabs"
 	"govoice/providers/google"
 	"govoice/providers/xai"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/vad"
 )
 
@@ -29,30 +29,30 @@ func TestSTTClassifyPerProvider(t *testing.T) {
 		err  error
 		want string
 	}{
-		{"deepgram circuit open (raw from the dial)", resilience.ErrCircuitOpen, flow.ClassCircuit},
-		{"deepgram circuit open wrapped", fmt.Errorf("dial: %w", resilience.ErrCircuitOpen), flow.ClassCircuit},
-		{"deepgram dial 503", deepgram.MapError("stt", errors.New("dial"), nil), flow.ClassServer},
-		{"deepgram hung send (500ms write deadline)", deepgram.MapError("stt", fmt.Errorf("write: %w", context.DeadlineExceeded), nil), flow.ClassTimeout},
-		{"deepgram attempt timeout", deepgram.MapError("stt", resilience.ErrTimeout, nil), flow.ClassTimeout},
-		{"deepgram bad request", &deepgram.ProviderError{Capability: "stt", ClientError: true}, flow.ClassClient},
+		{"deepgram circuit open (raw from the dial)", resilience.ErrCircuitOpen, agent.ClassCircuit},
+		{"deepgram circuit open wrapped", fmt.Errorf("dial: %w", resilience.ErrCircuitOpen), agent.ClassCircuit},
+		{"deepgram dial 503", deepgram.MapError("stt", errors.New("dial"), nil), agent.ClassServer},
+		{"deepgram hung send (500ms write deadline)", deepgram.MapError("stt", fmt.Errorf("write: %w", context.DeadlineExceeded), nil), agent.ClassTimeout},
+		{"deepgram attempt timeout", deepgram.MapError("stt", resilience.ErrTimeout, nil), agent.ClassTimeout},
+		{"deepgram bad request", &deepgram.ProviderError{Capability: "stt", ClientError: true}, agent.ClassClient},
 		{"deepgram caller cancelled", deepgram.MapError("stt", context.Canceled, nil), ""},
-		{"elevenlabs bad request", &elevenlabs.ProviderError{Capability: "stt", ClientError: true}, flow.ClassClient},
-		{"elevenlabs dial 503", elevenlabs.MapError("stt", errors.New("dial"), nil), flow.ClassServer},
-		{"elevenlabs attempt timeout", elevenlabs.MapError("stt", resilience.ErrTimeout, nil), flow.ClassTimeout},
-		{"elevenlabs circuit open", elevenlabs.MapError("stt", resilience.ErrCircuitOpen, nil), flow.ClassCircuit},
+		{"elevenlabs bad request", &elevenlabs.ProviderError{Capability: "stt", ClientError: true}, agent.ClassClient},
+		{"elevenlabs dial 503", elevenlabs.MapError("stt", errors.New("dial"), nil), agent.ClassServer},
+		{"elevenlabs attempt timeout", elevenlabs.MapError("stt", resilience.ErrTimeout, nil), agent.ClassTimeout},
+		{"elevenlabs circuit open", elevenlabs.MapError("stt", resilience.ErrCircuitOpen, nil), agent.ClassCircuit},
 		{"elevenlabs cancelled", elevenlabs.MapError("stt", context.Canceled, nil), ""},
-		{"cartesia bad request", &cartesia.ProviderError{Capability: "stt", ClientError: true}, flow.ClassClient},
-		{"cartesia dial 503", cartesia.MapError("stt", errors.New("dial"), nil), flow.ClassServer},
-		{"cartesia attempt timeout", cartesia.MapError("stt", resilience.ErrTimeout, nil), flow.ClassTimeout},
-		{"google circuit open", google.MapError("stt", resilience.ErrCircuitOpen), flow.ClassCircuit},
-		{"google deadline", google.MapError("stt", context.DeadlineExceeded), flow.ClassTimeout},
+		{"cartesia bad request", &cartesia.ProviderError{Capability: "stt", ClientError: true}, agent.ClassClient},
+		{"cartesia dial 503", cartesia.MapError("stt", errors.New("dial"), nil), agent.ClassServer},
+		{"cartesia attempt timeout", cartesia.MapError("stt", resilience.ErrTimeout, nil), agent.ClassTimeout},
+		{"google circuit open", google.MapError("stt", resilience.ErrCircuitOpen), agent.ClassCircuit},
+		{"google deadline", google.MapError("stt", context.DeadlineExceeded), agent.ClassTimeout},
 		{"google cancelled", google.MapError("stt", context.Canceled), ""},
-		{"google stream drop", google.MapError("stt", errors.New("rpc error: unavailable")), flow.ClassServer},
-		{"xai stream drop is not a client error", xai.MapError("stt", errors.New("websocket: close 1006")), flow.ClassServer},
-		{"xai circuit open keeps the chain", xai.MapError("stt", resilience.ErrCircuitOpen), flow.ClassCircuit},
-		{"xai timeout keeps the chain", xai.MapError("stt", resilience.ErrTimeout), flow.ClassTimeout},
-		{"xai 401", &xai.ProviderError{Capability: "stt", StatusCode: 401, Class: xai.ClassificationNonRetryable}, flow.ClassClient},
-		{"xai 429 is an outage", &xai.ProviderError{Capability: "stt", StatusCode: 429, Class: xai.ClassificationNonRetryable}, flow.ClassServer},
+		{"google stream drop", google.MapError("stt", errors.New("rpc error: unavailable")), agent.ClassServer},
+		{"xai stream drop is not a client error", xai.MapError("stt", errors.New("websocket: close 1006")), agent.ClassServer},
+		{"xai circuit open keeps the chain", xai.MapError("stt", resilience.ErrCircuitOpen), agent.ClassCircuit},
+		{"xai timeout keeps the chain", xai.MapError("stt", resilience.ErrTimeout), agent.ClassTimeout},
+		{"xai 401", &xai.ProviderError{Capability: "stt", StatusCode: 401, Class: xai.ClassificationNonRetryable}, agent.ClassClient},
+		{"xai 429 is an outage", &xai.ProviderError{Capability: "stt", StatusCode: 429, Class: xai.ClassificationNonRetryable}, agent.ClassServer},
 	} {
 		if got := sttClassify(tc.err); got != tc.want {
 			t.Errorf("%s: sttClassify = %q, want %q", tc.name, got, tc.want)
@@ -156,7 +156,7 @@ func TestBuildSTTWrapsOnlyWithFallbacksAndCountsSkips(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, ok := plain.(*core.STTFailover); ok {
-		t.Fatal("flow without fallbacks must build the old pipeline")
+		t.Fatal("agent without fallbacks must build the old pipeline")
 	}
 	wrapped, err := reg.buildSTT(nil, CallSpec{STT: StageSpec{Provider: "google"}, STTFallbacks: []StageSpec{{Provider: "deepgram"}, {Provider: "nope"}}}, build)
 	if err != nil {

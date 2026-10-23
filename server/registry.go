@@ -23,13 +23,13 @@ import (
 	"govoice/providers/google"
 	"govoice/providers/openai"
 	"govoice/providers/xai"
-	"govoice/server/flow"
+	"govoice/server/agent"
 	"govoice/smartturn"
 	"govoice/vad"
 )
 
 // ProcessorFactory instantiates a core.Processor for a specific provider.
-// StageSpec is one provider stage of a call, resolved from the stored flow.
+// StageSpec is one provider stage of a call, resolved from the stored agent.
 // Secret is the credential assembled from the environment for this stage's
 // provider only (server/catalog); the caller wipes it after the build.
 type StageSpec struct {
@@ -38,13 +38,13 @@ type StageSpec struct {
 	Language string
 	Voice    string
 	// VoiceSettings (ElevenLabs TTS only; nil = provider defaults).
-	VoiceSettings *flow.ElevenLabsVoiceSettings
+	VoiceSettings *agent.ElevenLabsVoiceSettings
 	SystemPrompt  string
 	// Sampling (LLM only; zero = provider defaults). Copied to LLM fallbacks.
-	Sampling flow.LLMSampling
+	Sampling agent.LLMSampling
 	Secret   []byte
 
-	// LLM stage only: the flow's captured MCP tools and the call history
+	// LLM stage only: the agent's captured MCP tools and the call history
 	// the tool loop records into.
 	Tools        []core.ToolDefinition
 	ToolExecutor core.ToolExecutor
@@ -67,8 +67,8 @@ type StageSpec struct {
 	OnRetry func(retry int)
 }
 
-// sampling unpacks the flow's sampling into the provider configs' shape
-// (providers cannot import server/flow): nil / 0 mean "provider default".
+// sampling unpacks the agent's sampling into the provider configs' shape
+// (providers cannot import server/agent): nil / 0 mean "provider default".
 func (s StageSpec) sampling() (temperature, topP *float64, maxOutputTokens int) {
 	if n := s.Sampling.MaxOutputTokens; n != nil {
 		maxOutputTokens = *n
@@ -84,25 +84,25 @@ func (s StageSpec) toolLoopConfig() coretools.ToolLoopConfig {
 	return cfg
 }
 
-// CallSpec is everything a call needs, resolved from a pinned flow version.
+// CallSpec is everything a call needs, resolved from a pinned agent version.
 type CallSpec struct {
 	STT, LLM, TTS StageSpec
 	MaxMessages   int
-	// FlowVersionID is the pinned flow version (trace attribute only).
-	FlowVersionID string
+	// AgentVersionID is the pinned agent version (trace attribute only).
+	AgentVersionID string
 	// StoredSessionID is the persisted session row (trace spans attach to it).
 	StoredSessionID string
 	// TurnLatencies collects the call's per-turn stage latencies for its turn rows.
 	TurnLatencies *turnLatencies
-	// MaxCallDuration is how long the call may last: the shorter of the flow's limit and the server's.
+	// MaxCallDuration is how long the call may last: the shorter of the agent's limit and the server's.
 	MaxCallDuration time.Duration
 	// Ender is set when some step has end_call; the builder wires it to the idle controller.
 	Ender *callEnder
-	// Flow is set for flows with more than one step: the call starts on the
-	// start step and moves between steps by route.
-	Flow *CallFlow
-	// OnRoute, if set, receives the route lifecycle (timeline, traces, metrics).
-	OnRoute func(core.RouteEvent)
+	// Agent is set for agents with more than one step: the call starts on the
+	// start step and moves between steps by handoff.
+	Agent *CallAgent
+	// OnHandoff, if set, receives the handoff lifecycle (timeline, traces, metrics).
+	OnHandoff func(core.HandoffEvent)
 	// OnEndCall receives the step whose end_call ended the call (trace).
 	OnEndCall func(stepID string)
 
@@ -120,17 +120,17 @@ type CallSpec struct {
 	OnGreetFail func(error)
 	MaxTokens   int
 	// Summary: summarize older turns with the primary LLM (off unless Enabled).
-	Summary flow.SummarizationConfig
+	Summary agent.SummarizationConfig
 	// History, when set, sees every frame just before the transport (turn rows).
 	History core.Processor
-	// Recording: the flow opted in (and confirmed disclosure).
+	// Recording: the agent opted in (and confirmed disclosure).
 	Recording bool
 	// LLMFallbacks are the LLM chain after the primary (credentials resolved);
 	// Failover says which error classes may move a generation to the next one.
 	LLMFallbacks []StageSpec
 	// STTFallbacks are the STT chain after the primary (credentials resolved).
 	STTFallbacks []StageSpec
-	Failover     flow.FailoverPolicy
+	Failover     agent.FailoverPolicy
 	// TTSFallbacks are the TTS chain after the primary (credentials resolved,
 	// voice from each fallback's own spec).
 	TTSFallbacks []StageSpec
@@ -140,12 +140,12 @@ type CallSpec struct {
 	VADStopMS int
 	// STTP99MS overrides the STT p99 for this call if > 0.
 	STTP99MS int
-	// Idle, Audio and Turn are the flow's quiet-caller, audio and interruption settings (nil: the server's).
-	Idle  *flow.IdleSettings
-	Audio *flow.AudioSettings
-	// toolHold plays the flow's hold sound while a slow synchronous tool runs (nil: none).
+	// Idle, Audio and Turn are the agent's quiet-caller, audio and interruption settings (nil: the server's).
+	Idle  *agent.IdleSettings
+	Audio *agent.AudioSettings
+	// toolHold plays the agent's hold sound while a slow synchronous tool runs (nil: none).
 	toolHold *holdCue
-	Turn     *flow.TurnSettings
+	Turn     *agent.TurnSettings
 	// PushToTalk: the client opted in at client-ready. Turns start and end
 	// only on its push-to-talk messages (ExternalStart/ExternalStop).
 	PushToTalk bool
@@ -153,7 +153,7 @@ type CallSpec struct {
 
 // ProcessorFactory builds one stage processor. cfg supplies provider
 // infrastructure settings only (project, region, endpoints, quotas); models,
-// voices, prompts and credentials come from the flow via spec.
+// voices, prompts and credentials come from the agent via spec.
 type ProcessorFactory func(cfg *Config, spec StageSpec) (core.Processor, error)
 
 // Registry maps "<provider>.<stage>" to processor factories. Register only
@@ -161,7 +161,7 @@ type ProcessorFactory func(cfg *Config, spec StageSpec) (core.Processor, error)
 type Registry struct {
 	factories map[string]ProcessorFactory
 
-	turnWarned sync.Map // flow version ids already warned about turn settings with the manager off
+	turnWarned sync.Map // agent version ids already warned about turn settings with the manager off
 
 	googleLLMBreaker *resilience.Breaker
 	googleTTSBreaker *resilience.Breaker
@@ -588,7 +588,7 @@ func (r *Registry) Supports(provider, stage string) bool {
 // and use this only as the fallback.
 const CallUserContextIndex = 4
 
-// callStop is the call's end-of-turn detector: the server's chain with the flow's choices laid over it
+// callStop is the call's end-of-turn detector: the server's chain with the agent's choices laid over it
 // (speech timeout, detector, smart hold). turnTap is the smart-turn analyzer's audio tap, nil without one.
 func (r *Registry) callStop(cfg *Config, call CallSpec) (stop coreturn.TurnDetector, turnTap core.Processor, err error) {
 	tc := cfg.Turn.forCall(call.Turn)
@@ -609,7 +609,7 @@ func (r *Registry) callStop(cfg *Config, call CallSpec) (stop coreturn.TurnDetec
 }
 
 // BuildCallPipeline builds VAD -> STT -> transcript -> user context -> LLM ->
-// assistant context -> TTS -> transport for one call of a stored flow.
+// assistant context -> TTS -> transport for one call of a stored agent.
 func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Processor, transportOutput core.Processor) (*core.Pipeline, error) {
 	build := func(stage string, spec StageSpec) (core.Processor, error) {
 		if report := call.OnProviderRetry; report != nil {
@@ -641,17 +641,17 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	built = append(built, sttProc)
 	tc := cfg.Turn.forCall(call.Turn)
 	if call.Turn != nil && !tc.Manager {
-		// Once per flow version (a handful of short strings at most), not on every call.
-		if _, seen := r.turnWarned.LoadOrStore(call.FlowVersionID, struct{}{}); !seen {
-			slog.Warn("the flow sets turn settings but turn.manager is off on this server: ignored, except the mute list and the longest mute for push-to-talk calls", slog.String("flow_version", call.FlowVersionID))
+		// Once per agent version (a handful of short strings at most), not on every call.
+		if _, seen := r.turnWarned.LoadOrStore(call.AgentVersionID, struct{}{}); !seen {
+			slog.Warn("the agent sets turn settings but turn.manager is off on this server: ignored, except the mute list and the longest mute for push-to-talk calls", slog.String("agent_version", call.AgentVersionID))
 		}
 	}
 	idleCfg := cfg.Idle.forCall(call.Idle)
 	if call.Idle == nil && call.STT.Provider == silenceProvider {
-		idleCfg.UserTimeout = 0 // a caller who types is not silent: only an explicit flow setting turns the nudges on
+		idleCfg.UserTimeout = 0 // a caller who types is not silent: only an explicit agent setting turns the nudges on
 	}
 	if err := idleCfg.validate(cfg.DTMF.Aggregate, cfg.DTMF.AggregateTimeout); err != nil {
-		return fail(fmt.Errorf("flow idle settings: %w", err)) // the server's DTMF rules changed since the flow was published
+		return fail(fmt.Errorf("agent idle settings: %w", err)) // the server's DTMF rules changed since the agent was published
 	}
 	dt, err := buildDTMF(cfg)
 	if err != nil {
@@ -675,7 +675,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	if ((tc.Manager || call.PushToTalk) && slices.Contains(tc.Mute, coreturn.MuteFunctionCall)) || idleCfg.enabled() { // idle also pauses while a tool runs
 		muteTools = coreturn.NewToolActivity()
 	}
-	// The trigger is on every call: finished async tools, route flips and operator notes
+	// The trigger is on every call: finished async tools, handoff flips and operator notes
 	// all wait here for the call to be idle, then inject and start one model turn.
 	var asstActive func() bool
 	asyncTrigger := core.NewAsyncTrigger(core.AsyncTriggerConfig{Busy: func() bool { return asstActive != nil && asstActive() },
@@ -729,12 +729,12 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	}
 	built = append(built, ttsProc)
 	var speak func(string) // says a fixed line as the assistant; set once the assistant processor exists, before the session starts
-	if call.Flow != nil {
+	if call.Agent != nil {
 		// The start step is live; every other step is built when the call moves
 		// to it and closed when it leaves. The swaps are the pipeline stages.
 		var lastStep, lastGreeting atomic.Pointer[string]
 		buildStep := func(ctx context.Context, id string) (core.StepStages, error) {
-			ns, err := call.Flow.Resolve(ctx, id)
+			ns, err := call.Agent.Resolve(ctx, id)
 			if err != nil {
 				return core.StepStages{}, fmt.Errorf("resolve step %q: %w", id, err)
 			}
@@ -756,13 +756,13 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 			}
 			lastStep.Store(&ns.Name)
 			lastGreeting.Store(&ns.Greeting)
-			return core.StepStages{LLM: llm, TTS: tts, Speaks: saysOwnGreeting(id, call.Flow.Start, ns.Greeting)}, nil
+			return core.StepStages{LLM: llm, TTS: tts, Speaks: saysOwnGreeting(id, call.Agent.Start, ns.Greeting)}, nil
 		}
 		llmSwap, ttsSwap := core.NewStageSwap(llmProc), core.NewStageSwap(ttsProc)
 		router, err := core.NewRouter(core.RouterConfig{
-			Entry: call.Flow.Start, LLM: llmSwap, TTS: ttsSwap, Trigger: asyncTrigger,
+			Entry: call.Agent.Start, LLM: llmSwap, TTS: ttsSwap, Trigger: asyncTrigger,
 			Build:   buildStep,
-			OnEvent: call.OnRoute,
+			OnEvent: call.OnHandoff,
 			Greet: func(stepID string) error {
 				name, greeting := "another agent", ""
 				if n := lastStep.Load(); n != nil {
@@ -771,13 +771,13 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 				if g := lastGreeting.Load(); g != nil {
 					greeting = *g
 				}
-				return call.Flow.greetStep(stepID, name, greeting, ctxPool.AddMessage, func(text string) { speak(text) })
+				return call.Agent.greetStep(stepID, name, greeting, ctxPool.AddMessage, func(text string) { speak(text) })
 			},
 		})
 		if err != nil {
 			return fail(fmt.Errorf("create router: %w", err))
 		}
-		call.Flow.Commit = router.Commit
+		call.Agent.Commit = router.Commit
 		llmProc, ttsProc = llmSwap, ttsSwap
 	}
 
@@ -885,7 +885,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	}
 	if call.Ender != nil && idleProc != nil {
 		call.Ender.End = func(stepID string) error {
-			if !idleProc.RequestEnd(EndReasonFlow, endCallWait) {
+			if !idleProc.RequestEnd(EndReasonAgent, endCallWait) {
 				return errCallEnding
 			}
 			if call.OnEndCall != nil {

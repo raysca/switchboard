@@ -1,5 +1,5 @@
 # Cloud Run: ONE service, ONE public port (8080). The management API and the admin UI are served
-# on it behind the management key (public_admin). One instance (live calls are in memory); flows and
+# on it behind the management key (public_admin). One instance (live calls are in memory); agents and
 # call history are in Cloud SQL (Postgres) through the unix socket Cloud Run mounts, so they survive
 # deploys and restarts. The dentistry demo is (re)installed by demo.auto_install on every start.
 profile: production

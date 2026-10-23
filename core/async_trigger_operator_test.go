@@ -20,7 +20,7 @@ func operatorNote(o *orderLog, name string, run bool) core.AsyncToolResult {
 }
 
 // Operator items have their own cap and are refused when it is full: a burst of notes can
-// never evict (and so force through mid-reply) a pending route flip or tool result.
+// never evict (and so force through mid-reply) a pending handoff flip or tool result.
 func TestAsyncTriggerOperatorBurstNeverForcesAPendingItem(t *testing.T) {
 	r := newTriggerRig(t, func(c *core.AsyncTriggerConfig) { c.MaxQueue = 2 })
 	o := &orderLog{}
@@ -28,7 +28,7 @@ func TestAsyncTriggerOperatorBurstNeverForcesAPendingItem(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(30 * time.Millisecond)
-	r.deliverItem(o, "flip", false) // a route flip waiting for idle
+	r.deliverItem(o, "flip", false) // a handoff flip waiting for idle
 	if err := r.trig.DeliverOperator(operatorNote(o, "n1", false), operatorNote(o, "n2", false)); err != nil {
 		t.Fatal(err)
 	}

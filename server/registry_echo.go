@@ -30,7 +30,7 @@ func registerEcho(r *Registry) {
 	})
 
 	r.Register("echo.tts", func(cfg *Config, spec StageSpec) (core.Processor, error) {
-		// A step whose voice is "brokenvoice" cannot be built: the e2e suites use it to make a route fail.
+		// A step whose voice is "brokenvoice" cannot be built: the e2e suites use it to make a handoff fail.
 		if spec.Voice == "brokenvoice" {
 			return nil, errors.New("echo tts: voice brokenvoice is unavailable")
 		}
@@ -42,7 +42,7 @@ func registerEcho(r *Registry) {
 }
 
 // echoLLMOptions turns the config and the stage into the simulated model's options: its timing, the
-// reply label of a routed step, and the phrases that make it call a transfer, end_call or MCP tool.
+// reply label of a handed-off step, and the phrases that make it call a transfer, end_call or MCP tool.
 func echoLLMOptions(cfg *Config, spec StageSpec) echo.LLMOptions {
 	o := echo.LLMOptions{Figures: echo.Mimic(cfg.Providers.Echo.Mimic).LLM(), ExtraDelay: cfg.Providers.Echo.LLMExtraDelay,
 		Phrases: map[string]string{}}

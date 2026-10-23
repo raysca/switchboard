@@ -69,7 +69,7 @@ func TestOfflineWithAnEmptyEndpointDoesNotBuild(t *testing.T) {
 }
 
 // Second review, finding 3: in the production profile offline is off until an operator configures it.
-// Its stages are then not registered, so flows see them as unavailable instead of "ready" and failing
+// Its stages are then not registered, so agents see them as unavailable instead of "ready" and failing
 // on the first call, and a tenant cannot reach plaintext loopback services through the provider.
 func TestOfflineIsOffInProductionUntilConfigured(t *testing.T) {
 	prod := DefaultConfig(ProfileProduction).Providers.Offline
