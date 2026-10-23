@@ -3339,25 +3339,109 @@ main:has(.mcp-page) {
 .reply-chart {
   margin-bottom: 20px;
 }
+.reply-chart .section-row .action-button-small {
+  margin-left: auto;
+}
+.reply-chart__frame {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  margin: 28px 22px 0;
+}
+.reply-chart__axis,
 .reply-chart__plot {
+  position: relative;
+  height: 150px;
+}
+.reply-chart__axis {
+  width: 3rem;
+}
+.reply-chart__tick {
+  position: absolute;
+  right: 0;
+  transform: translateY(50%);
+  font-size: 0.75rem;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.reply-chart__plot {
+  border-bottom: 1px solid var(--ink-2);
+}
+.reply-chart__plot:focus-visible {
+  outline-offset: 6px;
+}
+.reply-chart__line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px solid var(--rule);
+  pointer-events: none;
+}
+.reply-chart__line[data-slow] {
+  border-top: 1px dashed var(--lamp);
+}
+.reply-chart__line--typical {
+  border-top: 1px dashed var(--ink-2);
+}
+.reply-chart__typical,
+.reply-chart__slowlabel {
+  position: absolute;
+  bottom: 2px;
+  padding: 0 4px;
+  font-size: 0.75rem;
+  color: var(--ink-2);
+  background: var(--surface);
+  white-space: nowrap;
+  z-index: 1;
+}
+.reply-chart__typical {
+  right: 0;
+}
+.reply-chart__slowlabel {
+  left: 0;
+  color: var(--lamp);
+}
+.reply-chart__bars {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 3px;
+}
+.reply-chart__col {
+  flex: 1 1 0;
+  min-width: 4px;
+  max-width: 32px;
   display: flex;
   align-items: flex-end;
-  gap: 3px;
-  height: 120px;
-  margin: 20px 22px 0;
-  border-bottom: 1px solid var(--rule);
+}
+.reply-chart__col[data-active] {
+  background: var(--surface-2);
 }
 .reply-chart__bar {
-  flex: 1 1 0;
-  min-width: 2px;
-  max-width: 28px;
+  display: block;
+  width: 100%;
   background: var(--caller);
 }
+/* A slow reply is striped as well as amber, so it reads without colour. */
 .reply-chart__bar[data-slow] {
-  background: var(--lamp);
+  background: repeating-linear-gradient(135deg, var(--lamp) 0 4px, color-mix(in srgb, var(--lamp) 45%, var(--surface)) 4px 8px);
+}
+.reply-chart__tip {
+  position: absolute;
+  top: -26px;
+  padding: 3px 8px;
+  border: 1px solid var(--ink-2);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 0.75rem;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 1;
 }
 .reply-chart__legend {
-  margin: 10px 22px 18px;
+  margin: 12px 22px 18px;
 }
 
 /* Rollback confirmation inside Agent settings */
