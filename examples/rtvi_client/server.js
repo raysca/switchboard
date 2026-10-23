@@ -4,7 +4,7 @@ const path = require('path');
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
-const INDEX = path.join(__dirname, 'index.html');
+const PAGES = { '/': 'index.html', '/index.html': 'index.html', '/text': 'text.html' }; // the pages are self-contained
 
 // Optional defaults (set by `make example-web`). With GOVOICE_MANAGEMENT_API_KEY
 // set, this server mints tokens with its own key, only ever against ADMIN_URL,
@@ -17,6 +17,20 @@ const SERVER_KEY = process.env.GOVOICE_MANAGEMENT_API_KEY || '';
 // itself, so the Origin check alone cannot stop it; the Host header can.
 // Browsers omit the default port from Host, so on port 80 the bare name is allowed too.
 const ALLOWED_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', HOST].flatMap(h => PORT === 80 ? [h, `${h}:80`] : [`${h}:${PORT}`]));
+
+// The first ready agent whose speech-to-text is `silence` (a text-only agent), for /text to prefill. Needs the
+// server's own key; best effort: any failure just leaves the field empty.
+async function findTextAgent() {
+  if (!SERVER_KEY) return '';
+  try {
+    const res = await fetch(new URL('/api/v1/agents?limit=100', ADMIN_URL), { headers: { Authorization: `Bearer ${SERVER_KEY}` } });
+    const startStt = (c) => (Array.isArray(c?.steps) ? c.steps.find((st) => st.id === c.start)?.config?.stt : c?.stt);
+    const agents = (await res.json()).data || [];
+    return agents.find((a) => !a.archived && a.readiness?.state === 'ready' && startStt(a.current_version?.config)?.provider === 'silence')?.id || '';
+  } catch {
+    return '';
+  }
+}
 
 function sendJson(res, status, body) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -84,7 +98,8 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
   if (url.pathname === '/api/defaults') {
-    return sendJson(res, 200, { adminUrl: ADMIN_URL, wsUrl: WS_URL, agentId: AGENT_ID, serverKey: Boolean(SERVER_KEY) });
+    findTextAgent().then((textAgentId) => sendJson(res, 200, { adminUrl: ADMIN_URL, wsUrl: WS_URL, agentId: AGENT_ID, textAgentId, serverKey: Boolean(SERVER_KEY) }));
+    return;
   }
 
   if (url.pathname === '/api/voice-token') {
@@ -93,10 +108,10 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // ponytail: the page is self-contained, so index.html is the only static file.
-  if (url.pathname === '/' || url.pathname === '/index.html') {
+  // ponytail: each page is self-contained, so the pages are the only static files.
+  if (PAGES[url.pathname]) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    fs.createReadStream(INDEX).pipe(res);
+    fs.createReadStream(path.join(__dirname, PAGES[url.pathname])).pipe(res);
     return;
   }
   res.writeHead(404, { 'Content-Type': 'text/plain' });
@@ -107,6 +122,7 @@ server.listen(PORT, HOST, () => {
   console.log(`\n============================================================`);
   console.log(` Pipecat RTVI Web Test Client running at:`);
   console.log(`   http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
+  console.log(`   text-only agents (browser speech): http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}/text`);
   console.log(` Voice tokens are relayed via POST /api/voice-token`);
   console.log(`============================================================\n`);
 });

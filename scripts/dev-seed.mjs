@@ -62,6 +62,24 @@ if (assistant) {
   log(`created agent "${AGENT_NAME}" (${["stt", "llm", "tts"].map((k) => config[k].provider).join(" / ")})`);
 }
 
+// "Text assistant": silence for both speech stages and the model of the first detected provider. The target of the
+// text-only example page (make example-web, /text), which listens and speaks with the browser's own speech.
+const TEXT = "Text assistant";
+if (find(TEXT)) {
+  log(`using existing agent "${TEXT}"`);
+} else {
+  const base = await defaults();
+  if (base) {
+    const config = {
+      stt: { provider: "silence", model: "text", language: "en-US" },
+      llm: { ...base.llm, system_prompt: "You are a concise assistant. Answer in one or two short sentences." },
+      tts: { provider: "silence", voice: "none" },
+    };
+    await api("POST", "/agents", { name: TEXT, description: "Text only: no server-side speech", config });
+    log(`created agent "${TEXT}" (silence / ${config.llm.provider} / silence)`);
+  }
+}
+
 // "Dealership desk": a two-step agent for demos. The front desk hands buyers to sales.
 const DESK = "Dealership desk";
 if (find(DESK)) {
