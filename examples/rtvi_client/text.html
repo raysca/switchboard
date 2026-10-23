@@ -239,12 +239,14 @@
         });
         const body = await res.json().catch(() => ({}));
         if (!res.ok || !body?.data?.token) throw new Error(`voice token refused (${res.status} ${body?.error?.code || 'http_' + res.status}): ${body?.error?.message || res.statusText}`);
-        ws = new WebSocket(`${wsUrl.value.trim()}?token=${encodeURIComponent(body.data.token)}`);
-        ws.binaryType = 'arraybuffer';
-        ws.onopen = () => { btnDisconnect.disabled = false; sendRtvi({ id: 'init-001', label: 'rtvi-ai', type: 'client-ready', data: { version: '2.1.0' } }); };
-        ws.onmessage = (e) => { if (e.data instanceof ArrayBuffer) handleBinaryFrame(e.data); };
-        ws.onclose = (e) => { if (e.code !== 1000 && e.code !== 1005 && !errorMsg.textContent) errorMsg.textContent = `Connection closed (${e.code}${e.reason ? ': ' + e.reason : ''})`; cleanup(); };
-        ws.onerror = cleanup;
+        const sock = ws = new WebSocket(`${wsUrl.value.trim()}?token=${encodeURIComponent(body.data.token)}`);
+        sock.binaryType = 'arraybuffer';
+        btnDisconnect.disabled = false;
+        // A socket that is no longer the current one (disconnected, then reconnected) must not touch the page.
+        sock.onopen = () => { if (sock === ws) sendRtvi({ id: 'init-001', label: 'rtvi-ai', type: 'client-ready', data: { version: '2.1.0' } }); };
+        sock.onmessage = (e) => { if (sock === ws && e.data instanceof ArrayBuffer) handleBinaryFrame(e.data); };
+        sock.onclose = (e) => { if (sock !== ws) return; if (e.code !== 1000 && e.code !== 1005 && !errorMsg.textContent) errorMsg.textContent = `Connection closed (${e.code}${e.reason ? ': ' + e.reason : ''})`; cleanup(); };
+        sock.onerror = () => { if (sock === ws) cleanup(); };
       } catch (err) {
         errorMsg.textContent = 'Connection error: ' + err.message;
         cleanup();

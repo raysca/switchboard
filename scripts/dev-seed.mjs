@@ -75,8 +75,13 @@ if (find(TEXT)) {
       llm: { ...base.llm, system_prompt: "You are a concise assistant. Answer in one or two short sentences." },
       tts: { provider: "silence", voice: "none" },
     };
-    await api("POST", "/agents", { name: TEXT, description: "Text only: no server-side speech", config });
-    log(`created agent "${TEXT}" (silence / ${config.llm.provider} / silence)`);
+    // Like the desk, it must not cost the examples their Dev Assistant id.
+    try {
+      await api("POST", "/agents", { name: TEXT, description: "Text only: no server-side speech", config });
+      log(`created agent "${TEXT}" (silence / ${config.llm.provider} / silence)`);
+    } catch (err) {
+      log(`could not create "${TEXT}": ${err.message}`);
+    }
   }
 }
 

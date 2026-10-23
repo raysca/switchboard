@@ -67,7 +67,7 @@ export function ReplyChart({ sessions }: { sessions: SessionDTO[] }) {
         <span className="subtext">
           Last {points.length} calls · typical {formatMs(typical)} · slowest {formatMs(slowest)}
         </span>
-        <button type="button" className="action-button-small" aria-pressed={asTable} onClick={() => setAsTable(!asTable)}>
+        <button type="button" className="action-button-small" onClick={() => setAsTable(!asTable)}>
           {asTable ? "Show chart" : "Show table"}
         </button>
       </div>

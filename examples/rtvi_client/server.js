@@ -23,7 +23,7 @@ const ALLOWED_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', HOST].flatMap(
 async function findTextAgent() {
   if (!SERVER_KEY) return '';
   try {
-    const res = await fetch(new URL('/api/v1/agents?limit=100', ADMIN_URL), { headers: { Authorization: `Bearer ${SERVER_KEY}` } });
+    const res = await fetch(new URL('/api/v1/agents?limit=100', ADMIN_URL), { headers: { Authorization: `Bearer ${SERVER_KEY}` }, signal: AbortSignal.timeout(2000) });
     const startStt = (c) => (Array.isArray(c?.steps) ? c.steps.find((st) => st.id === c.start)?.config?.stt : c?.stt);
     const agents = (await res.json()).data || [];
     return agents.find((a) => !a.archived && a.readiness?.state === 'ready' && startStt(a.current_version?.config)?.provider === 'silence')?.id || '';
