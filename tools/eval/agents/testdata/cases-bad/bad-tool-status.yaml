@@ -1,0 +1,4 @@
+name: a
+agent: x
+caller: {script: [hi]}
+expect: {tools_called: ["t:done"]}

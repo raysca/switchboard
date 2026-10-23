@@ -1,0 +1,4 @@
+name: a
+agent: x
+caller: {script: [hi]}
+expect: {end_reason: hung_up}

@@ -1,0 +1,3 @@
+name: a
+agent: x
+caller: {persona: {who: w, goal: g, max_turns: 99}}

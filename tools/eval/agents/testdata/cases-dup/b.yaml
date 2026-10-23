@@ -1,0 +1,3 @@
+name: same
+agent: x
+caller: {script: [hi]}

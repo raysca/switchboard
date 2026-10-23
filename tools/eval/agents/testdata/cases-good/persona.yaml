@@ -1,0 +1,3 @@
+name: persona-case
+agent: Smile Dental front desk
+caller: {persona: {who: Jane, goal: book a cleaning}}
