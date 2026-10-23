@@ -11,6 +11,8 @@ import (
 	"govoice/transport/ws"
 )
 
+// client adds audio pacing to the shared stack.Client. Its own wait streams silence while it
+// waits: the embedded Wait and Close do not, so use wait and keep audio calls on the paced helpers.
 type client struct {
 	*stack.Client
 	next time.Time

@@ -52,7 +52,7 @@ func DialN(ctx context.Context, public, token string, pushToTalk bool, maxEvents
 	defer cancel()
 	conn, _, err := websocket.Dial(dctx, "ws://"+public+"/ws?token="+token, nil)
 	if err != nil {
-		return nil, fmt.Errorf("dial: %v", err)
+		return nil, fmt.Errorf("dial: %w", err)
 	}
 	conn.SetReadLimit(1 << 20)
 	if err := Handshake(dctx, conn, pushToTalk); err != nil {
@@ -155,7 +155,7 @@ func (c *Client) Wait(limit time.Duration, cond func() bool) bool {
 		}
 		select {
 		case <-c.closed:
-			return false
+			return cond != nil && cond() // events that arrived with the close still count
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
