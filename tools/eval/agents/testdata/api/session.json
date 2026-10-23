@@ -1,0 +1,1 @@
+{"id":"s1","agent_id":"a1","agent_version_id":"v7","config_hash":"abc123","started_at":"2026-01-01T10:00:00Z","ended_at":"2026-01-01T10:00:20Z","status":"ended","turn_count":3,"safe_summary":"","draft":true,"caller":"agent-eval","end_reason":"caller_hung_up"}

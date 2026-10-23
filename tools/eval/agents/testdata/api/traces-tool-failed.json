@@ -1,0 +1,3 @@
+{"session_id":"s1","events":[],"spans":[
+ {"id":"p3","name":"handoff.active","started_at":"2026-01-01T10:00:06Z","attributes":{"from_step":"front","to_step":"sales"}}],
+ "tool_calls":[{"id":"t1","session_id":"s1","remote_name":"transfer_to_sales","started_at":"2026-01-01T10:00:05Z","status":"failed"}]}

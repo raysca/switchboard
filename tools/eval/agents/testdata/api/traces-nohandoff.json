@@ -1,0 +1,1 @@
+{"session_id":"s1","events":[],"spans":[{"id":"p1","name":"llm.turn","started_at":"2026-01-01T10:00:01Z"}],"tool_calls":[]}

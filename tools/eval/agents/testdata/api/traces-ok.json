@@ -1,0 +1,5 @@
+{"session_id":"s1","events":[],"spans":[
+ {"id":"p2","name":"handoff.committed","started_at":"2026-01-01T10:00:05Z","attributes":{"from_step":"front","to_step":"sales"}},
+ {"id":"p3","name":"handoff.active","started_at":"2026-01-01T10:00:06Z","attributes":{"from_step":"front","to_step":"sales"}},
+ {"id":"p1","name":"llm.turn","started_at":"2026-01-01T10:00:01Z"}],
+ "tool_calls":[{"id":"t1","session_id":"s1","remote_name":"transfer_to_sales","schema_hash":"","started_at":"2026-01-01T10:00:05Z","status":"succeeded"}]}
