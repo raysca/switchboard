@@ -112,3 +112,6 @@ ui/src/app/App.tsx	R	Routes,	# react-router component import
 ui/src/**/*.test.tsx	R	, Route, Routes	# react-router components in the test imports
 server/mcp/http_test.go	R	DetachRoutes	# HTTP routes (test name)
 server/mcp/http_test.go	R	MCPRoutesDistinguish	# HTTP routes (test name)
+server/storage/storage.go	F	FROM flows WHERE	# refuses a pre-rename database
+server/storage/storage_test.go	F	CREATE TABLE flows	# builds a pre-rename database
+server/storage/storage_test.go	F	.flows (id	# same, in Postgres

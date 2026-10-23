@@ -1136,6 +1136,47 @@ func TestOpenRefusesPreEnvironmentCredentialsDatabase(t *testing.T) {
 	}
 }
 
+// A database made before the agent rename keeps the old table (nothing is
+// migrated): both dialects refuse it with ErrPreAgentSchema.
+func TestOpenRefusesPreAgentRenameDatabase(t *testing.T) {
+	ctx := context.Background()
+	t.Run("sqlite", func(t *testing.T) {
+		dsn := filepath.Join(t.TempDir(), "old.db")
+		s, err := Open(ctx, Config{Dialect: SQLite, DSN: dsn})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.DB().ExecContext(ctx, "CREATE TABLE flows (id TEXT PRIMARY KEY)"); err != nil {
+			t.Fatal(err)
+		}
+		_ = s.Close()
+		if _, err := Open(ctx, Config{Dialect: SQLite, DSN: dsn}); !errors.Is(err, ErrPreAgentSchema) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	if base := os.Getenv("TEST_POSTGRES_DSN"); base != "" {
+		t.Run("postgres", func(t *testing.T) {
+			admin, err := sql.Open("pgx", base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer admin.Close()
+			schema := "preagent_" + strings.ReplaceAll(NewID(), "-", "_")
+			if _, err := admin.ExecContext(ctx, "CREATE SCHEMA "+schema+" ; CREATE TABLE "+schema+".flows (id TEXT PRIMARY KEY)"); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _, _ = admin.ExecContext(ctx, "DROP SCHEMA "+schema+" CASCADE") })
+			sep := "?"
+			if strings.Contains(base, "?") {
+				sep = "&"
+			}
+			if _, err := Open(ctx, Config{Dialect: Postgres, DSN: base + sep + "search_path=" + schema}); !errors.Is(err, ErrPreAgentSchema) {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}
+
 // publishTestVersion publishes config (with the given MCP selection) as the agent's next version.
 func publishTestVersion(ctx context.Context, s *Store, agentID string, config []byte, tools []SelectedTool) (AgentVersion, error) {
 	v, _, err := s.Agents().MutateAndPublish(ctx, agentID, AgentMutation{Tools: &tools}, config)

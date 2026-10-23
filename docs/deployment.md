@@ -119,6 +119,7 @@ In every profile:
 - `storage.dialect` is empty (calls run stored agents, so a store is required);
 - the DSN variable is empty (`storage enabled but GOVOICE_DATABASE_DSN is empty`), except in the development profile, which creates its own SQLite store;
 - the management key is set but shorter than 32 bytes, or equals the token secret, or is missing while `public_admin` is on.
+- the database was created before the agent rename (it still has the old table, and nothing migrates it, so recreate the database; the error is `open storage: database predates the agent rename ...`).
 
 <!-- src: server/config_validate.go:100-125,172-179,290-300; server/management.go:34-47,84-91; server/server.go:185-198; server/auth/auth.go:17-27 -->
 
