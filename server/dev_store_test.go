@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// The development profile's local flow store is named after the product: <dir>/switchboard.db.
+// The development profile's local agent store is named after the product: <dir>/switchboard.db.
 func TestDevelopmentStoreIsNamedSwitchboard(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("GOVOICE_DEV_DIR", dir)

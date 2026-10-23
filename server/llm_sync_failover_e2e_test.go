@@ -82,7 +82,7 @@ func TestCallBehaviorASynchronousLLMFailureFailsOverAndTheCallSurvives(t *testin
 			`"llm":{"provider":"echo","model":"downmodel","system_prompt":"Failover","fallbacks":[{"provider":"echo","model":"m"}]},` +
 			`"tts":{"provider":"echo","voice":"failvoice"}}`)})
 	if err != nil || f.Readiness.State != agent.ReadinessReady {
-		t.Fatalf("flow: %+v err=%v", f.Readiness, err)
+		t.Fatalf("agent: %+v err=%v", f.Readiness, err)
 	}
 	c := r.dial(f.ID)
 	c.say("first question")
@@ -172,7 +172,7 @@ func TestCallBehaviorARefusedTaskLosesTheTurnNotTheCall(t *testing.T) {
 			`"llm":{"provider":"echo","model":"refusemodel","system_prompt":"Refused","fallbacks":[{"provider":"echo","model":"m"}]},` +
 			`"tts":{"provider":"echo","voice":"refusevoice"}}`)})
 	if err != nil || f.Readiness.State != agent.ReadinessReady {
-		t.Fatalf("flow: %+v err=%v", f.Readiness, err)
+		t.Fatalf("agent: %+v err=%v", f.Readiness, err)
 	}
 	c := r.dial(f.ID)
 	c.say("first question")
@@ -256,7 +256,7 @@ func TestCallBehaviorARefusedTTSUnitIsLostWithoutFailover(t *testing.T) {
 		`{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"RefusedTTS"},` +
 			`"tts":{"provider":"echo","voice":"refusevoice","fallbacks":[{"provider":"echo","voice":"okvoice"}]}}`)})
 	if err != nil || f.Readiness.State != agent.ReadinessReady {
-		t.Fatalf("flow: %+v err=%v", f.Readiness, err)
+		t.Fatalf("agent: %+v err=%v", f.Readiness, err)
 	}
 	c := r.dial(f.ID)
 	c.say("First sentence here. Second sentence here.")

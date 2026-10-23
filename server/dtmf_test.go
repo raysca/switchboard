@@ -184,7 +184,7 @@ func TestSendDTMFToolPlaysTonesToTransport(t *testing.T) {
 	}
 }
 
-// send_dtmf is a call tool, not a start-step tool: a step built after a route has it on the primary and on
+// send_dtmf is a call tool, not a start-step tool: a step built after a handoff has it on the primary and on
 // every fallback, exactly once, like the start step.
 func TestSendDTMFToolOnEveryStep(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)

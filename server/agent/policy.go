@@ -7,13 +7,13 @@ import (
 	"time"
 )
 
-// Policy is what the server knows about call behavior that a flow may only choose within: the named
-// background sounds, the route sounds, whether flows may choose one, and the shortest quiet-caller wait that is not
+// Policy is what the server knows about call behavior that an agent may only choose within: the named
+// background sounds, the handoff sounds, whether agents may choose one, and the shortest quiet-caller wait that is not
 // confused with a key press. An Availability that also implements Policy turns these on; without it
-// (unit tests) a flow's choices are not checked against a server.
+// (unit tests) an agent's choices are not checked against a server.
 type Policy interface {
 	Backgrounds() []string // sorted names of audio.backgrounds
-	Cues() []string        // sorted names of audio.cues (route sounds)
+	Cues() []string        // sorted names of audio.cues (handoff sounds)
 	AllowAgentBackground() bool
 	MinUserTimeout() time.Duration  // 0: no floor
 	TurnManager() bool              // agents' turn settings need the turn manager
@@ -22,16 +22,16 @@ type Policy interface {
 	SmartTurn() bool                // the Smart Turn model is loaded: an agent may ask for end_of_turn "smart"
 }
 
-// reasonIdleTooShort is the one policy problem that also takes a stored flow offline: a call could not even
-// be built with that wait. A sound the server no longer offers (or no longer lets flows choose) does not:
+// reasonIdleTooShort is the one policy problem that also takes a stored agent offline: a call could not even
+// be built with that wait. A sound the server no longer offers (or no longer lets agents choose) does not:
 // the call plays the server's default instead, so publish refuses it but readiness stays green.
 const reasonIdleTooShort = "idle_timeout_too_short"
 
-// reasonSmartTurnUnavailable also takes a stored flow offline: a call asking for the Smart Turn model
+// reasonSmartTurnUnavailable also takes a stored agent offline: a call asking for the Smart Turn model
 // could not be built without it.
 const reasonSmartTurnUnavailable = "smart_turn_unavailable"
 
-// policyProblem is one thing a flow asks for that the server does not allow. reason is the readiness
+// policyProblem is one thing an agent asks for that the server does not allow. reason is the readiness
 // code, empty when the problem only blocks a publish.
 type policyProblem struct {
 	reason, message string

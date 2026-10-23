@@ -27,9 +27,9 @@ import (
 	"govoice/transport/ws"
 )
 
-// End to end: a stored flow and the provider environment drive a real
+// End to end: a stored agent and the provider environment drive a real
 // WebSocket call. The call's provider factories must receive exactly the
-// flow's settings and the environment's secrets, the session row must be
+// agent's settings and the environment's secrets, the session row must be
 // persisted while the call runs and ended when it hangs up.
 func TestStoredAgentDrivesCall(t *testing.T) {
 	s := apiTestServer(t)
@@ -42,7 +42,7 @@ func TestStoredAgentDrivesCall(t *testing.T) {
 	created, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "Billing", Config: json.RawMessage(
 		`{"stt":{"provider":"google","model":"chirp_2","language":"en-GB"},"llm":{"provider":"google","model":"gemini-test","system_prompt":"You handle billing."},"tts":{"provider":"google","voice":"en-GB-Neural2-A"},"context":{"max_messages":12,"max_tokens":900}}`)})
 	if err != nil || created.Readiness.State != agent.ReadinessReady {
-		t.Fatalf("flow=%+v err=%v", created.Readiness, err)
+		t.Fatalf("agent=%+v err=%v", created.Readiness, err)
 	}
 
 	var mu sync.Mutex
@@ -136,7 +136,7 @@ func TestStoredAgentDrivesCall(t *testing.T) {
 	conn.Close(websocket.StatusNormalClosure, "bye")
 	waitFor(t, func() bool { return activeSessions("active") == 0 && activeSessions("ended") == 1 })
 
-	// A flow that is no longer ready cannot take calls, even with a token
+	// An agent that is no longer ready cannot take calls, even with a token
 	// minted while it was ready.
 	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+created.ID+`"}`)
 	var resp struct {
@@ -149,7 +149,7 @@ func TestStoredAgentDrivesCall(t *testing.T) {
 	}
 	dialUntilRefused(t, ts, resp.Data.Token)
 	if n := activeSessions(""); n != 1 {
-		t.Fatalf("disabled flow started a session: %d sessions", n)
+		t.Fatalf("disabled agent started a session: %d sessions", n)
 	}
 }
 
@@ -207,7 +207,7 @@ func (r *userTurnRecorder) ProcessFrame(_ context.Context, f core.Frame, d core.
 }
 
 // A client text turn (RTVI send-text) is echoed back as a final user
-// transcription and reaches the flow's LLM as a committed user turn.
+// transcription and reaches the agent's LLM as a committed user turn.
 func TestTextTurnReachesAgentLLM(t *testing.T) {
 	s := apiTestServer(t)
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
@@ -395,7 +395,7 @@ func TestStoredAgent_ConfiguresMaxParallelAndVADStopMS(t *testing.T) {
 
 	created, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "ParallelAgent", Config: json.RawMessage(cfgJSON)})
 	if err != nil || created.Readiness.State != agent.ReadinessReady {
-		t.Fatalf("flow creation failed: %v", err)
+		t.Fatalf("agent creation failed: %v", err)
 	}
 
 	var mu sync.Mutex
@@ -464,7 +464,7 @@ func TestStoredAgent_ConfiguresMaxParallelFallbacksAndServerDefault(t *testing.T
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
 	enableTestManagement(t, s)
 
-	// Flow config with no flow-level max_parallel and an LLM fallback
+	// Agent config with no agent-level max_parallel and an LLM fallback
 	cfgJSON := `{
 		"stt": {"provider": "google", "model": "chirp_2"},
 		"llm": {"provider": "google", "model": "gemini-primary",
@@ -474,7 +474,7 @@ func TestStoredAgent_ConfiguresMaxParallelFallbacksAndServerDefault(t *testing.T
 
 	created, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "FallbackParallelAgent", Config: json.RawMessage(cfgJSON)})
 	if err != nil || created.Readiness.State != agent.ReadinessReady {
-		t.Fatalf("flow creation failed: %v", err)
+		t.Fatalf("agent creation failed: %v", err)
 	}
 
 	spec, release, err := s.resolveCall(t.Context(), created.ID, "session-1", "", nil)
@@ -507,7 +507,7 @@ func TestStoredAgent_CleanTextConfiguration(t *testing.T) {
 	}`
 	createdDefault, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "DefaultAgent", Config: json.RawMessage(cfgDefault)})
 	if err != nil {
-		t.Fatalf("flow creation failed: %v", err)
+		t.Fatalf("agent creation failed: %v", err)
 	}
 	specDefault, releaseDefault, err := s.resolveCall(t.Context(), createdDefault.ID, "session-default", "", nil)
 	if err != nil {
@@ -526,7 +526,7 @@ func TestStoredAgent_CleanTextConfiguration(t *testing.T) {
 	}`
 	createdDisabled, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "DisabledCleanAgent", Config: json.RawMessage(cfgDisabled)})
 	if err != nil {
-		t.Fatalf("flow creation failed: %v", err)
+		t.Fatalf("agent creation failed: %v", err)
 	}
 	specDisabled, releaseDisabled, err := s.resolveCall(t.Context(), createdDisabled.ID, "session-disabled", "", nil)
 	if err != nil {
@@ -545,7 +545,7 @@ func TestStoredAgent_CleanTextConfiguration(t *testing.T) {
 	}`
 	createdEnabled, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "ExplicitCleanAgent", Config: json.RawMessage(cfgEnabled)})
 	if err != nil {
-		t.Fatalf("flow creation failed: %v", err)
+		t.Fatalf("agent creation failed: %v", err)
 	}
 	specEnabled, releaseEnabled, err := s.resolveCall(t.Context(), createdEnabled.ID, "session-enabled", "", nil)
 	if err != nil {
@@ -668,8 +668,8 @@ func TestFallbackSecretsResolveByProvider(t *testing.T) {
 	}
 }
 
-// voice_settings saved on a flow reach the started call's TTS StageSpec (single
-// step and a routed step); fallbacks carry none.
+// voice_settings saved on an agent reach the started call's TTS StageSpec (single
+// step and a handoff-target step); fallbacks carry none.
 func TestStoredAgent_VoiceSettingsReachStageSpec(t *testing.T) {
 	s := apiTestServer(t)
 	vars := testProviderVars(t)
@@ -720,8 +720,8 @@ func TestStoredAgent_VoiceSettingsReachStageSpec(t *testing.T) {
 	check("step TTS", st.TTS.VoiceSettings)
 }
 
-// llm sampling saved on a flow reaches the started call's LLM StageSpec (single
-// step, routed step) and is copied to LLM fallbacks; an unset step carries none.
+// llm sampling saved on an agent reaches the started call's LLM StageSpec (single
+// step, handoff-target step) and is copied to LLM fallbacks; an unset step carries none.
 func TestStoredAgent_SamplingReachesStageSpec(t *testing.T) {
 	s := apiTestServer(t)
 	vars := testProviderVars(t)

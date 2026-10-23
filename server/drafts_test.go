@@ -56,13 +56,13 @@ func echoAgentConfig(prompt string) string {
 	return `{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"` + prompt + `"},"tts":{"provider":"echo","voice":"v"}}`
 }
 
-// draftRig is a server with one published echo flow whose prompt is PUBLISHED.
+// draftRig is a server with one published echo agent whose prompt is PUBLISHED.
 func draftRig(t *testing.T) (*agentRigE2E, string) {
 	t.Helper()
 	r := newAgentRigE2E(t, newProbe())
 	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Support", Config: json.RawMessage(echoAgentConfig(publishedPrompt))})
 	if err != nil || f.Readiness.State != agent.ReadinessReady {
-		t.Fatalf("flow: %+v err %v", f.Readiness, err)
+		t.Fatalf("agent: %+v err %v", f.Readiness, err)
 	}
 	r.agentID = f.ID
 	return r, f.ID
@@ -88,7 +88,7 @@ func TestVoiceTokenWithADraftIsValidatedLikeAPublish(t *testing.T) {
 		"not an object": {id, `[1]`, http.StatusBadRequest},
 		"unattached":    {id, `{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo"},"tts":{"provider":"echo","voice":"v"}}`, http.StatusBadRequest},
 		"foreign tool":  {id, `{"start":"a","steps":[{"id":"a","name":"A","tools":["srv/lookup"],"config":` + echoAgentConfig("D") + `}],"handoffs":[]}`, http.StatusBadRequest},
-		"unknown flow":  {"0194c5f8-0000-7000-8000-000000000000", echoAgentConfig("D"), http.StatusNotFound},
+		"unknown agent": {"0194c5f8-0000-7000-8000-000000000000", echoAgentConfig("D"), http.StatusNotFound},
 		"a valid draft": {id, echoAgentConfig(draftPrompt), http.StatusCreated},
 	} {
 		code, token, body := issueDraftToken(r, tc.agent, tc.config)
@@ -124,7 +124,7 @@ func TestDraftCallRunsTheDraftNotThePublishedVersion(t *testing.T) {
 	if n := c.replies("[" + publishedPrompt); n != 0 {
 		t.Fatalf("the published prompt answered a draft call %d times", n)
 	}
-	// An ordinary call on the same flow still runs the published version.
+	// An ordinary call on the same agent still runs the published version.
 	c2 := r.dial(id)
 	c2.say("hello")
 	c2.waitReplies("["+publishedPrompt, 1)
@@ -199,6 +199,6 @@ func TestADraftCallIsRefusedOnceItsAgentIsArchived(t *testing.T) {
 	c.say("hello")
 	time.Sleep(1500 * time.Millisecond)
 	if n := c.replies("["); n != 0 {
-		t.Fatalf("an archived flow answered a draft call %d times", n)
+		t.Fatalf("an archived agent answered a draft call %d times", n)
 	}
 }

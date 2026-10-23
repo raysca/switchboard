@@ -29,7 +29,7 @@ import (
 )
 
 // End to end with the echo provider: a real
-// server, a stored routed flow, and a WebSocket client that sends text turns.
+// server, a stored multi-step agent, and a WebSocket client that sends text turns.
 // The echo LLM labels each reply with its step's prompt and calls the step's
 // transfer tool on "transfer to <step>", so the whole path runs: transfer tool,
 // on-demand step build, flip, old-step close, timeline, traces and metrics.
@@ -205,7 +205,7 @@ func newAgentRigE2E(t *testing.T, probe *stageProbe, mods ...func(*Config)) *age
 func (r *agentRigE2E) createHandoffAgent(salesVoice string, cue ...string) string {
 	a, err := r.s.agents.Create(r.t.Context(), agent.CreateRequest{Name: "Dealership", Config: agentConfigJSON("SALES", salesVoice, cue...)})
 	if err != nil || a.Readiness.State != agent.ReadinessReady {
-		r.t.Fatalf("graph flow: %+v err=%v", a.Readiness, err)
+		r.t.Fatalf("graph agent: %+v err=%v", a.Readiness, err)
 	}
 	r.agentID = a.ID
 	return a.ID
@@ -241,7 +241,7 @@ func (c *e2eCall) fnEvents() []fnEvent {
 }
 
 // audioArrival is one bot audio frame on the wire. The fake TTS sends silence,
-// so a frame with a high peak is the route cue.
+// so a frame with a high peak is the handoff cue.
 type audioArrival struct {
 	at   time.Time
 	peak int
@@ -253,7 +253,7 @@ func (r *agentRigE2E) dial(agentID string) *e2eCall {
 	return r.dialToken(r.voiceToken(agentID))
 }
 
-// voiceToken issues a voice token for flowID, as an integration's backend does.
+// voiceToken issues a voice token for agentID, as an integration's backend does.
 func (r *agentRigE2E) voiceToken(agentID string) string {
 	r.t.Helper()
 	w := apiRequest(r.s, http.MethodPost, "/api/v1/voice-tokens", e2eMgmtKey, `{"principal":"alice","agent_id":"`+agentID+`"}`)
@@ -450,7 +450,7 @@ func TestAgentE2EHandoffMovesTheCallAndClosesTheLeftStep(t *testing.T) {
 	c.say("hello")
 	c.waitReplies("[FRONT", 1)
 	if probe.builds("SALES") != 0 || probe.builds("salesvoice") != 0 {
-		t.Fatal("only the entry step may exist before the route")
+		t.Fatal("only the entry step may exist before the handoff")
 	}
 
 	c.say("please transfer to sales")
@@ -468,7 +468,7 @@ func TestAgentE2EHandoffMovesTheCallAndClosesTheLeftStep(t *testing.T) {
 	c.say("what do you sell")
 	c.waitReplies("[SALES", 2)
 	if c.replies("[FRONT") != front {
-		t.Fatal("the front step answered after the route")
+		t.Fatal("the front step answered after the handoff")
 	}
 
 	if !r.has(EventHandoff, "front->sales") || !r.has(EventStepActive, "sales") || !r.has(EventStepClosed, "front") {
@@ -481,9 +481,9 @@ func TestAgentE2EHandoffMovesTheCallAndClosesTheLeftStep(t *testing.T) {
 		}
 	}
 	if r.s.metrics.handoff.total.Load() != 1 || r.s.metrics.handoff.failures.Load() != 0 {
-		t.Fatalf("metrics: routes=%d failures=%d", r.s.metrics.handoff.total.Load(), r.s.metrics.handoff.failures.Load())
+		t.Fatalf("metrics: handoffs=%d failures=%d", r.s.metrics.handoff.total.Load(), r.s.metrics.handoff.failures.Load())
 	}
-	eventually(t, "route trace spans", func() bool {
+	eventually(t, "handoff trace spans", func() bool {
 		n := r.spanNames(c.sessionID)
 		return n["handoff.preparing"] && n["handoff.active"]
 	})
@@ -504,7 +504,7 @@ func TestAgentE2EFailedStepBuildKeepsTheCallGoing(t *testing.T) {
 	c.waitReplies("Connecting you.", 1)
 	eventually(t, "handoff_failed", func() bool { return r.has(EventHandoffFailed, "sales") })
 	if r.s.metrics.handoff.failures.Load() != 1 || r.s.metrics.handoff.total.Load() != 0 {
-		t.Fatalf("metrics: routes=%d failures=%d", r.s.metrics.handoff.total.Load(), r.s.metrics.handoff.failures.Load())
+		t.Fatalf("metrics: handoffs=%d failures=%d", r.s.metrics.handoff.total.Load(), r.s.metrics.handoff.failures.Load())
 	}
 	for _, e := range r.timeline() {
 		if e.Type == EventHandoffFailed && e.Error == "" {
@@ -550,7 +550,7 @@ func TestAgentE2ECallerSpeaksWhileTheStepIsBeingPrepared(t *testing.T) {
 	c.waitReplies("[SALES", 1)
 	eventually(t, "front closed after the flip", func() bool { return probe.closes("FRONT") == 1 })
 	if r.s.metrics.handoff.total.Load() != 1 {
-		t.Fatal("exactly one route")
+		t.Fatal("exactly one handoff")
 	}
 }
 
@@ -576,7 +576,7 @@ func TestAgentE2EHangUpWhilePreparingClosesTheLateStep(t *testing.T) {
 	eventually(t, "goroutines back to baseline", func() bool { return runtime.NumGoroutine() <= baseline+8 })
 }
 
-// Republishing the flow mid-call does not change the call in progress.
+// Republishing the agent mid-call does not change the call in progress.
 func TestAgentE2ERepublishMidCallKeepsTheCallsAgent(t *testing.T) {
 	probe := newProbe()
 	r := newAgentRigE2E(t, probe)
@@ -601,7 +601,7 @@ func TestAgentE2ERepublishMidCallKeepsTheCallsAgent(t *testing.T) {
 	c2.waitReplies("[SALESV2", 1)
 }
 
-// A plain (flat) flow goes through the same server unchanged.
+// A plain (flat) agent goes through the same server unchanged.
 func TestAgentE2EFlatAgentHasNoHandoffs(t *testing.T) {
 	probe := newProbe()
 	r := newAgentRigE2E(t, probe)
@@ -616,21 +616,21 @@ func TestAgentE2EFlatAgentHasNoHandoffs(t *testing.T) {
 	c.say("transfer to sales")
 	c.waitReplies("[FLAT", 1)
 	if c.replies("Connecting you.") != 0 {
-		t.Fatal("a flat flow has no transfer tool")
+		t.Fatal("a flat agent has no transfer tool")
 	}
 	for _, e := range r.timeline() {
 		switch e.Type {
 		case EventHandoff, EventStepActive, EventStepPreparing, EventHandoffFailed:
-			t.Fatalf("a flat flow produced a route event: %+v", e)
+			t.Fatalf("a flat agent produced a handoff event: %+v", e)
 		}
 	}
 	if r.s.metrics.handoff.total.Load() != 0 {
-		t.Fatal("no route metrics for a flat flow")
+		t.Fatal("no handoff metrics for a flat agent")
 	}
 }
 
 // ---- Router cue, end to end -------------------------------------------------
-// A real server with audio.cues configured, a routed flow with a handoff_cue and a
+// A real server with audio.cues configured, a multi-step agent with a handoff_cue and a
 // WebSocket client that decodes the bot's audio frames: the cue is a tone on the
 // wire (the fake TTS sends silence), so its start, its length and its stop are
 // observable bytes, not just timeline events.
@@ -693,7 +693,7 @@ func TestAgentE2ECuePlaysInTheHandoffGapAndStopsWhenSalesSpeaks(t *testing.T) {
 	c.waitReplies("[FRONT", 1)
 	time.Sleep(300 * time.Millisecond)
 	if c.cueFrames() != 0 || r.has(EventCueStart, "") {
-		t.Fatal("a cue must not play outside a route")
+		t.Fatal("a cue must not play outside a handoff")
 	}
 
 	c.say("transfer to sales")
@@ -739,7 +739,7 @@ func TestAgentE2ECuePlaysInTheHandoffGapAndStopsWhenSalesSpeaks(t *testing.T) {
 	}
 }
 
-// A route quicker than after_ms stays silent: nothing on the wire, no cue event.
+// A handoff quicker than after_ms stays silent: nothing on the wire, no cue event.
 func TestAgentE2EQuickHandoffPlaysNoCue(t *testing.T) {
 	probe := newProbe()
 	r := newAgentRigE2E(t, probe, withCue(t))
@@ -750,7 +750,7 @@ func TestAgentE2EQuickHandoffPlaysNoCue(t *testing.T) {
 	c.waitReplies("[SALES", 1)
 	time.Sleep(500 * time.Millisecond)
 	if c.cueFrames() != 0 || r.has(EventCueStart, "") {
-		t.Fatalf("a quick route must be silent (cue frames=%d)", c.cueFrames())
+		t.Fatalf("a quick handoff must be silent (cue frames=%d)", c.cueFrames())
 	}
 }
 
@@ -769,20 +769,20 @@ func TestAgentE2ECueStopsWhenTheHandoffFails(t *testing.T) {
 	eventually(t, "cue on the wire", func() bool { return c.cueFrames() >= 3 })
 
 	close(probe.gate) // the build now fails
-	eventually(t, "route failed", func() bool { return r.has(EventHandoffFailed, "sales") })
-	eventually(t, "cue stopped because the route failed", func() bool { return r.cueStopReason() == "failed" })
+	eventually(t, "handoff failed", func() bool { return r.has(EventHandoffFailed, "sales") })
+	eventually(t, "cue stopped because the handoff failed", func() bool { return r.cueStopReason() == "failed" })
 	time.Sleep(400 * time.Millisecond)
 	stopped := c.cueFrames()
 	time.Sleep(300 * time.Millisecond)
 	if c.cueFrames() != stopped {
-		t.Fatal("the cue kept playing after the route failed")
+		t.Fatal("the cue kept playing after the handoff failed")
 	}
 
 	c.say("are you still there")
 	c.waitReplies("[FRONT", 2) // the caller is still with the front step
 }
 
-// A flow published with a sound the server had, on a server whose sounds changed since (a restart with a
+// An agent published with a sound the server had, on a server whose sounds changed since (a restart with a
 // smaller catalogue), still hands off, silently: publish refuses an unknown name, a running call never does.
 func TestAgentE2EUnknownCueNameStillHandsOff(t *testing.T) {
 	probe := newProbe()
@@ -798,7 +798,7 @@ func TestAgentE2EUnknownCueNameStillHandsOff(t *testing.T) {
 	}
 }
 
-// send_dtmf is a call tool: after a route the new step can still press keys.
+// send_dtmf is a call tool: after a handoff the new step can still press keys.
 func TestAgentE2ESendDTMFWorksAfterAHandoff(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe(), func(cfg *Config) { cfg.DTMF.SendTool = true })
 	c := r.dial(r.createHandoffAgent("salesvoice"))
@@ -808,11 +808,11 @@ func TestAgentE2ESendDTMFWorksAfterAHandoff(t *testing.T) {
 	c.say(`call tool send_dtmf {"digits":"1"}`)
 	c.waitReplies("Tool send_dtmf returned", 1)
 	if c.replies("Tool send_dtmf failed") != 0 {
-		t.Fatal("send_dtmf failed after the route")
+		t.Fatal("send_dtmf failed after the handoff")
 	}
 }
 
-// endCallFlowJSON is a front -> sales flow; frontEnds and salesEnds give that step the end_call tool.
+// endCallAgentJSON is a front -> sales agent; frontEnds and salesEnds give that step the end_call tool.
 func endCallAgentJSON(frontEnds, salesEnds bool) json.RawMessage {
 	stt := `"stt":{"provider":"echo","model":"s"}`
 	return json.RawMessage(`{"start":"front","steps":[` +
@@ -825,7 +825,7 @@ func TestAgentE2EEndCallEndsTheCallAfterTheGoodbye(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe())
 	a, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Closer", Config: endCallAgentJSON(true, false)})
 	if err != nil || a.Readiness.State != agent.ReadinessReady {
-		t.Fatalf("flow: %+v err=%v", a.Readiness, err)
+		t.Fatalf("agent: %+v err=%v", a.Readiness, err)
 	}
 	r.agentID = a.ID
 	c := r.dial(a.ID)
@@ -839,7 +839,7 @@ func TestAgentE2EEndCallEndsTheCallAfterTheGoodbye(t *testing.T) {
 	before := c.replyCount()
 	c.say("please end the call")
 	eventually(t, "the goodbye after end_call", func() bool { return c.replies("Connecting you.") >= 1 && c.replyCount() > before })
-	eventually(t, "the call ended by the flow", func() bool { return r.has(EventDisconnect, "terminated: "+EndReasonAgent) })
+	eventually(t, "the call ended by the agent", func() bool { return r.has(EventDisconnect, "terminated: "+EndReasonAgent) })
 	eventually(t, "session closed", func() bool { return r.activeSessions() == 0 })
 	eventually(t, "call.end span", func() bool { return r.spanNames(c.sessionID)["call.end"] })
 	// The trace says why and from which step, not just that the call ended.
@@ -849,7 +849,7 @@ func TestAgentE2EEndCallEndsTheCallAfterTheGoodbye(t *testing.T) {
 	}
 }
 
-// oneStepEndCallJSON is a single-step flow (no routes); ends gives the step the end_call tool.
+// oneStepEndCallJSON is a single-step agent (no handoffs); ends gives the step the end_call tool.
 func oneStepEndCallJSON(ends bool) json.RawMessage {
 	return json.RawMessage(`{"start":"main","steps":[{"id":"main","name":"Main","end_call":` + strconv.FormatBool(ends) + `,"config":{` +
 		`"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"MAIN"},"tts":{"provider":"echo","voice":"v"}}}],"handoffs":[]}`)
@@ -859,7 +859,7 @@ func TestAgentE2EAOneStepAgentCanEndTheCall(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe())
 	a, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "OneStepCloser", Config: oneStepEndCallJSON(true)})
 	if err != nil || a.Readiness.State != agent.ReadinessReady {
-		t.Fatalf("flow: %+v err=%v", a.Readiness, err)
+		t.Fatalf("agent: %+v err=%v", a.Readiness, err)
 	}
 	r.agentID = a.ID
 	c := r.dial(a.ID)
@@ -872,13 +872,13 @@ func TestAgentE2EAOneStepAgentCanEndTheCall(t *testing.T) {
 	before := c.replyCount()
 	c.say("please end the call")
 	eventually(t, "the goodbye after end_call", func() bool { return c.replyCount() > before })
-	eventually(t, "the call ended by the flow", func() bool { return r.has(EventDisconnect, "terminated: "+EndReasonAgent) })
+	eventually(t, "the call ended by the agent", func() bool { return r.has(EventDisconnect, "terminated: "+EndReasonAgent) })
 	eventually(t, "session closed", func() bool { return r.activeSessions() == 0 })
 
-	// The same one-step flow without the flag has no end_call tool: the phrase is just echoed and the call stays.
+	// The same one-step agent without the flag has no end_call tool: the phrase is just echoed and the call stays.
 	b, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "OneStepStays", Config: oneStepEndCallJSON(false)})
 	if err != nil || b.Readiness.State != agent.ReadinessReady {
-		t.Fatalf("flow: %+v err=%v", b.Readiness, err)
+		t.Fatalf("agent: %+v err=%v", b.Readiness, err)
 	}
 	r.agentID = b.ID
 	d := r.dial(b.ID)
@@ -897,13 +897,13 @@ func TestAgentE2EOneStepEndCallWithIdleOff(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe(), serverIdle(0, ""))
 	a, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "OneStepIdleOff", Config: oneStepEndCallJSON(true)})
 	if err != nil || a.Readiness.State != agent.ReadinessReady {
-		t.Fatalf("flow: %+v err=%v", a.Readiness, err)
+		t.Fatalf("agent: %+v err=%v", a.Readiness, err)
 	}
 	r.agentID = a.ID
 	c := r.dial(a.ID)
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 	c.say("please end the call")
-	eventually(t, "the call ended by the flow", func() bool { return r.has(EventDisconnect, "terminated: "+EndReasonAgent) })
+	eventually(t, "the call ended by the agent", func() bool { return r.has(EventDisconnect, "terminated: "+EndReasonAgent) })
 	eventually(t, "session closed", func() bool { return r.activeSessions() == 0 })
 }
 
@@ -912,7 +912,7 @@ func TestAgentE2EStepWithoutEndCallKeepsTheCall(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe())
 	a, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "SalesCloses", Config: endCallAgentJSON(false, true)})
 	if err != nil || a.Readiness.State != agent.ReadinessReady {
-		t.Fatalf("flow: %+v err=%v", a.Readiness, err)
+		t.Fatalf("agent: %+v err=%v", a.Readiness, err)
 	}
 	r.agentID = a.ID
 	c := r.dial(a.ID)
@@ -979,13 +979,13 @@ func (r *agentRigE2E) handoffBackgroundAgent(audio map[string]string, back bool)
 		step("support", "Support", "SUPPORT", false) + `],"handoffs":[` + handoffs + `]}`
 	a, err := r.s.agents.Create(r.t.Context(), agent.CreateRequest{Name: "Beds", Config: json.RawMessage(cfg)})
 	if err != nil || a.Readiness.State != agent.ReadinessReady {
-		r.t.Fatalf("background flow: %+v err=%v", a.Readiness, err)
+		r.t.Fatalf("background agent: %+v err=%v", a.Readiness, err)
 	}
 	r.agentID = a.ID
 	return a.ID
 }
 
-// R5a: a step's background starts when the route to it arrives, and a step that names none keeps the
+// R5a: a step's background starts when the handoff to it arrives, and a step that names none keeps the
 // sound that is playing.
 func TestAgentE2EAStepsBackgroundStartsWhenTheHandoffArrives(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe(), func(c *Config) {
@@ -999,7 +999,7 @@ func TestAgentE2EAStepsBackgroundStartsWhenTheHandoffArrives(t *testing.T) {
 	c.waitReplies("[FRONT", 1)
 	time.Sleep(500 * time.Millisecond)
 	if c.cueFrames() != 0 {
-		t.Fatalf("the front step has no background: %d sound frames before the route", c.cueFrames())
+		t.Fatalf("the front step has no background: %d sound frames before the handoff", c.cueFrames())
 	}
 	c.say("transfer to sales")
 	c.waitReplies("[SALES", 1)
@@ -1015,7 +1015,7 @@ func TestAgentE2EAStepsBackgroundStartsWhenTheHandoffArrives(t *testing.T) {
 	}
 }
 
-// K7: a route back to the start step restores the bed the call began with, the server default included.
+// K7: a handoff back to the start step restores the bed the call began with, the server default included.
 func TestAgentE2EAStepsBackgroundIsRestoredWhenAHandoffReturnsToTheStart(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe(), func(c *Config) {
 		c.Audio.Backgrounds = map[string]CueConfig{"soft": {File: constWAV(t, "soft", 6000), GainDB: ptrF(0)}}

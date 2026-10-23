@@ -25,7 +25,7 @@ func TestMCPCallPipecatClientSeesFunctionCallEvents(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "node", filepath.Join(compat, "test_rtvi_function_calls.js"),
-		// r.ts is the mcptest server (mcpCallRig shadows the embedded flowRigE2E.ts): dial the voice server.
+		// r.ts is the mcptest server (mcpCallRig shadows the embedded agentRigE2E.ts): dial the voice server.
 		"--url", "ws"+strings.TrimPrefix(r.agentRigE2E.ts.URL, "http"), "--token", r.voiceToken(a.ID),
 		"--text", `call tool lookup_order {"order_id":"42"}`).CombinedOutput()
 	if err != nil {

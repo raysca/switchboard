@@ -347,7 +347,7 @@ func stringContains(s, substr string) bool {
 	return false
 }
 
-// publishTestVersion publishes config (with the given MCP selection) as the flow's next version.
+// publishTestVersion publishes config (with the given MCP selection) as the agent's next version.
 func publishTestVersion(ctx context.Context, s *storage.Store, agentID string, config []byte, tools []storage.SelectedTool) (storage.AgentVersion, error) {
 	v, _, err := s.Agents().MutateAndPublish(ctx, agentID, storage.AgentMutation{Tools: &tools}, config)
 	return v, err

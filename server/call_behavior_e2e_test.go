@@ -14,8 +14,8 @@ import (
 	"govoice/server/storage"
 )
 
-// Per-flow quiet-caller and audio settings, end to end on the echo provider: a real server, real
-// WebSocket calls, flows that set (or do not set) idle and audio. The echo TTS speaks silence, so what
+// Per-agent quiet-caller and audio settings, end to end on the echo provider: a real server, real
+// WebSocket calls, agents that set (or do not set) idle and audio. The echo TTS speaks silence, so what
 // was said is read from the voice's synthesis units and audio energy is the background's.
 
 func behaviorAgent(t *testing.T, r *agentRigE2E, name, voice, extra string) string {
@@ -77,7 +77,7 @@ func TestCallBehaviorAnAgentsQuietCallerSettingsPromptThenEndTheCall(t *testing.
 		t.Fatalf("hang-ups counted: %d", r.s.metrics.UserIdleHangupsTotal.Load())
 	}
 	if len(r.probe.sayings("plainvoice")) != 0 || c2.ended() {
-		t.Fatalf("the flow without idle settings followed the server's one-minute wait, not the other flow's: %v", r.probe.sayings("plainvoice"))
+		t.Fatalf("the agent without idle settings followed the server's one-minute wait, not the other agent's: %v", r.probe.sayings("plainvoice"))
 	}
 	if n := r.probe.spoke("quietvoice"); n != 2 {
 		t.Fatalf("the model must not word the exact prompt: %d units", n)
@@ -90,7 +90,7 @@ func TestCallBehaviorAnAgentCanSwitchQuietCallerHandlingOff(t *testing.T) {
 	c := r.dial(off)
 	time.Sleep(2500 * time.Millisecond)
 	if n := len(r.probe.sayings("offvoice")); n != 0 || c.ended() {
-		t.Fatalf("handling is off for this flow but %d prompt(s) were spoken, ended=%v", n, c.ended())
+		t.Fatalf("handling is off for this agent but %d prompt(s) were spoken, ended=%v", n, c.ended())
 	}
 }
 
@@ -115,7 +115,7 @@ func TestCallBehaviorADraftCallUsesTheDraftsQuietCallerSettings(t *testing.T) {
 	r.dial(id)
 	time.Sleep(1500 * time.Millisecond)
 	if len(r.probe.sayings("pubvoice")) != 0 {
-		t.Fatal("the published flow has no quiet-caller handling")
+		t.Fatal("the published agent has no quiet-caller handling")
 	}
 }
 
@@ -133,10 +133,10 @@ func TestCallBehaviorAnAgentsBackgroundSoundIsHeardAtItsLevelAndAnotherAgentsIsN
 		t.Fatalf("the background should be heard at its own level in silence, peak %d", p)
 	}
 	if p := withSoftened.maxPeak(); p < 1500 || p > 3000 {
-		t.Fatalf("a flow's gain_db of -20 should lower it to about 2000, peak %d", p)
+		t.Fatalf("an agent's gain_db of -20 should lower it to about 2000, peak %d", p)
 	}
 	if p := none.maxPeak(); p != 0 {
-		t.Fatalf("a flow with no background must carry none, peak %d", p)
+		t.Fatalf("an agent with no background must carry none, peak %d", p)
 	}
 }
 
@@ -154,7 +154,7 @@ func TestCallBehaviorTheServerDefaultBackgroundPlaysUnlessAnAgentChoosesAnother(
 		t.Fatalf("default sound should play at its own level, peak %d", p)
 	}
 	if p := own.maxPeak(); p < 15000 {
-		t.Fatalf("the flow's own sound should replace the default, peak %d", p)
+		t.Fatalf("the agent's own sound should replace the default, peak %d", p)
 	}
 }
 
@@ -192,7 +192,7 @@ func TestCallBehaviorThePublishAPIRefusesASoundTheServerDoesNotOfferOrAllow(t *t
 	}
 }
 
-// The route sound is one of the server's cues: publish says which, and the editor reads the list from /server-config.
+// The handoff sound is one of the server's cues: publish says which, and the editor reads the list from /server-config.
 func TestCallBehaviorThePublishAPIRefusesAnUnknownHandoffCue(t *testing.T) {
 	cue := constWAV(t, "chime", 12000)
 	r := newAgentRigE2E(t, newProbe(), func(c *Config) {
@@ -217,10 +217,10 @@ func TestCallBehaviorThePublishAPIRefusesAnUnknownHandoffCue(t *testing.T) {
 	}
 	code, body := put(`{"name":"chimes"}`)
 	if code != http.StatusBadRequest || !strings.Contains(body, "invalid_request") || !strings.Contains(body, `handoff_cue.name \"chimes\" is not a sound on this server (available: chime, ding)`) {
-		t.Fatalf("an unknown route sound: %d %s", code, body)
+		t.Fatalf("an unknown handoff sound: %d %s", code, body)
 	}
 	if code, body := put(`{"name":"ding"}`); code != http.StatusOK {
-		t.Fatalf("a known route sound: %d %s", code, body)
+		t.Fatalf("a known handoff sound: %d %s", code, body)
 	}
 }
 
@@ -272,7 +272,7 @@ func TestCallBehaviorIdleLinesAreInTheCallsTurns(t *testing.T) {
 	}
 }
 
-// A flow can ask for the Smart Turn model only on a server that loaded it: the echo rig has none, so publish
+// An agent can ask for the Smart Turn model only on a server that loaded it: the echo rig has none, so publish
 // says why (and names the key that loads it).
 func TestCallBehaviorPublishRefusesSmartEndOfTurnWithoutTheModel(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe())
@@ -288,7 +288,7 @@ func TestCallBehaviorPublishRefusesSmartEndOfTurnWithoutTheModel(t *testing.T) {
 	}
 }
 
-// With the model loaded (for_agents) a smart flow is ready, and a call on it connects and replies. It does not
+// With the model loaded (for_agents) a smart agent is ready, and a call on it connects and replies. It does not
 // prove the smart chain runs (a typed turn bypasses the detector): TestTurnForCall and the build test do.
 func TestCallBehaviorASmartAgentConnectsAndRepliesWhenTheModelIsLoaded(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe(), func(c *Config) { c.Turn.Analyzer.ForAgents = true })
@@ -296,14 +296,14 @@ func TestCallBehaviorASmartAgentConnectsAndRepliesWhenTheModelIsLoaded(t *testin
 	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "smart", Config: json.RawMessage(
 		`{"stt":{"provider":"echo","model":"m"},"llm":{"provider":"echo","model":"m"},"tts":{"provider":"echo","voice":"v"},"turn":{"end_of_turn":"smart","smart_hold_ms":1500}}`)})
 	if err != nil || f.Readiness.State != agent.ReadinessReady {
-		t.Fatalf("a smart flow on a server with the model: %+v err %v", f.Readiness, err)
+		t.Fatalf("a smart agent on a server with the model: %+v err %v", f.Readiness, err)
 	}
 	c := r.dial(f.ID)
 	c.say("hello")
 	eventually(t, "a reply", func() bool { return c.replyCount() > 0 })
 }
 
-// A flow can shorten the call limit, never lengthen it: the publish API refuses a limit above the server's.
+// An agent can shorten the call limit, never lengthen it: the publish API refuses a limit above the server's.
 func TestCallBehaviorThePublishAPIRefusesALongerCallLimit(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe(), func(c *Config) { c.Limits.MaxCallDuration = 10 * time.Minute })
 	post := func(name string, seconds int) (int, string) {
@@ -323,8 +323,8 @@ func TestCallBehaviorThePublishAPIRefusesALongerCallLimit(t *testing.T) {
 	}
 }
 
-// The server lowered its limit after the flow was published: the call still ends at the server's limit,
-// the flow's longer one does not extend it.
+// The server lowered its limit after the agent was published: the call still ends at the server's limit,
+// the agent's longer one does not extend it.
 func TestCallBehaviorAnAgentLimitLongerThanTheServersDoesNotExtendIt(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe(), serverIdle(0, ""))
 	id := behaviorAgent(t, r, "Plain", "plainvoice", `,"max_call_duration_seconds":1500`)

@@ -83,7 +83,7 @@ func (c *flakyConn) Recv(ctx context.Context) (sttunit.Result, error) {
 
 func (c *flakyConn) Close() {}
 
-// sttSendRig is a flow rig whose echo STT is a flaky provider chosen by the flow's STT model, with the
+// sttSendRig is an agent rig whose echo STT is a flaky provider chosen by the agent's STT model, with the
 // real VAD.
 func sttSendRig(t *testing.T, byModel map[string]*flakySTT, mods ...func(*Config)) *agentRigE2E {
 	t.Helper()
@@ -100,7 +100,7 @@ func sttSendAgent(t *testing.T, r *agentRigE2E, stt string) string {
 	cfg := `{"stt":{"provider":"echo",` + stt + `},"llm":{"provider":"echo","model":"m","system_prompt":"STTSend"},"tts":{"provider":"echo","voice":"sttsendvoice"}}`
 	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "sttsend", Config: []byte(cfg)})
 	if err != nil || f.Readiness.State != agent.ReadinessReady {
-		t.Fatalf("flow: %+v err=%v", f.Readiness, err)
+		t.Fatalf("agent: %+v err=%v", f.Readiness, err)
 	}
 	return f.ID
 }

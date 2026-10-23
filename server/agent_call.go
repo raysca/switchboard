@@ -15,7 +15,7 @@ import (
 	"govoice/server/runtime"
 )
 
-// StepSpec is one flow step's LLM and TTS stages, resolved with secrets read
+// StepSpec is one agent step's LLM and TTS stages, resolved with secrets read
 // from the environment when the step is activated.
 type StepSpec struct {
 	Name         string
@@ -23,7 +23,7 @@ type StepSpec struct {
 	LLMFallbacks []StageSpec
 	TTS          StageSpec
 	TTSFallbacks []StageSpec
-	// Greeting is what the step says, word for word, when a route hands the call to it ("" = the model greets).
+	// Greeting is what the step says, word for word, when a handoff hands the call to it ("" = the model greets).
 	Greeting string
 }
 
@@ -39,8 +39,8 @@ func (n *StepSpec) wipe() {
 	}
 }
 
-// CallFlow is what a call needs to move between steps. Commit is set by the
-// pipeline builder once the route exists; transfer tools call it.
+// CallAgent is what a call needs to move between steps. Commit is set by the
+// pipeline builder once the handoff exists; transfer tools call it.
 type CallAgent struct {
 	Start   string
 	Resolve func(ctx context.Context, stepID string) (StepSpec, error)
@@ -55,7 +55,7 @@ type CallAgent struct {
 }
 
 const (
-	// EndReasonFlow is the hang-up reason, trace attribute and RTVI error code when
+	// EndReasonAgent is the hang-up reason, trace attribute and RTVI error code when
 	// a step's end_call tool ends the call.
 	EndReasonAgent = "ended_by_agent"
 	endCallName    = "end_call"
@@ -67,7 +67,7 @@ const (
 var errCallEnding = errors.New("call is already ending")
 
 // callEnder is how the end_call tool hangs up. End is set by the pipeline builder
-// (the idle controller ends the call); a call whose flow has no end_call step has none.
+// (the idle controller ends the call); a call whose agent has no end_call step has none.
 type callEnder struct {
 	End func(stepID string) error
 }
@@ -101,8 +101,8 @@ func anyEndCall(g agent.Definition) bool {
 	return false
 }
 
-// transferTools are the transfer tools of one step: one per outgoing route, the
-// route condition being the model's cue to call it.
+// transferTools are the transfer tools of one step: one per outgoing handoff, the
+// handoff condition being the model's cue to call it.
 func transferTools(g agent.Definition, stepID string) []core.ToolDefinition {
 	handoffs := g.HandoffsFrom(stepID)
 	defs := make([]core.ToolDefinition, 0, len(handoffs))
@@ -223,7 +223,7 @@ func transferGreeting(stepName, note string) string {
 // greeting: context only, no reply is requested.
 func transferNote(stepName, note string) string { return transferPrefix(stepName, note) + "]" }
 
-// saysOwnGreeting reports whether a step speaks a fixed greeting when a route lands on it. The start step's
+// saysOwnGreeting reports whether a step speaks a fixed greeting when a handoff lands on it. The start step's
 // greeting is the call opening only: a return to it gets the model's transfer greeting.
 func saysOwnGreeting(stepID, start, greeting string) bool { return greeting != "" && stepID != start }
 
@@ -254,7 +254,7 @@ func (c *CallAgent) commitWithNote(target, note string) error {
 	if c.Commit == nil {
 		return errors.New("handoff not ready")
 	}
-	// Commit only starts the route build and returns; the greeting (takeNote) runs
+	// Commit only starts the handoff build and returns; the greeting (takeNote) runs
 	// later on the trigger path, so holding commitMu here cannot deadlock with it.
 	c.commitMu.Lock()
 	defer c.commitMu.Unlock()

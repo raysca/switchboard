@@ -96,7 +96,7 @@ func loadCues(cfg *Config, rate int) (map[string]func() ws.Underlay, error) {
 	return out, nil
 }
 
-// buildOutputGain returns the pre-transport gain stage, or nil at 0 dB. A flow's output_gain_db
+// buildOutputGain returns the pre-transport gain stage, or nil at 0 dB. An agent's output_gain_db
 // (even an explicit 0) replaces the server's.
 func buildOutputGain(cfg *Config, agentAudio *agent.AudioSettings) (core.Processor, error) {
 	if cfg == nil {
@@ -151,7 +151,7 @@ func loadBackgrounds(cfg *Config, rate int) (map[string]background, error) {
 
 // buildInputFilter returns the per-call filter processor, or nil when no
 // filters are on (the pipeline is then unchanged). The server's input_filters apply to every call; a
-// flow can also turn denoise on for its own calls. Each call gets its own filter instances: they carry
+// agent can also turn denoise on for its own calls. Each call gets its own filter instances: they carry
 // per-session adaptive state.
 func buildInputFilter(cfg *Config, agentAudio *agent.AudioSettings, obs filter.Observer) (core.Processor, error) {
 	if cfg == nil {

@@ -74,7 +74,7 @@ func TestCueFastHandoffPlaysNothing(t *testing.T) {
 	c.botAudio() // the new step answers before after_ms
 	time.Sleep(60 * time.Millisecond)
 	if s, _ := p.counts(); s != 0 {
-		t.Fatal("a route faster than after_ms must stay silent")
+		t.Fatal("a handoff faster than after_ms must stay silent")
 	}
 }
 
@@ -85,7 +85,7 @@ func TestCueSlowHandoffPlaysUntilFirstAudio(t *testing.T) {
 	waitCue(t, "cue start", func() bool { s, _ := p.counts(); return s == 1 })
 	c.botAudio() // farewell tail before the flip: still not the new step
 	if _, st := p.counts(); st != 0 {
-		t.Fatal("audio before the route is active must not stop the cue")
+		t.Fatal("audio before the handoff is active must not stop the cue")
 	}
 	c.onHandoff(active())
 	c.botAudio()
@@ -121,7 +121,7 @@ func TestCueStopsOnEveryExit(t *testing.T) {
 			if reason != "barge_in" {
 				time.Sleep(60 * time.Millisecond)
 				if s, _ := p.counts(); s != 1 {
-					t.Fatalf("a finished route must not restart the cue (starts=%d)", s)
+					t.Fatalf("a finished handoff must not restart the cue (starts=%d)", s)
 				}
 			}
 		})
@@ -246,20 +246,20 @@ func TestHoldStopsWhenAHandoffStartsPreparingAndNeverStartsWhileTheHandoffCueWai
 	waitCue(t, "hold start", func() bool { s, _ := p.counts(); return s == 1 })
 	h.onHandoff(prep())
 	if ev := r.events(); ev[len(ev)-1] != "cue_stop:handoff" {
-		t.Fatalf("a route preparing must finish the hold first: %v", r.events())
+		t.Fatalf("a handoff preparing must finish the hold first: %v", r.events())
 	}
 	time.Sleep(80 * time.Millisecond)
 	if s, _ := p.counts(); s != 1 {
-		t.Fatal("the hold must not restart while a route prepares")
+		t.Fatal("the hold must not restart while a handoff prepares")
 	}
-	handoff.Store(true) // the route cue waits
+	handoff.Store(true) // the handoff cue waits
 	h.onHandoff(core.HandoffEvent{Kind: core.HandoffFailed})
 	time.Sleep(80 * time.Millisecond)
 	if s, _ := p.counts(); s != 1 {
-		t.Fatal("the hold must not start while the route cue waits")
+		t.Fatal("the hold must not start while the handoff cue waits")
 	}
 	handoff.Store(false)
-	waitCue(t, "start once the route cue is done", func() bool { s, _ := p.counts(); return s == 2 })
+	waitCue(t, "start once the handoff cue is done", func() bool { s, _ := p.counts(); return s == 2 })
 }
 
 func TestHoldStopsAtTheCapAndStaysOffUntilAllToolsReturn(t *testing.T) {

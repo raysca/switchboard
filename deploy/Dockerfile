@@ -35,7 +35,7 @@ COPY --from=ui /ui/dist/ /src/server/adminui/static/
 ENV CGO_ENABLED=1
 # xAI STT/TTS are in launch scope: the server must be built with -tags xaispeech
 # (the Makefile and CI do the same; see server/registry_xaispeech.go). Stored
-# flows that need a provider missing from the build fail startup in production.
+# agents that need a provider missing from the build fail startup in production.
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_TAGS=xaispeech

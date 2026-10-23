@@ -9,7 +9,7 @@ import (
 )
 
 // Operator control through a real call (onSessionReady wiring): a note with run starts a reply
-// on the start step, still works after the call routes to the next step, and the call is gone
+// on the start step, still works after the call handoffs to the next step, and the call is gone
 // (404) once it ends.
 func TestContextInjectionAgentE2E(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe())
@@ -36,7 +36,7 @@ func TestContextInjectionAgentE2E(t *testing.T) {
 	time.Sleep(time.Second)
 	sales := c.replies("[SALES")
 	if code := post("/run", ""); code != http.StatusAccepted {
-		t.Fatalf("run after the route: status %d", code)
+		t.Fatalf("run after the handoff: status %d", code)
 	}
 	c.waitReplies("run_llm", 1)
 	eventually(t, "the reply from the step the call moved to", func() bool { return c.replies("[SALES") > sales })

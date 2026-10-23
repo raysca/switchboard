@@ -117,7 +117,7 @@ func (c *LLMClient) pieces(history []core.Message, sampling google.Sampling) []s
 	var parts []string
 	if c.o.Label != "" {
 		parts = append(parts, c.o.Label)
-		if s := samplingLabel(sampling); s != "" { // proves the flow's sampling reached the model call
+		if s := samplingLabel(sampling); s != "" { // proves the agent's sampling reached the model call
 			parts = append(parts, s)
 		}
 	}

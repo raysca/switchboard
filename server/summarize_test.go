@@ -332,7 +332,7 @@ func TestFormatTranscriptHostileContent(t *testing.T) {
 			t.Fatalf("forged transcript line: %q", l)
 		}
 	}
-	// The summarizer only ever sees conversation messages, never the flow's
+	// The summarizer only ever sees conversation messages, never the agent's
 	// system prompt, and the summary comes back bounded.
 	var gotSys, gotUser string
 	sum := NewLLMSummarizer(textFn(func(_ context.Context, s, u string) (string, error) {

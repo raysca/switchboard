@@ -10,7 +10,7 @@ import (
 	"govoice/server/storage"
 )
 
-// toolsRig is a published flow plus an MCP server offering "echo" and "lookup".
+// toolsRig is a published agent plus an MCP server offering "echo" and "lookup".
 type toolsRig struct {
 	svc    *Service
 	agent  Agent
@@ -76,7 +76,7 @@ func TestUpdateWithoutASelectionKeepsTheCurrentOneAndItsRule(t *testing.T) {
 	if err != nil || len(got.Version.MCPTools) != 1 {
 		t.Fatalf("keep: %+v err %v", got.Version, err)
 	}
-	// A step may not list a tool the flow has not selected.
+	// A step may not list a tool the agent has not selected.
 	if _, err := r.svc.Update(ctx, r.agent.ID, UpdateRequest{Config: stepsConfig(r.server + "/lookup")}); err == nil || !strings.Contains(err.Error(), "has not selected") {
 		t.Fatalf("an unselected step tool: %v", err)
 	}

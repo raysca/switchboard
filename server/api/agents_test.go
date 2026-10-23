@@ -15,7 +15,7 @@ import (
 )
 
 func TestAgentManagementCRUDDuplicateArchiveAndV1Import(t *testing.T) {
-	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: filepath.Join(t.TempDir(), "flow-api.db")})
+	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: filepath.Join(t.TempDir(), "agent-api.db")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestAgentManagementCRUDDuplicateArchiveAndV1Import(t *testing.T) {
 }
 
 func TestAgentManagementRejectsUnknownInputAndMissingAgent(t *testing.T) {
-	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: filepath.Join(t.TempDir(), "flow-api.db")})
+	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: filepath.Join(t.TempDir(), "agent-api.db")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestAgentUpdateCarriesMCPToolsAndPublishesOneVersion(t *testing.T) {
 	}
 }
 
-// createRig is a flow API over a store with one MCP server offering one tool.
+// createRig is an agent API over a store with one MCP server offering one tool.
 type createRig struct {
 	store   *storage.Store
 	handler http.Handler
@@ -276,7 +276,7 @@ func TestDuplicateAgent_SchemaDrift_Returns400(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
 		t.Fatal(err)
 	}
-	// The server re-discovers with a changed schema after the flow was saved.
+	// The server re-discovers with a changed schema after the agent was saved.
 	if _, err := r.store.MCP().AddDiscovery(context.Background(), r.server.ID, []storage.MCPTool{{RemoteName: "lookup", SchemaJSON: []byte(`{"type":"object","properties":{"q":{"type":"string"}}}`)}}); err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +284,7 @@ func TestDuplicateAgent_SchemaDrift_Returns400(t *testing.T) {
 }
 
 func TestAgentVersionEndpointIsReadOnlyAndNumbered(t *testing.T) {
-	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: filepath.Join(t.TempDir(), "flow-versions.db")})
+	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: filepath.Join(t.TempDir(), "agent-versions.db")})
 	if err != nil {
 		t.Fatal(err)
 	}

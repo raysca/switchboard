@@ -56,8 +56,8 @@ test: build ## build|Vet (with and without xaispeech) + race-test every module w
 	echo "=== All modules passed ==="
 	@$(MAKE) --no-print-directory test-e2e-go
 
-# End to end in Go with the echo provider: a real server, stored flows and a WebSocket client
-# (routes, failed step build, caller speaking mid-route, hang-up mid-route, republish, MCP tool calls,
+# End to end in Go with the echo provider: a real server, stored agents and a WebSocket client
+# (handoffs, failed step build, caller speaking mid-handoff, hang-up mid-handoff, republish, MCP tool calls,
 # no secret leaving the server). `make test` runs it; `make e2e-echo` runs it with the browser suite.
 test-e2e-go: ## free|Go end-to-end tests (real server + WebSocket) against the echo provider (about 45 s)
 	cd server && go test -race -count=1 -tags "$(GOTAGS)" -run 'AgentE2E|NoSecretLeavesTheServer|MCPCall|ContextInjection|CallBehavior|CallRecords|TheOrphanSweep|ATypedTurnLeaves' .
@@ -184,7 +184,7 @@ e2e-oneport: ui-embed ## free|Playwright e2e of the one-port server (embedded UI
 
 # Local development (scripts/dev.sh): `make dev` runs the server and admin UI with
 # generated secrets and a local SQLite store in .govoice-dev/, seeded with a
-# "Dev Assistant" flow from examples/.env. Examples call that flow.
+# "Dev Assistant" agent from examples/.env. Examples call that agent.
 mcp-test: ## dev|Run the MCP test servers on 127.0.0.1:18765 (/ok /open /fail/* /slow) and a black hole on :18766
 	go run ./cmd/mcptest -addr 127.0.0.1:18765 -blackhole-addr 127.0.0.1:18766
 

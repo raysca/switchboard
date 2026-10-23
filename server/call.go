@@ -16,27 +16,27 @@ import (
 	"govoice/server/storage"
 )
 
-var errAgentsUnavailable = errors.New("flow storage is not enabled")
+var errAgentsUnavailable = errors.New("agent storage is not enabled")
 
-// releaseTimeout bounds ending a call's flow session (MCP drain + DB write).
+// releaseTimeout bounds ending a call's agent session (MCP drain + DB write).
 const releaseTimeout = 5 * time.Second
 
-// resolveTimeout bounds pinning a flow at connect (MCP capture + DB writes).
+// resolveTimeout bounds pinning an agent at connect (MCP capture + DB writes).
 const resolveTimeout = 10 * time.Second
 
-// resolveCall pins the token's flow for a new call: it captures the flow's
+// resolveCall pins the token's agent for a new call: it captures the agent's
 // MCP tools, persists the session row, and resolves each stage's provider and
 // secret. release ends the persisted session and must run exactly once.
 // The session row takes the token's single-use jti as its id, so a client that
 // holds the token can find its session (the admin voice test links to it).
-// resolveCall pins the token's flow, records the session (caller is the token's principal) and returns the
+// resolveCall pins the token's agent, records the session (caller is the token's principal) and returns the
 // call's spec and the function that ends it. ending is the call's end-reason holder: release records what it holds.
 func (s *Server) resolveCall(ctx context.Context, agentID, tokenID, caller string, ending *endReason) (CallSpec, func(), error) {
 	if s.agents == nil || s.mcpService == nil || s.resolver == nil || s.store == nil {
 		return CallSpec{}, nil, errAgentsUnavailable
 	}
 	if agentID == "" {
-		return CallSpec{}, nil, errors.New("token does not name a flow")
+		return CallSpec{}, nil, errors.New("token does not name an agent")
 	}
 	sessionID := tokenID
 	if !storage.IsID(sessionID) { // legacy tokens carry a random UUIDv4 or no jti
@@ -45,7 +45,7 @@ func (s *Server) resolveCall(ctx context.Context, agentID, tokenID, caller strin
 	var rs *runtime.Session
 	var err error
 	if draft, found := s.drafts.take(sessionID); found {
-		// The flow may have been archived, disabled or left unready since the token was issued.
+		// The agent may have been archived, disabled or left unready since the token was issued.
 		if _, err = s.agents.ResolveCurrent(ctx, agentID); err == nil {
 			rs, err = runtime.StartSnapshotSession(ctx, s.agents, s.mcpService, draft.snapshot, sessionID, caller)
 		}
@@ -53,7 +53,7 @@ func (s *Server) resolveCall(ctx context.Context, agentID, tokenID, caller strin
 		rs, err = runtime.StartSession(ctx, s.agents, s.mcpService, agentID, sessionID, caller)
 	}
 	if err != nil {
-		return CallSpec{}, nil, fmt.Errorf("start flow session: %w", err)
+		return CallSpec{}, nil, fmt.Errorf("start agent session: %w", err)
 	}
 	rs.EndReason = ending.get
 	lat := newTurnLatencies()
@@ -71,7 +71,7 @@ func (s *Server) resolveCall(ctx context.Context, agentID, tokenID, caller strin
 			cancelHistory()
 		}
 		if err := rs.Close(ctx); err != nil {
-			s.logger.Warn("flow session did not end cleanly", "session", rs.Pin.ID, "err", s.redactor.Redact(err.Error()))
+			s.logger.Warn("agent session did not end cleanly", "session", rs.Pin.ID, "err", s.redactor.Redact(err.Error()))
 		}
 	}
 	handedBack := false
@@ -259,7 +259,7 @@ func (r *turnRecorder) recordTurnLocked(turn string, at time.Time, reply string,
 }
 
 // toolRecord starts a call's row: an MCP tool by its server, remote name and
-// schema hash, a built-in tool (a route's transfer, end_call) by its own name.
+// schema hash, a built-in tool (a handoff's transfer, end_call) by its own name.
 // It reads cancelled until a result settles it.
 func (r *turnRecorder) toolRecord(name string, at time.Time) storage.ToolCallRecord {
 	rec := storage.ToolCallRecord{ID: storage.NewID(), RemoteName: name, StartedAt: at, Status: string(core.ToolCancelled)}
@@ -357,7 +357,7 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 	entry := g.StartStep()
 	cfg := entry.Config
 	if missing := cfg.Missing(); len(missing) > 0 {
-		return CallSpec{}, fmt.Errorf("flow config incomplete: %v", missing)
+		return CallSpec{}, fmt.Errorf("agent config incomplete: %v", missing)
 	}
 	secrets, err := s.resolveStageSecrets(ctx, cfg, "stt", "llm", "tts")
 	if err != nil {
@@ -365,7 +365,7 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 	}
 	maxMessages, maxTokens := cfg.Context.Limits()
 	maxParallel := s.maxParallel(cfg)
-	// A one-step flow is a plain flow: every captured tool, no routes.
+	// A one-step agent is a plain agent: every captured tool, no handoffs.
 	tools, exec := rs.Definitions, rs.Executor
 	var graph *CallAgent
 	var ender *callEnder
@@ -465,7 +465,7 @@ func (s *Server) resolveStageSecrets(ctx context.Context, cfg agent.Config, name
 		}
 		secret, err := s.resolver.Secret(stage.Provider, stage.Name)
 		if err != nil {
-			return nil, fmt.Errorf("flow not callable: %s credential: %w", stage.Name, err)
+			return nil, fmt.Errorf("agent not callable: %s credential: %w", stage.Name, err)
 		}
 		secrets[stage.Name] = secret
 	}
@@ -474,7 +474,7 @@ func (s *Server) resolveStageSecrets(ctx context.Context, cfg agent.Config, name
 }
 
 // stepToolset is the tools and executor of one step: its listed MCP tools plus
-// a transfer tool per outgoing route.
+// a transfer tool per outgoing handoff.
 func (s *Server) stepToolset(rs *runtime.Session, g agent.Definition, n agent.Step, cg *CallAgent, ender *callEnder) ([]core.ToolDefinition, core.ToolExecutor) {
 	mcp := stepDefinitions(rs.Definitions, n.Tools)
 	allowed := make(map[string]bool, len(mcp))
@@ -562,7 +562,7 @@ func (c *CallSpec) wipeSecrets() {
 	c.STT.Secret, c.LLM.Secret, c.TTS.Secret = nil, nil, nil
 }
 
-// callLimit is the shorter of the server's limit and the flow's (0 = the flow sets none).
+// callLimit is the shorter of the server's limit and the agent's (0 = the agent sets none).
 func callLimit(server time.Duration, agentSeconds int) time.Duration {
 	if agentSeconds > 0 {
 		return min(server, time.Duration(agentSeconds)*time.Second)

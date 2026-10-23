@@ -170,7 +170,7 @@ func TestRouterUserTurnFlipsOnce(t *testing.T) {
 	_ = env.trig.ProcessFrame(context.Background(), &UserStoppedSpeakingFrame{}, Downstream, nopEmitter{})
 	eventually(t, "trigger dropped the stale result", func() bool { return env.trig.DroppedCount.Load() == 1 })
 	if env.sess.reenters.Load() != 0 {
-		t.Fatal("a flipped route must not start an extra model turn")
+		t.Fatal("a flipped handoff must not start an extra model turn")
 	}
 }
 
@@ -180,7 +180,7 @@ func TestRouterAsyncMessageDoesNotFlip(t *testing.T) {
 	env.waitReady(t, h)
 	_ = env.llm.ProcessFrame(context.Background(), &UserMessageFrame{Turn: "async-1"}, Downstream, nopEmitter{})
 	if activeStep(h) != "front" {
-		t.Fatal("an async-tool trigger turn must not flip the route")
+		t.Fatal("an async-tool trigger turn must not flip the handoff")
 	}
 }
 
@@ -281,7 +281,7 @@ func TestRouterBuildFinishingAfterCloseClosesItsStages(t *testing.T) {
 		return late.LLM.(*probeStage).closed.Load() == 1 && late.TTS.(*probeStage).closed.Load() == 1
 	})
 	if activeStep(h) != "front" {
-		t.Fatal("a closed route must not flip")
+		t.Fatal("a closed handoff must not flip")
 	}
 }
 

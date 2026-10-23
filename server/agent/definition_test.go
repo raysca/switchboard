@@ -40,7 +40,7 @@ func TestDecodeAgentTwoSteps(t *testing.T) {
 		t.Fatalf("tool name = %q", got)
 	}
 	if len(g.HandoffsFrom("front")) != 1 || len(g.HandoffsFrom("sales")) != 0 {
-		t.Fatal("RoutesFrom wrong")
+		t.Fatal("HandoffsFrom wrong")
 	}
 }
 
@@ -165,7 +165,7 @@ func TestDecodeRejectsACallLimitOnALaterStep(t *testing.T) {
 	}
 }
 
-// twoStepCfg is a routed flow whose second step carries the given extra config members.
+// twoStepCfg is a multi-step agent whose second step carries the given extra config members.
 func twoStepCfg(salesExtra string) string {
 	sales := `{"id":"sales","name":"Sales","config":{"llm":{"provider":"openai","model":"m","system_prompt":"s"},"tts":{"provider":"cartesia","voice":"v"` + salesExtra + `}}}`
 	return `{"start":"front","steps":[{"id":"front","name":"Front","config":` + flatCfg + `},` + sales + `],` +
@@ -184,7 +184,7 @@ func TestStoredAgentWithCallWideSettingsOnAStepStillDecodes(t *testing.T) {
 	}
 }
 
-// withSalesAudio is the routed flow whose second step carries the given audio object.
+// withSalesAudio is the multi-step agent whose second step carries the given audio object.
 func withSalesAudio(audio string) json.RawMessage {
 	const llm = `"llm":{"provider":"openai","model":"m","system_prompt":"s"}`
 	return json.RawMessage(strings.Replace(twoStepCfg(""), llm, llm+`,"audio":`+audio, 1))

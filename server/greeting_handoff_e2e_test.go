@@ -13,7 +13,7 @@ import (
 
 const salesGreeting = "Sales here, what are you looking for?"
 
-// handoffGreetingConfig is the front/sales echo flow with a route each way and a greeting on either step.
+// handoffGreetingConfig is the front/sales echo agent with a handoff each way and a greeting on either step.
 func handoffGreetingConfig(frontGreeting, salesGreeting, salesVoice string) string {
 	g := func(s string) string {
 		if s == "" {
@@ -31,9 +31,9 @@ func handoffGreetingConfig(frontGreeting, salesGreeting, salesVoice string) stri
 
 func handoffGreetingAgent(t *testing.T, r *agentRigE2E, frontGreeting, salesGreeting, salesVoice string) string {
 	t.Helper()
-	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Routed greeting", Config: json.RawMessage(handoffGreetingConfig(frontGreeting, salesGreeting, salesVoice))})
+	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Handoff greeting", Config: json.RawMessage(handoffGreetingConfig(frontGreeting, salesGreeting, salesVoice))})
 	if err != nil || f.Readiness.State != agent.ReadinessReady {
-		t.Fatalf("flow: %+v err %v", f.Readiness, err)
+		t.Fatalf("agent: %+v err %v", f.Readiness, err)
 	}
 	r.agentID = f.ID
 	return f.ID
@@ -96,7 +96,7 @@ func TestAGreetingOnAStepThatCannotBeBuiltIsNeverSpokenAndTheCallGoesOn(t *testi
 
 func TestADraftCallPlaysTheDraftsHandoffGreeting(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe())
-	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Draft routed", Config: json.RawMessage(handoffGreetingConfig("", "", "salesvoice"))})
+	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Draft handoff", Config: json.RawMessage(handoffGreetingConfig("", "", "salesvoice"))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestADraftCallPlaysTheDraftsHandoffGreeting(t *testing.T) {
 	c.waitReplies(salesGreeting, 1)
 }
 
-// greetStep is the route greeting's decision, tested without a call.
+// greetStep is the handoff greeting's decision, tested without a call.
 type greetLog struct {
 	messages []string
 	spoken   []string

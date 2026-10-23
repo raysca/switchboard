@@ -125,7 +125,7 @@ func TestMCPDisableDeleteConflictAndConfirmedDetachRoutes(t *testing.T) {
 	}
 	updated, err := agentService.Get(context.Background(), created.ID)
 	if err != nil || len(updated.Version.MCPTools) != 0 || updated.Version.Number != 3 {
-		t.Fatalf("detached flow=%+v err=%v", updated, err)
+		t.Fatalf("detached agent=%+v err=%v", updated, err)
 	}
 }
 

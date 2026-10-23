@@ -184,7 +184,7 @@ func voiceTokenLifetime(cfg *Config) time.Duration {
 	return lifetime.Truncate(time.Second)
 }
 
-// flowCallable reports whether a flow in this readiness state may run calls.
+// agentCallable reports whether an agent in this readiness state may run calls.
 func agentCallable(state string) bool {
 	return state == agent.ReadinessReady || state == agent.ReadinessWithToolWarning
 }

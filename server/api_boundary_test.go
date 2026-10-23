@@ -338,7 +338,7 @@ func TestAPIConfigSecretRedactionAndJSONErrors(t *testing.T) {
 	}
 }
 
-// Voice tokens name a stored flow; unknown, unready and legacy requests are refused.
+// Voice tokens name a stored agent; unknown, unready and legacy requests are refused.
 func TestAPITokenRequiresReadyStoredAgent(t *testing.T) {
 	s := apiTestServer(t)
 	key := "management-test-key-32-bytes-long-and-separate"
@@ -346,21 +346,21 @@ func TestAPITokenRequiresReadyStoredAgent(t *testing.T) {
 		return apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", key, body)
 	}
 	if w := issue(`{"principal":"alice","agent_id":"x"}`); w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("without flow store: %d %s", w.Code, w.Body)
+		t.Fatalf("without agent store: %d %s", w.Code, w.Body)
 	}
 	agentID := readyTestAgent(t, s)
 	if w := issue(`{"principal":"alice","pipeline":"default"}`); w.Code != http.StatusBadRequest {
 		t.Fatalf("legacy pipeline body: %d %s", w.Code, w.Body)
 	}
 	if w := issue(`{"principal":"alice","agent_id":"missing"}`); w.Code != http.StatusNotFound {
-		t.Fatalf("unknown flow: %d %s", w.Code, w.Body)
+		t.Fatalf("unknown agent: %d %s", w.Code, w.Body)
 	}
 	disabled := false
 	if _, err := s.agents.Update(t.Context(), agentID, agent.UpdateRequest{Enabled: &disabled}); err != nil {
 		t.Fatal(err)
 	}
 	if w := issue(`{"principal":"alice","agent_id":"` + agentID + `"}`); w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "agent_not_ready") {
-		t.Fatalf("disabled flow: %d %s", w.Code, w.Body)
+		t.Fatalf("disabled agent: %d %s", w.Code, w.Body)
 	}
 	enabled := true
 	if _, err := s.agents.Update(t.Context(), agentID, agent.UpdateRequest{Enabled: &enabled}); err != nil {
@@ -368,7 +368,7 @@ func TestAPITokenRequiresReadyStoredAgent(t *testing.T) {
 	}
 	w := issue(`{"principal":"alice","agent_id":"` + agentID + `"}`)
 	if w.Code != http.StatusCreated {
-		t.Fatalf("ready flow: %d %s", w.Code, w.Body)
+		t.Fatalf("ready agent: %d %s", w.Code, w.Body)
 	}
 	var resp struct {
 		Data struct{ Token string } `json:"data"`
@@ -376,7 +376,7 @@ func TestAPITokenRequiresReadyStoredAgent(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	claims, err := s.validator.ValidateAndConsume(resp.Data.Token)
 	if err != nil || claims.AgentID != agentID {
-		t.Fatalf("token claims flow=%q err=%v", claims.AgentID, err)
+		t.Fatalf("token claims agent=%q err=%v", claims.AgentID, err)
 	}
 }
 
@@ -450,7 +450,7 @@ func TestZeroMaxLifetimeAgreesBetweenMintAndValidator(t *testing.T) {
 }
 
 // The pre-agent collection path is gone: no alias.
-func TestAPIFlowsPathIsGone(t *testing.T) {
+func TestAPIOldCollectionPathIsGone(t *testing.T) {
 	s := apiTestServer(t)
 	key := "management-test-key-32-bytes-long-and-separate"
 	for _, p := range []string{"/api/v1/" + "flows", "/api/v1/" + "flows/abc"} {

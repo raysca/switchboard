@@ -499,7 +499,7 @@ func TestSTTP99Resolution(t *testing.T) {
 		t.Fatalf("server override: %v", got)
 	}
 	if got := cfg.sttP99("google", 1200); got != 1200*time.Millisecond {
-		t.Fatalf("flow override: %v", got)
+		t.Fatalf("agent override: %v", got)
 	}
 	if got := cfg.sttP99("someone-new", 0); got != time.Second {
 		t.Fatalf("unknown provider: %v", got)
@@ -513,7 +513,7 @@ func TestVADStopResolution(t *testing.T) {
 		t.Fatalf("server: %v", got)
 	}
 	if got := cfg.vadStop(300); got != 320*time.Millisecond {
-		t.Fatalf("flow, rounded to 32 ms chunks: %v", got)
+		t.Fatalf("agent, rounded to 32 ms chunks: %v", got)
 	}
 }
 

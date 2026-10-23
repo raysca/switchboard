@@ -22,8 +22,8 @@ type AgentService interface {
 	VersionByNumber(context.Context, string, int) (agent.Version, error)
 }
 
-// NewFlowsHandler constructs the authenticated management route handler for
-// persistent flows. Mount it under /api/v1/ on the private admin listener.
+// NewAgentHandler constructs the authenticated management route handler for
+// persistent agents. Mount it under /api/v1/ on the private admin listener.
 func NewAgentsHandler(service AgentService) http.Handler {
 	return agentsHandler{service: service}
 }

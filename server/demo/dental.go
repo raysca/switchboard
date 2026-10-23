@@ -1,6 +1,6 @@
 // Package demo installs the Smile Dental front-desk demo: the scheduling MCP server and a
-// three-step flow (front desk -> new patient | returning patient) on three provider stacks.
-// Installing is idempotent: it adds what is missing and replaces a flow left pointing at a gone MCP server.
+// three-step agent (front desk -> new patient | returning patient) on three provider stacks.
+// Installing is idempotent: it adds what is missing and replaces an agent left pointing at a gone MCP server.
 package demo
 
 import (
@@ -23,7 +23,7 @@ const (
 	AuthEnv = "MCP_TOKEN_DENTAL"
 )
 
-// Servers and Flows are what the installer needs of the MCP and flow services.
+// Servers and Agents are what the installer needs of the MCP and agent services.
 type Servers interface {
 	List(ctx context.Context) ([]storage.MCPServer, error)
 	Create(ctx context.Context, cfg mcp.ServerConfig) (storage.MCPServer, error)
@@ -45,7 +45,7 @@ type Result struct {
 	AgentCreated bool   `json:"agent_created"`
 }
 
-// InstallDental adds the MCP server (endpoint is its /mcp URL) and the flow unless they exist.
+// InstallDental adds the MCP server (endpoint is its /mcp URL) and the agent unless they exist.
 func InstallDental(ctx context.Context, servers Servers, agents Agents, endpoint string) (Result, error) {
 	var res Result
 	endpoint, err := normaliseEndpoint(endpoint)
@@ -115,7 +115,7 @@ func InstallDental(ctx context.Context, servers Servers, agents Agents, endpoint
 	if err != nil {
 		return res, err
 	}
-	created, err := agents.Create(ctx, agent.CreateRequest{Name: AgentName, Description: "Front desk takes the name, then hands new and returning patients to the right agent.", Config: cfg, MCPTools: selections})
+	created, err := agents.Create(ctx, agent.CreateRequest{Name: AgentName, Description: "Front desk takes the name, then hands new and returning patients to the right step.", Config: cfg, MCPTools: selections})
 	if err != nil {
 		return res, fmt.Errorf("create agent: %w", err)
 	}
@@ -123,7 +123,7 @@ func InstallDental(ctx context.Context, servers Servers, agents Agents, endpoint
 	return res, nil
 }
 
-// FindFlow returns the live dental flow, or the zero Flow when it is not installed.
+// FindAgent returns the live dental agent, or the zero Agent when it is not installed.
 func FindAgent(ctx context.Context, agents Agents) (agent.Agent, error) {
 	const page = 100 // the store's maximum page size
 	for offset := 0; ; offset += page {
@@ -152,8 +152,8 @@ func normaliseEndpoint(raw string) (string, error) {
 	return u.String(), nil
 }
 
-// pointsAt reports whether the flow selects any tool of serverID. Extra tools an admin
-// added from other servers do not make it stale. A flow without version detail cannot be
+// pointsAt reports whether the agent selects any tool of serverID. Extra tools an admin
+// added from other servers do not make it stale. An agent without version detail cannot be
 // judged and is left alone.
 func pointsAt(f agent.Agent, serverID string) bool {
 	if f.Version == nil {

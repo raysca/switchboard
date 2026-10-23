@@ -195,10 +195,10 @@ func TestRedactionEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.SetTracer(exp.Session("flow", "v1"), exp.Policy()); err != nil {
+	if err := sess.SetTracer(exp.Session("agent", "v1"), exp.Policy()); err != nil {
 		t.Fatal(err)
 	}
-	stopRec := s.attachRecording(call, "flow", 1, &ws.Connection{}, sess)
+	stopRec := s.attachRecording(call, "agent", 1, &ws.Connection{}, sess)
 	if stopRec == nil {
 		t.Fatal("recording not attached")
 	}

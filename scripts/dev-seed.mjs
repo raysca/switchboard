@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// Seeds a running development server with a ready "Dev Assistant" flow and a two-step
-// "Dealership desk" flow for demos, built from the providers the server detected in its
+// Seeds a running development server with a ready "Dev Assistant" agent and a two-step
+// "Dealership desk" agent for demos, built from the providers the server detected in its
 // environment (GET /api/v1/providers): the first provider that can run each stage, on its
-// catalog defaults. Idempotent: existing flows of those names are reused. Prints only the
+// catalog defaults. Idempotent: existing agents of those names are reused. Prints only the
 // Dev Assistant id on stdout. With MCPTEST_URL set it also registers the test MCP servers.
 //
 // Needs GOVOICE_ADMIN_URL and GOVOICE_MANAGEMENT_API_KEY.
-const FLOW_NAME = "Dev Assistant";
+const AGENT_NAME = "Dev Assistant";
 const admin = process.env.GOVOICE_ADMIN_URL;
 const key = process.env.GOVOICE_MANAGEMENT_API_KEY;
 const log = (msg) => console.error(`[seed] ${msg}`);
@@ -22,9 +22,9 @@ async function api(method, route, body) {
   return json.data;
 }
 
-// Archived (deleted in the UI) flows are still listed; never reuse one.
-const flows = (await api("GET", "/agents?limit=100")).filter((a) => !a.archived);
-const find = (name) => flows.find((a) => a.name === name);
+// Archived (deleted in the UI) agents are still listed; never reuse one.
+const agents = (await api("GET", "/agents?limit=100")).filter((a) => !a.archived);
+const find = (name) => agents.find((a) => a.name === name);
 
 // The first detected provider for each stage, on its catalog defaults; null (logged) when a stage has none.
 async function stageDefaults() {
@@ -50,22 +50,22 @@ async function stageDefaults() {
 let stages;
 const defaults = async () => (stages ??= await stageDefaults());
 
-// "Dev Assistant": one flow, the target of the examples.
-let assistant = find(FLOW_NAME);
+// "Dev Assistant": one agent, the target of the examples.
+let assistant = find(AGENT_NAME);
 if (assistant) {
-  log(`using existing flow "${FLOW_NAME}"`);
+  log(`using existing agent "${AGENT_NAME}"`);
 } else {
   const base = await defaults();
   if (!base) process.exit(0);
   const config = { ...base, llm: { ...base.llm, system_prompt: "You are a concise, friendly voice assistant. Answer in one or two short sentences." } };
-  assistant = await api("POST", "/agents", { name: FLOW_NAME, description: "Created by make dev", config });
-  log(`created flow "${FLOW_NAME}" (${["stt", "llm", "tts"].map((k) => config[k].provider).join(" / ")})`);
+  assistant = await api("POST", "/agents", { name: AGENT_NAME, description: "Created by make dev", config });
+  log(`created agent "${AGENT_NAME}" (${["stt", "llm", "tts"].map((k) => config[k].provider).join(" / ")})`);
 }
 
-// "Dealership desk": a two-step flow for demos. The front desk hands buyers to sales.
+// "Dealership desk": a two-step agent for demos. The front desk hands buyers to sales.
 const DESK = "Dealership desk";
 if (find(DESK)) {
-  log(`using existing flow "${DESK}"`);
+  log(`using existing agent "${DESK}"`);
 } else {
   const base = await defaults();
   if (base) {
@@ -91,7 +91,7 @@ if (find(DESK)) {
           handoffs: [{ id: "front-sales", from: "front", to: "sales", condition: "The caller wants to buy a car or asks about prices." }],
         },
       });
-      log(`created flow "${DESK}"`);
+      log(`created agent "${DESK}"`);
     } catch (err) {
       log(`could not create "${DESK}": ${err.message}`);
     }

@@ -151,7 +151,7 @@ func TestContextInjectionWaitsForTheCaller(t *testing.T) {
 	mustInject(t, r.inj, []string{"be brief"}, true)
 	time.Sleep(700 * time.Millisecond)
 	if r.llm.turns.Load() != 0 || strings.Contains(r.spoken(), "be brief") {
-		t.Fatalf("the flow spoke over the caller: turns=%d spoken=%q", r.llm.turns.Load(), r.spoken())
+		t.Fatalf("the agent spoke over the caller: turns=%d spoken=%q", r.llm.turns.Load(), r.spoken())
 	}
 	if err := r.sess.Reenter(&core.UserStoppedSpeakingFrame{}, core.Downstream, CallUserContextIndex, 0); err != nil {
 		t.Fatal(err)

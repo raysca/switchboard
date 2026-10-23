@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       min_instances:
-        description: "Switchboard minimum instances (1 keeps it warm and ready for calls; 0 stops idle spend, flows and calls stay in Cloud SQL, and the first call after idle waits for a cold start)"
+        description: "Switchboard minimum instances (1 keeps it warm and ready for calls; 0 stops idle spend, agents and calls stay in Cloud SQL, and the first call after idle waits for a cold start)"
         default: "1"
 permissions:
   contents: read

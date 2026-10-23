@@ -17,7 +17,7 @@ type providerAvailability struct {
 	policy   serverPolicy
 }
 
-// serverPolicy is flow.Policy answered from the configuration.
+// serverPolicy is agent.Policy answered from the configuration.
 type serverPolicy struct {
 	sounds   []string
 	cues     []string
@@ -38,8 +38,8 @@ func (p serverPolicy) MaxMute() time.Duration         { return p.maxMute }
 func (p serverPolicy) SmartTurn() bool                { return p.smart }
 func (p serverPolicy) MaxCallDuration() time.Duration { return p.maxCall }
 
-// policyFrom reads the rules a flow's call settings must respect: the sound catalogue, the operator's
-// ceiling on flow backgrounds, and the DTMF window a quiet-caller wait has to exceed (idle.validate's rule).
+// policyFrom reads the rules an agent's call settings must respect: the sound catalogue, the operator's
+// ceiling on agent backgrounds, and the DTMF window a quiet-caller wait has to exceed (idle.validate's rule).
 func policyFrom(cfg *Config) serverPolicy {
 	p := serverPolicy{sounds: slices.Sorted(maps.Keys(cfg.Audio.Backgrounds)), cues: slices.Sorted(maps.Keys(cfg.Audio.Cues)), allow: cfg.Audio.AllowAgentBackground,
 		manager: cfg.Turn.Manager, maxMute: cfg.Turn.effectiveMaxMute(), smart: cfg.LoadsSmartTurn(), maxCall: cfg.Limits.MaxCallDuration}

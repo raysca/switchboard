@@ -1,4 +1,4 @@
-// Package flow contains persistent flow product behavior. Framework runtime
+// Package agent contains persistent agent product behavior. Framework runtime
 // construction is intentionally left to the server runtime layer.
 package agent
 
@@ -49,7 +49,7 @@ type UpdateRequest struct {
 	Description *string         `json:"description,omitempty"`
 	Config      json.RawMessage `json:"config,omitempty"`
 	Enabled     *bool           `json:"enabled,omitempty"`
-	// MCPTools replaces the flow's MCP tool selection in the same version as Config; nil keeps
+	// MCPTools replaces the agent's MCP tool selection in the same version as Config; nil keeps
 	// the current selection, an empty list clears it. It must be sent with Config.
 	MCPTools *[]ToolSelection `json:"mcp_tools,omitempty"`
 }
@@ -220,8 +220,8 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (Age
 	return s.Get(ctx, id)
 }
 
-// checkConfigTools verifies a flow's step tools against the tools the publish will select (selected,
-// when given) or else the tools the flow's current version has (a publish copies them forward).
+// checkConfigTools verifies an agent's step tools against the tools the publish will select (selected,
+// when given) or else the tools the agent's current version has (a publish copies them forward).
 func (s *Service) checkConfigTools(ctx context.Context, id string, config json.RawMessage, selected *[]ToolSelection) error {
 	g, err := Decode(config)
 	if err != nil {
@@ -273,8 +273,8 @@ func (s *Service) Duplicate(ctx context.Context, id, name string) (Agent, error)
 	return s.create(ctx, CreateRequest{Name: name, Description: source.Description, Config: withoutDeadStepSettings(source.Version.Config), Enabled: boolPointer(source.Enabled), MCPTools: source.Version.MCPTools, fromStored: true}, source.Version.MCPReviewRequired)
 }
 
-// ResolveDraft validates config (and selection, when given) exactly as a publish of flow id would and returns what a call on it
-// runs: the flow's current version with the draft's config and hash, and the flow's attached MCP
+// ResolveDraft validates config (and selection, when given) exactly as a publish of agent id would and returns what a call on it
+// runs: the agent's current version with the draft's config and hash, and the agent's attached MCP
 // tools. Nothing is written. A draft cannot change tool selections, only use the attached ones.
 func (s *Service) ResolveDraft(ctx context.Context, id string, config json.RawMessage, selection *[]ToolSelection) (Snapshot, Readiness, error) {
 	row, err := s.store.Agents().Current(ctx, id)
@@ -340,7 +340,7 @@ func (s *Service) ResolveCurrent(ctx context.Context, id string) (Snapshot, erro
 }
 
 // StartSession resolves and persists one immutable version reference. A later
-// flow update only moves the current pointer; this session remains pinned.
+// agent update only moves the current pointer; this session remains pinned.
 func (s *Service) StartSession(ctx context.Context, id, sessionID string) (SessionPin, error) {
 	snapshot, err := s.ResolveCurrent(ctx, id)
 	if err != nil {
@@ -408,7 +408,7 @@ func (s *Service) ResolveSession(ctx context.Context, sessionID string) (Snapsho
 	return Snapshot{AgentID: session.AgentID, Version: version, ConfigHash: session.ConfigHash, MCPTools: runtimeTools}, nil
 }
 
-// SetMCPTools publishes a new immutable flow version. Existing versions and
+// SetMCPTools publishes a new immutable agent version. Existing versions and
 // sessions keep their prior associations; every requested schema must match
 // the server's latest discovery at publication time.
 func (s *Service) SetMCPTools(ctx context.Context, id string, tools []ToolSelection) (Version, error) {
@@ -454,7 +454,7 @@ const (
 	ReadinessToolUnavailable = "tool_dependency_unavailable"
 )
 
-// flowReadiness evaluates an already-loaded version (with its MCPTools)
+// agentReadiness evaluates an already-loaded version (with its MCPTools)
 // against the current provider availability.
 func (s *Service) agentReadiness(ctx context.Context, version storage.AgentVersion, enabled, archived bool) (Readiness, []MCPToolSnapshot) {
 	if version.MCPReviewRequired {
@@ -464,7 +464,7 @@ func (s *Service) agentReadiness(ctx context.Context, version storage.AgentVersi
 	if parseErr != nil {
 		return Readiness{State: ReadinessNotReady, Reasons: []string{"invalid_config"}}, nil
 	}
-	// A stored flow can stop being callable later, e.g. when the environment
+	// A stored agent can stop being callable later, e.g. when the environment
 	// no longer carries a provider's credentials.
 	problems, missingEnv := parsed.Problems(s.av)
 	reasons := append(make([]string, 0, maxReadinessReasons), problems...)
@@ -561,13 +561,13 @@ func validateDetails(name, description string) error {
 	return nil
 }
 
-// ErrNotAttached is returned when a flow config is not attached to a usable
+// ErrNotAttached is returned when an agent config is not attached to a usable
 // set of providers.
 var ErrNotAttached = errors.New("agent must be attached to providers")
 
 // attachedConfig validates that raw names a provider and an available
 // available provider for every stage, then returns its canonical form.
-// stored: raw is a copy of a stored version (Duplicate), so a route sound the server dropped is not refused.
+// stored: raw is a copy of a stored version (Duplicate), so a handoff sound the server dropped is not refused.
 func (s *Service) attachedConfig(ctx context.Context, raw json.RawMessage, stored bool) (json.RawMessage, error) {
 	canonical, err := normalizeConfig(raw)
 	if err != nil {

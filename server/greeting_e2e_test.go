@@ -11,7 +11,7 @@ import (
 
 const greetingText = "Welcome to Smile Dental, how can I help?"
 
-// greetingConfig is the flat echo flow with a greeting.
+// greetingConfig is the flat echo agent with a greeting.
 func greetingConfig(prompt, greeting string) string {
 	g, _ := json.Marshal(greeting)
 	return `{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"` + prompt + `"},"tts":{"provider":"echo","voice":"v"},"greeting":` + string(g) + `}`
@@ -21,7 +21,7 @@ func greetingAgent(t *testing.T, r *agentRigE2E, prompt, greeting string) string
 	t.Helper()
 	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Greeter " + prompt, Config: json.RawMessage(greetingConfig(prompt, greeting))})
 	if err != nil || f.Readiness.State != agent.ReadinessReady {
-		t.Fatalf("flow: %+v err %v", f.Readiness, err)
+		t.Fatalf("agent: %+v err %v", f.Readiness, err)
 	}
 	r.agentID = f.ID
 	return f.ID
@@ -91,10 +91,10 @@ func TestADraftCallPlaysTheDraftsGreetingAndThePublishedAgentStaysSilent(t *test
 	}
 	c := r.dialToken(token)
 	c.waitReplies(greetingText, 1)
-	c2 := r.dial(f.ID) // the published flow has no greeting
+	c2 := r.dial(f.ID) // the published agent has no greeting
 	time.Sleep(1200 * time.Millisecond)
 	if n := c2.spoken(); n != 0 {
-		t.Fatalf("the published flow spoke first")
+		t.Fatalf("the published agent spoke first")
 	}
 }
 

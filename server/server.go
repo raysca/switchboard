@@ -97,7 +97,7 @@ type Server struct {
 	publicAddr   string // bound addresses after Start (useful with ":0")
 	wsServer     *ws.Server
 	backgrounds  map[string]background         // the sound catalogue (audio.backgrounds)
-	cues         map[string]func() ws.Underlay // route cue sounds by name
+	cues         map[string]func() ws.Underlay // handoff cue sounds by name
 
 	mu            sync.Mutex
 	activeCalls   map[uint64]*activeCall
@@ -297,7 +297,7 @@ func (s *Server) setProviderManagementAPI(handler http.Handler) {
 	s.providerManagementAPI = handler
 }
 
-// setFlowManagementAPI installs the flow route handler behind management
+// setAgentManagementAPI installs the agent route handler behind management
 // authentication. Configure it before serving requests.
 func (s *Server) setAgentManagementAPI(handler http.Handler) {
 	s.agentManagementAPI = handler
@@ -441,7 +441,7 @@ func (s *Server) setupRoutes() {
 	}
 
 	s.secure = sec.IsSecure
-	wsCfg.Cues = len(s.cues) > 0 || len(s.backgrounds) > 0 // the call's background is set once its flow is known
+	wsCfg.Cues = len(s.cues) > 0 || len(s.backgrounds) > 0 // the call's background is set once its agent is known
 	s.wsServer = ws.NewServer(wsCfg)
 	s.wsServer.OnSessionReady = s.onSessionReady
 	s.wsServer.OnText = s.onText
@@ -489,7 +489,7 @@ func (s *Server) setupRoutes() {
 	})
 }
 
-// onSessionReady turns a panic in call setup (flow resolution, a provider
+// onSessionReady turns a panic in call setup (agent resolution, a provider
 // constructor) into a refused call: the connection closes with an error, the
 // process lives. The panic value is redacted before it is logged.
 func (s *Server) onSessionReady(conn *ws.Connection) (session *core.Session, err error) {
@@ -504,7 +504,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (session *core.Session, err
 
 func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 	// Under s.mu so Shutdown either refuses this call or waits for it to
-	// register: a call still resolving its flow is not yet in activeCalls.
+	// register: a call still resolving its agent is not yet in activeCalls.
 	s.mu.Lock()
 	if s.shuttingDown.Load() {
 		s.mu.Unlock()
@@ -532,7 +532,7 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 		return nil, &ws.RejectError{Reason: admissionReason(err), Err: err}
 	}
 
-	// A panic from here until the call is registered (flow resolution, a provider
+	// A panic from here until the call is registered (agent resolution, a provider
 	// constructor) releases what setup acquired, then propagates to onSessionReady.
 	sessionID := s.nextCallID.Add(1)
 	var fail func(error) (*core.Session, error)
@@ -558,7 +558,7 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 	timeline.Record(TimelineEvent{Type: EventAuthenticate, Details: fmt.Sprintf("principal=%s", principal)})
 	timeline.Record(TimelineEvent{Type: EventReady, Details: "rtvi ready"})
 
-	// 2. Pin the token's stored flow and resolve providers and their environment secrets
+	// 2. Pin the token's stored agent and resolve providers and their environment secrets
 	resolveCtx, cancelResolve := context.WithTimeout(conn.Context(), resolveTimeout)
 	tokenID := ""
 	if claims := conn.Claims(); claims != nil {
@@ -573,7 +573,7 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 		s.metrics.SessionsFailedTotal.Add(1)
 		timeline.Record(TimelineEvent{Type: EventError, Details: s.redactor.Redact(err.Error())})
 		s.logSetupFailure(sessionID, agentID, "resolve", err)
-		return nil, fmt.Errorf("resolve flow: %w", err)
+		return nil, fmt.Errorf("resolve agent: %w", err)
 	}
 	call.PushToTalk = conn.PushToTalk()
 	conn.SetBackground(s.backgroundFor(call.Audio))
@@ -599,7 +599,7 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 	call.toolHold = hold
 	if cue != nil || hold != nil {
 		base := call.OnHandoff
-		// The hold finishes first when a route starts preparing: the two sounds share one player.
+		// The hold finishes first when a handoff starts preparing: the two sounds share one player.
 		call.OnHandoff = func(e core.HandoffEvent) { base(e); hold.onHandoff(e); cue.onHandoff(e) }
 	}
 	phase := "build_pipeline"
@@ -631,7 +631,7 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 		return nil, err
 	}
 
-	// 3. Build VAD processor and the flow's pipeline
+	// 3. Build VAD processor and the agent's pipeline
 	vadProc := vad.NewProcessor(s.vadExecutor, s.cfg.VADProcessorConfigForStopMS(call.VADStopMS))
 	pipe, err = s.registry.BuildCallPipeline(s.cfg, call, vadProc, conn)
 	call.wipeSecrets()
@@ -858,7 +858,7 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 	return session, nil
 }
 
-// callLimitTimer is the call's cost-guard timer: it runs for the CallSpec's limit (the flow's, already
+// callLimitTimer is the call's cost-guard timer: it runs for the CallSpec's limit (the agent's, already
 // clamped to the server's by callSpec), nil when there is none.
 func (s *Server) callLimitTimer(call CallSpec) *time.Timer {
 	if call.MaxCallDuration <= 0 {
@@ -900,13 +900,13 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 
 	if s.agents == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": "unready", "reason": "flow storage is not enabled"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "unready", "reason": "agent storage is not enabled"})
 		return
 	}
 
 	if !s.storeHealthy(r.Context()) {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": "unready", "reason": "flow store unreachable"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "unready", "reason": "agent store unreachable"})
 		return
 	}
 
@@ -918,7 +918,7 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 }
 
 // circuitReport lists the circuits of providers built into this binary, for
-// diagnosis; calls are per flow, so an open circuit only affects flows using
+// diagnosis; calls are per agent, so an open circuit only affects agents using
 // that provider. Nvidia breakers are per endpoint: "nvidia_<stage>:<endpoint>".
 func (s *Server) circuitReport() map[string]string {
 	m := s.metrics
@@ -940,7 +940,7 @@ func (s *Server) circuitReport() map[string]string {
 	return out
 }
 
-// storeHealthy pings the flow store, caching the verdict for a second so a
+// storeHealthy pings the agent store, caching the verdict for a second so a
 // probe storm does not become a query storm.
 func (s *Server) storeHealthy(ctx context.Context) bool {
 	if s.store == nil || s.store.DB() == nil {
@@ -1487,7 +1487,7 @@ func (s *Server) finishCall(sessionID uint64, principal, agentID string, session
 }
 
 // logSetupFailure logs one warning for a call that could not be set up, so
-// operators see why (bad credential, refused endpoint, incomplete flow) rather
+// operators see why (bad credential, refused endpoint, incomplete agent) rather
 // than only a rising failure counter. It names the phase, category and failing
 // provider stage but never the error text: that may echo endpoints, credential
 // fragments or provider messages, and s.redactor masks PII, not secrets. The
@@ -1498,7 +1498,7 @@ func (s *Server) logSetupFailure(session uint64, agentID, phase string, err erro
 	case errors.Is(err, context.DeadlineExceeded):
 		category = "timeout"
 	}
-	s.logger.Warn("call setup failed", slog.Uint64("session", session), slog.String("flow", agentID),
+	s.logger.Warn("call setup failed", slog.Uint64("session", session), slog.String("agent", agentID),
 		slog.String("category", category), slog.String("stage", setupStage(err.Error())))
 }
 

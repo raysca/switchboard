@@ -98,7 +98,7 @@ func TestASoundTheServerNoLongerOffersDoesNotTakeTheAgentOffline(t *testing.T) {
 		mutate()
 		got, err := svc.Get(context.Background(), f.ID)
 		if err != nil || got.Readiness.State != ReadinessReady {
-			t.Fatalf("%s: the call plays without the sound, so the flow stays ready: %+v %v", name, got.Readiness, err)
+			t.Fatalf("%s: the call plays without the sound, so the agent stays ready: %+v %v", name, got.Readiness, err)
 		}
 	}
 }
@@ -161,13 +161,13 @@ func TestPublishRefusesAHandoffSoundTheServerDoesNotHave(t *testing.T) {
 			}
 		})
 	}
-	// Readiness stays green for a stored flow whose sound the server dropped: the call runs without it (K6).
+	// Readiness stays green for a stored agent whose sound the server dropped: the call runs without it (K6).
 	g, err := Decode(handoff(`{"name":"gone"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if reasons, _ := g.Problems(&fakePolicy{cues: []string{"chime"}}); len(reasons) != 0 {
-		t.Fatalf("a dropped sound must not take the flow offline: %v", reasons)
+		t.Fatalf("a dropped sound must not take the agent offline: %v", reasons)
 	}
 }
 
@@ -201,7 +201,7 @@ func TestPublishRefusesTurnSettingsTheServerCannotHonour(t *testing.T) {
 			}
 		})
 	}
-	// Readiness stays green for a stored flow when the server changes later (K6): the call is still built.
+	// Readiness stays green for a stored agent when the server changes later (K6): the call is still built.
 	p := &fakePolicy{manager: true, maxMute: 30 * time.Second}
 	svc := testServiceWith(t, p)
 	f, err := svc.Create(context.Background(), CreateRequest{Name: "later", Config: withExtra(`"turn":{"min_words":2,"max_mute_ms":25000}`)})
@@ -233,7 +233,7 @@ func TestSmartEndOfTurnNeedsTheModel(t *testing.T) {
 	if err != nil || f.Readiness.State != ReadinessReady {
 		t.Fatalf("with the model: %+v %v", f.Readiness, err)
 	}
-	// A stored smart flow on a server that lost the model is not ready: its calls could not be built.
+	// A stored smart agent on a server that lost the model is not ready: its calls could not be built.
 	p.smart = false
 	got, err := svc.Get(context.Background(), f.ID)
 	if err != nil || got.Readiness.State != ReadinessNotReady || !contains(got.Readiness.Reasons, reasonSmartTurnUnavailable) {
@@ -274,13 +274,13 @@ func TestPublishChecksEveryStepsBackgroundSound(t *testing.T) {
 			}
 		})
 	}
-	// A sound the server no longer offers does not take a stored flow offline (the call plays without it).
+	// A sound the server no longer offers does not take a stored agent offline (the call plays without it).
 	g, err := Decode(salesAudio(`{"background":{"name":"gone"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if reasons, _ := g.Problems(&fakePolicy{sounds: []string{"office"}, allow: true}); len(reasons) != 0 {
-		t.Fatalf("a dropped sound must not take the flow offline: %v", reasons)
+		t.Fatalf("a dropped sound must not take the agent offline: %v", reasons)
 	}
 }
 
@@ -307,13 +307,13 @@ func TestPublishRefusesAHoldSoundTheServerDoesNotHave(t *testing.T) {
 			}
 		})
 	}
-	// Readiness stays green for a stored flow whose sound the server dropped: the call runs without it (K6).
+	// Readiness stays green for a stored agent whose sound the server dropped: the call runs without it (K6).
 	g, err := Decode(withExtra(`"audio":{"tool_cue":{"name":"gone"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if reasons, _ := g.Problems(&fakePolicy{cues: []string{"chime"}}); len(reasons) != 0 {
-		t.Fatalf("a dropped sound must not take the flow offline: %v", reasons)
+		t.Fatalf("a dropped sound must not take the agent offline: %v", reasons)
 	}
 }
 
@@ -330,7 +330,7 @@ func TestPublishRefusesACallLimitAboveTheServers(t *testing.T) {
 	}
 }
 
-// A server limit lowered after publishing does not stop a flow being duplicated: calls keep working (the
+// A server limit lowered after publishing does not stop an agent being duplicated: calls keep working (the
 // shorter value wins at call time), while a new publish above the lowered limit is still refused.
 func TestDuplicateKeepsALimitTheServerLaterLowered(t *testing.T) {
 	p := &fakePolicy{maxCall: 30 * time.Minute, manager: true, maxMute: 30 * time.Second}

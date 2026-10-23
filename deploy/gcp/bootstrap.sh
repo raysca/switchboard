@@ -11,7 +11,7 @@
 #           BILLING_ACCOUNT + BUDGET_USD (150)  for a budget alert
 #           OPENAI_API_KEY DEEPGRAM_API_KEY CARTESIA_API_KEY NVIDIA_API_KEY   more providers (each one set, or already in
 #           Secret Manager, is mounted into the service; the list is kept in the GCP_PROVIDER_SECRETS repository variable)
-# Creates a small Cloud SQL Postgres instance for the flow store (about 10 USD a month): flows and call
+# Creates a small Cloud SQL Postgres instance for the agent store (about 10 USD a month): agents and call
 # history survive deploys. The instance, database and user are created once; the password is generated here.
 # If you ever recreate the instance or its user, delete the SWITCHBOARD_DATABASE_DSN secret first (gcloud secrets delete),
 # or this script keeps the old password and the service cannot connect.
@@ -54,7 +54,7 @@ for sa in switchboard-runtime dental-mcp-runtime switchboard-deployer; do
     run gcloud iam service-accounts create "$sa" --display-name "$sa" --project "$PROJECT_ID"
 done
 
-echo "== Cloud SQL (Postgres flow store) =="
+echo "== Cloud SQL (Postgres agent store) =="
 exists gcloud sql instances describe "$SQL_INSTANCE" --project "$PROJECT_ID" ||
   run gcloud sql instances create "$SQL_INSTANCE" --database-version=POSTGRES_16 --edition=ENTERPRISE --tier=db-f1-micro \
     --region "$REGION" --storage-size=10GB --storage-auto-increase --backup-start-time=03:00 --deletion-protection --project "$PROJECT_ID"

@@ -63,7 +63,7 @@ func TestOnHandoffRecordsTimelineAndTraceSpans(t *testing.T) {
 		t.Fatalf("timeline = %+v", got)
 	}
 	if got[EventHandoffFailed].Error == "" {
-		t.Fatal("a failed route must carry its error")
+		t.Fatal("a failed handoff must carry its error")
 	}
 	names := map[string]bool{}
 	attrs := map[string]string{} // span name -> attributes JSON
@@ -89,7 +89,7 @@ func TestOnHandoffRecordsTimelineAndTraceSpans(t *testing.T) {
 	}
 }
 
-// A route event can arrive after the server closes management (a retired step reports that it closed): the
+// A handoff event can arrive after the server closes management (a retired step reports that it closed): the
 // observer must not read the server's management field then.
 func TestHandoffEventsAfterManagementClosesDoNotRace(t *testing.T) {
 	s := apiTestServer(t)

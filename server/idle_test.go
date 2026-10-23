@@ -404,22 +404,22 @@ func TestAnAgentsQuietCallerSettingsReplaceTheServersUserIdleOnly(t *testing.T) 
 	server := IdleConfig{UserTimeout: 15 * time.Second, MaxPrompts: 5, Prompt: "Server prompt", PromptMode: "llm", Goodbye: "Server bye",
 		BotTimeout: 40 * time.Second, BotMaxStuck: 4, BotFallback: "Server stuck"}
 	if got := server.forCall(nil); got != server {
-		t.Fatalf("no flow settings must leave the server's untouched: %+v", got)
+		t.Fatalf("no agent settings must leave the server's untouched: %+v", got)
 	}
 	got := server.forCall(&agent.IdleSettings{UserTimeoutMS: intp(8000)})
 	want := IdleConfig{UserTimeout: 8 * time.Second, MaxPrompts: 2, Prompt: "Are you still there?", Goodbye: "I'll end the call now. Goodbye.",
 		BotTimeout: 40 * time.Second, BotMaxStuck: 4, BotFallback: "Server stuck"}
 	if got != want {
-		t.Fatalf("a flow's idle is one unit with built-in defaults for what it leaves out:\n got %+v\nwant %+v", got, want)
+		t.Fatalf("an agent's idle is one unit with built-in defaults for what it leaves out:\n got %+v\nwant %+v", got, want)
 	}
 	got = server.forCall(&agent.IdleSettings{UserTimeoutMS: intp(5000), MaxPrompts: intp(3), Prompt: "Hello?", PromptMode: "say", Goodbye: "Bye."})
 	if got.UserTimeout != 5*time.Second || got.MaxPrompts != 3 || got.Prompt != "Hello?" || got.PromptMode != "say" || got.Goodbye != "Bye." {
-		t.Fatalf("flow members: %+v", got)
+		t.Fatalf("agent members: %+v", got)
 	}
 	if off := server.forCall(&agent.IdleSettings{UserTimeoutMS: intp(0)}); off.UserTimeout != 0 || off.BotTimeout != 40*time.Second || !off.enabled() {
 		t.Fatalf("0 turns user idle off but not the bot watchdog: %+v", off)
 	}
-	// A flow that sets only wording (no timeout) still has the built-in 15 s wait, not the server's.
+	// An agent that sets only wording (no timeout) still has the built-in 15 s wait, not the server's.
 	if w := (IdleConfig{UserTimeout: 60 * time.Second}).forCall(&agent.IdleSettings{Prompt: "Hello?"}); w.UserTimeout != 15*time.Second || w.Prompt != "Hello?" {
 		t.Fatalf("members left out take the built-in defaults: %+v", w)
 	}
@@ -439,13 +439,13 @@ func TestACallBuildsOrOmitsTheIdleControllerFromItsAgent(t *testing.T) {
 		t.Fatal("the built-in default must build the controller")
 	}
 	if hasIdle(cfg, CallSpec{Idle: &agent.IdleSettings{UserTimeoutMS: intp(0)}}) {
-		t.Fatal("a flow that turns it off must not")
+		t.Fatal("an agent that turns it off must not")
 	}
 	cfg.Idle.UserTimeout = 0
 	if hasIdle(cfg, CallSpec{}) {
-		t.Fatal("server off, flow silent: none")
+		t.Fatal("server off, agent silent: none")
 	}
 	if !hasIdle(cfg, CallSpec{Idle: &agent.IdleSettings{UserTimeoutMS: intp(4000)}}) {
-		t.Fatal("a flow can turn it on when the server has it off")
+		t.Fatal("an agent can turn it on when the server has it off")
 	}
 }

@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// A draft may select MCP tools the flow has not published: the call captures exactly the draft's
-// tools, the published flow stays without them, and an ordinary call cannot use them.
+// A draft may select MCP tools the agent has not published: the call captures exactly the draft's
+// tools, the published agent stays without them, and an ordinary call cannot use them.
 func TestADraftCallCanUseAToolThatIsNotPublished(t *testing.T) {
 	r := newMCPCallRig(t)
 	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
@@ -37,10 +37,10 @@ func TestADraftCallCanUseAToolThatIsNotPublished(t *testing.T) {
 	})
 	published, err := r.s.agents.Get(t.Context(), a.ID)
 	if err != nil || len(published.Version.MCPTools) != 0 {
-		t.Fatalf("the published flow gained tools: %+v err %v", published.Version.MCPTools, err)
+		t.Fatalf("the published agent gained tools: %+v err %v", published.Version.MCPTools, err)
 	}
 
-	// An ordinary call on the same flow has no such tool.
+	// An ordinary call on the same agent has no such tool.
 	before := len(r.mcp.Records())
 	c2 := r.dial(a.ID)
 	c2.say(`call tool lookup_order {"order_id":"42"}`)

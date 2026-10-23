@@ -6,7 +6,7 @@
 #   mcp                       (allow_local_http + a short timeout)
 # Everything else must stay identical to the real thing.
 # Cloud Run: ONE service, ONE public port (8080). The management API and the admin UI are served
-# on it behind the management key (public_admin). One instance; flows and call history in Postgres (Cloud SQL in production, the compose postgres here)
+# on it behind the management key (public_admin). One instance; agents and call history in Postgres (Cloud SQL in production, the compose postgres here)
 # disk: the demo is rebuilt by demo.auto_install on every start.
 profile: development
 

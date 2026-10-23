@@ -22,7 +22,7 @@ func TestOrphanCutoffByDialect(t *testing.T) {
 	}
 }
 
-// seedActiveSession leaves one active session of a fresh flow in the store, as a crash would.
+// seedActiveSession leaves one active session of a fresh agent in the store, as a crash would.
 func seedActiveSession(t *testing.T, store *storage.Store, started time.Time) string {
 	t.Helper()
 	ctx := context.Background()
@@ -105,7 +105,7 @@ func TestAFailingSweepDoesNotStopStartup(t *testing.T) {
 	s.endOrphanedSessions(context.Background(), closed)
 }
 
-// publishTestVersion publishes config (with the given MCP selection) as the flow's next version.
+// publishTestVersion publishes config (with the given MCP selection) as the agent's next version.
 func publishTestVersion(ctx context.Context, s *storage.Store, agentID string, config []byte, tools []storage.SelectedTool) (storage.AgentVersion, error) {
 	v, _, err := s.Agents().MutateAndPublish(ctx, agentID, storage.AgentMutation{Tools: &tools}, config)
 	return v, err

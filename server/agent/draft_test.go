@@ -44,7 +44,7 @@ func TestResolveDraftReturnsTheDraftOnTheCurrentVersion(t *testing.T) {
 	}
 	again, err := svc.Get(ctx, f.ID)
 	if err != nil || again.Version.Number != 1 || strings.Contains(string(again.Version.Config), "DRAFT") {
-		t.Fatalf("the stored flow changed: %+v err %v", again.Version, err)
+		t.Fatalf("the stored agent changed: %+v err %v", again.Version, err)
 	}
 }
 
@@ -69,9 +69,9 @@ func TestResolveDraftRejectsWhatAPublishWouldReject(t *testing.T) {
 	}
 }
 
-// An incomplete draft is refused as a publish refuses it (the flow must be attached to providers),
+// An incomplete draft is refused as a publish refuses it (the agent must be attached to providers),
 // so what reaches the readiness check is a draft a publish would accept; readiness then reflects the
-// flow's attached MCP tools.
+// agent's attached MCP tools.
 func TestResolveDraftRefusesAnIncompleteDraftLikeAPublish(t *testing.T) {
 	svc := testService(t)
 	f := publishedAgent(t, svc, "P")
@@ -85,14 +85,14 @@ func TestResolveDraftNeedsAUsableAgent(t *testing.T) {
 	ctx := context.Background()
 	svc := testService(t)
 	if _, _, err := svc.ResolveDraft(ctx, storage.NewID(), draftConfig("D"), nil); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("unknown flow: %v", err)
+		t.Fatalf("unknown agent: %v", err)
 	}
 	f := publishedAgent(t, svc, "P")
 	if err := svc.Archive(ctx, f.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := svc.ResolveDraft(ctx, f.ID, draftConfig("D"), nil); err == nil {
-		t.Fatal("an archived flow can take no draft call")
+		t.Fatal("an archived agent can take no draft call")
 	}
 }
 
@@ -120,7 +120,7 @@ func TestResolveDraftCanSelectToolsTheAgentHasNotPublished(t *testing.T) {
 	r := newToolsRig(t)
 	ctx := context.Background()
 	cfg := stepsConfig(r.server + "/echo")
-	// Without a selection the S1 rule stands: a step may only list tools the flow has.
+	// Without a selection the S1 rule stands: a step may only list tools the agent has.
 	if _, _, err := r.svc.ResolveDraft(ctx, r.agent.ID, cfg, nil); err == nil || !strings.Contains(err.Error(), "has not selected") {
 		t.Fatalf("an unselected step tool: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestResolveDraftCanSelectToolsTheAgentHasNotPublished(t *testing.T) {
 	}
 	again, err := r.svc.Get(ctx, r.agent.ID)
 	if err != nil || again.Version.Number != 1 || len(again.Version.MCPTools) != 0 {
-		t.Fatalf("a draft must not change the stored flow: %+v err %v", again.Version, err)
+		t.Fatalf("a draft must not change the stored agent: %+v err %v", again.Version, err)
 	}
 }
 

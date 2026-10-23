@@ -217,7 +217,7 @@ func TestCallAgentNoteIsConsumedOnce(t *testing.T) {
 // note of the one that went through; a failed first transfer leaves no note.
 func TestCommitWithNoteRestoresOnFailure(t *testing.T) {
 	cg := &CallAgent{}
-	fail := errors.New("route pending")
+	fail := errors.New("handoff pending")
 	cg.Commit = func(string) error { return fail }
 	if err := cg.commitWithNote("b", "N0"); !errors.Is(err, fail) || cg.takeNote() != "" {
 		t.Fatal("a failed first commit must leave no note")
@@ -261,8 +261,8 @@ func TestCommitWithNoteKeepsTheWinnersNote(t *testing.T) {
 	}
 }
 
-// The call's limit is the shorter of the flow's and the server's: a flow can only shorten calls, and a
-// server lowered after the flow was published wins.
+// The call's limit is the shorter of the agent's and the server's: an agent can only shorten calls, and a
+// server lowered after the agent was published wins.
 func TestCallSpecTakesTheShorterCallLimit(t *testing.T) {
 	s := apiTestServer(t)
 	cases := []struct {
@@ -271,10 +271,10 @@ func TestCallSpecTakesTheShorterCallLimit(t *testing.T) {
 		server time.Duration
 		want   time.Duration
 	}{
-		{"flow shorter", `,"max_call_duration_seconds":600`, 30 * time.Minute, 10 * time.Minute},
-		{"flow absent", ``, 30 * time.Minute, 30 * time.Minute},
-		{"server lowered below the flow", `,"max_call_duration_seconds":600`, 5 * time.Minute, 5 * time.Minute},
-		{"flow equal", `,"max_call_duration_seconds":300`, 5 * time.Minute, 5 * time.Minute},
+		{"agent shorter", `,"max_call_duration_seconds":600`, 30 * time.Minute, 10 * time.Minute},
+		{"agent absent", ``, 30 * time.Minute, 30 * time.Minute},
+		{"server lowered below the agent", `,"max_call_duration_seconds":600`, 5 * time.Minute, 5 * time.Minute},
+		{"agent equal", `,"max_call_duration_seconds":300`, 5 * time.Minute, 5 * time.Minute},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

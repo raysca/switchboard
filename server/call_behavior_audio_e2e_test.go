@@ -10,7 +10,7 @@ import (
 	"govoice/server/agent"
 )
 
-// Per-flow interruption settings against the real VAD: caller audio goes through Silero, the echo STT turns
+// Per-agent interruption settings against the real VAD: caller audio goes through Silero, the echo STT turns
 // voiced audio into placeholder words (an interim every 400 ms, like Google's latest_long), and the turn
 // processor decides whether that speech cuts the agent off. Typed turns bypass min words and mute, so
 // these tests need real audio.
@@ -25,7 +25,7 @@ func interruptionRig(t *testing.T, mods ...func(*Config)) *agentRigE2E {
 	return r
 }
 
-// interruptionFlow is a flow on echo's interim-producing speech model with the given turn settings.
+// interruptionAgent is an agent on echo's interim-producing speech model with the given turn settings.
 func interruptionAgent(t *testing.T, r *agentRigE2E, name, turn string) string {
 	t.Helper()
 	extra := ""
@@ -66,10 +66,10 @@ func TestCallBehaviorAnAgentThatMutesWhileTheAgentSpeaksIsNotInterrupted(t *test
 	protected := interruptionAgent(t, r, "protected", `{"mute":["always"]}`)
 	open := interruptionAgent(t, r, "open", ``)
 	if !callerBargesIn(t, r, open) {
-		t.Fatal("a flow with no mute was not interrupted by the caller's speech")
+		t.Fatal("an agent with no mute was not interrupted by the caller's speech")
 	}
 	if callerBargesIn(t, r, protected) {
-		t.Fatal("a flow that mutes while the agent speaks was interrupted")
+		t.Fatal("an agent that mutes while the agent speaks was interrupted")
 	}
 }
 
@@ -78,9 +78,9 @@ func TestCallBehaviorAnAgentsMinWordsIgnoresAShortBackchannel(t *testing.T) {
 	strict := interruptionAgent(t, r, "strict", `{"min_words":10}`)  // more words than the clip has
 	eager := interruptionAgent(t, r, "eager", `{"min_words":1}`)
 	if callerBargesIn(t, r, strict) {
-		t.Fatal("a flow needing 10 words was interrupted by a 7-word clip")
+		t.Fatal("an agent needing 10 words was interrupted by a 7-word clip")
 	}
 	if !callerBargesIn(t, r, eager) {
-		t.Fatal("a flow needing 1 word was not interrupted")
+		t.Fatal("an agent needing 1 word was not interrupted")
 	}
 }

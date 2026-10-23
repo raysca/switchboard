@@ -7,7 +7,7 @@ import (
 	"govoice/server/agent"
 )
 
-// A flow's llm sampling reaches the model call of the step that sets it: the
+// An agent's llm sampling reaches the model call of the step that sets it: the
 // echo model (labelled replies) says what it was given. A step without it, and
 // the other step's values, show nothing.
 func TestAgentE2E_LLMSamplingReachesTheModel(t *testing.T) {

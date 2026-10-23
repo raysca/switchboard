@@ -19,7 +19,7 @@ var errTooManyDrafts = errors.New("too many draft calls are waiting to connect")
 const draftGrace = time.Minute
 
 // draftCall is a validated draft held until its voice token connects. It is in
-// memory only: a draft is never stored as a flow version.
+// memory only: a draft is never stored as an agent version.
 type draftCall struct {
 	snapshot agent.Snapshot
 	expires  time.Time

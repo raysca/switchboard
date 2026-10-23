@@ -16,7 +16,7 @@ var (
 )
 
 // AdmissionController caps concurrent calls, in total, per principal (the
-// tenant: token principal, else subject) and optionally per flow, plus an
+// tenant: token principal, else subject) and optionally per agent, plus an
 // optional per-principal start-rate token bucket, before a call allocates its
 // pipeline. Quotas are per key, so a noisy principal at its cap is rejected
 // while others are still admitted under the global cap.

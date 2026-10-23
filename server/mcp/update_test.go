@@ -213,7 +213,7 @@ func TestUpdateKeepsAgentReadyAndCapturedSessionOnOldEndpoint(t *testing.T) {
 	}
 	got, err := agents.Get(ctx, f.ID)
 	if err != nil || got.Readiness.State != "ready" {
-		t.Fatalf("flow after edit: readiness=%+v err=%v", got.Readiness, err)
+		t.Fatalf("agent after edit: readiness=%+v err=%v", got.Readiness, err)
 	}
 	if _, err = captured.Execute(ctx, json.RawMessage(`{"text":"hi"}`)); err != nil {
 		t.Fatal(err)

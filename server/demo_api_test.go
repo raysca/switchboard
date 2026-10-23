@@ -24,7 +24,7 @@ import (
 func dentalRig(t *testing.T, mods ...func(*Config)) *Server {
 	t.Helper()
 	if !xaiSpeechEnabled {
-		t.Skip("the dental flow uses xAI TTS: build with -tags xaispeech")
+		t.Skip("the dental agent uses xAI TTS: build with -tags xaispeech")
 	}
 	t.Setenv("GOVOICE_MANAGEMENT_API_KEY", testMgmtKey)
 	cfg := DefaultConfig(ProfileDevelopment)
@@ -148,7 +148,7 @@ func TestAutoInstallDemoSkipsOnceShuttingDown(t *testing.T) {
 		t.Fatal("an install was started while shutting down")
 	}
 	if f, err := demo.FindAgent(context.Background(), s.agents); err != nil || f.ID != "" {
-		t.Fatalf("flow installed during shutdown: %+v %v", f, err)
+		t.Fatalf("agent installed during shutdown: %+v %v", f, err)
 	}
 }
 
@@ -206,7 +206,7 @@ func (f *racyAgents) List(context.Context, int, int) ([]agent.Agent, error) {
 }
 func (f *racyAgents) Create(_ context.Context, r agent.CreateRequest) (agent.Agent, error) {
 	f.creates++
-	fl := agent.Agent{ID: "flow1", Name: r.Name}
+	fl := agent.Agent{ID: "agent1", Name: r.Name}
 	f.list = append(f.list, fl)
 	return fl, nil
 }
@@ -226,11 +226,11 @@ func TestInstallDentalIsSerialised(t *testing.T) {
 	}
 	wg.Wait()
 	if srv.creates != 1 || fl.creates != 1 {
-		t.Fatalf("server creates %d, flow creates %d, want 1 and 1", srv.creates, fl.creates)
+		t.Fatalf("server creates %d, agent creates %d, want 1 and 1", srv.creates, fl.creates)
 	}
 }
 
-// A failed flow lookup is an error, never "not installed" (which would offer a duplicate).
+// A failed agent lookup is an error, never "not installed" (which would offer a duplicate).
 func TestDemoStatusAgentLookupError(t *testing.T) {
 	if _, err := demoStatus(context.Background(), &racyAgents{err: errors.New("db down")}, "https://d/mcp"); err == nil {
 		t.Fatal("lookup error must surface")
@@ -294,7 +294,7 @@ func TestDentalInstallOutlivesTheCallerThatStartedIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	if srv.creates != 1 || fl.creates != 1 {
-		t.Fatalf("server creates %d, flow creates %d, want one install", srv.creates, fl.creates)
+		t.Fatalf("server creates %d, agent creates %d, want one install", srv.creates, fl.creates)
 	}
 }
 

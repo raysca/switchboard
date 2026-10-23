@@ -78,8 +78,8 @@ func TestMaxCallDurationFiresOnceWithReason(t *testing.T) {
 	}
 }
 
-// K10: the call's timer runs for the CallSpec's limit (the flow's, already clamped to the server's), not
-// the server's own: a flow limit tighter than the server's cannot be waited for in an e2e (60 s minimum).
+// K10: the call's timer runs for the CallSpec's limit (the agent's, already clamped to the server's), not
+// the server's own: an agent limit tighter than the server's cannot be waited for in an e2e (60 s minimum).
 func TestTheCallLimitTimerRunsForTheCallSpecsLimit(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
 	cfg.Limits.MaxCallDuration = 30 * time.Minute

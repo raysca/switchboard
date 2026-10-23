@@ -10,15 +10,15 @@ import (
 	"govoice/server/catalog"
 )
 
-// systemPrompt is the ONE standard flow prompt, identical across profiles. The long-answer
+// systemPrompt is the ONE standard agent prompt, identical across profiles. The long-answer
 // clause gives the barge-in scenarios a bot that keeps talking; the tool clause drives S6.
 const systemPrompt = "You are a voice assistant. Answer in one or two short sentences, except when asked to tell about a topic: then give a detailed answer of at least six sentences. If asked what time it is, call the get_time tool and say what it returns."
 
-// toolName is the one trivial tool the standard flow can call (S6). It is served by an MCP
+// toolName is the one trivial tool the standard agent can call (S6). It is served by an MCP
 // server the operator supplies with -mcp-url: the server only accepts public HTTPS MCP endpoints.
 const toolName = "get_time"
 
-// flowConfig is the stored flow config for a resolved profile. Stage structure is the only
+// agentConfig is the stored agent config for a resolved profile. Stage structure is the only
 // thing that differs between profiles; the server reads every secret from its environment.
 func agentConfig(p Profile) map[string]any {
 	stage := func(s Stage, extra map[string]any) map[string]any {
@@ -37,8 +37,8 @@ func agentConfig(p Profile) map[string]any {
 	}
 }
 
-// provision creates the standard flow and, with mcpURL set, attaches the get_time tool.
-// It returns the flow id.
+// provision creates the standard agent and, with mcpURL set, attaches the get_time tool.
+// It returns the agent id.
 func (s *server) provision(p Profile, mcpURL string) (string, error) {
 	fl, err := s.id("agents", map[string]any{"name": "Live Check", "description": "livecheck " + p.Name, "config": agentConfig(p)})
 	if err != nil {
@@ -72,7 +72,7 @@ func failoverPeer(p Profile) (provider, model, na string) {
 	return "", "", "S13 needs two providers: no STT/TTS provider of this profile also serves llm as the fallback"
 }
 
-// failoverConfig is the standard flow with one LLM fallback on another provider. The primary's
+// failoverConfig is the standard agent with one LLM fallback on another provider. The primary's
 // key is broken in the server's environment (see brokenEnv). Every failure class may fail over,
 // client_error included (a rejected key), so a call must be answered by the fallback.
 func failoverConfig(p Profile, fbProvider, fbModel string) map[string]any {
@@ -97,11 +97,11 @@ func brokenEnv(p Profile, env []string) []string {
 	return out
 }
 
-// flowMarker is the word the Sales step must say in every reply, so S14 can tell which flow
+// agentMarker is the word the Sales step must say in every reply, so S14 can tell which agent
 // answered without trusting the model to announce itself.
 const agentMarker = "catalogue"
 
-// flowConfig is the two-step flow for S14: Front hands buyers to Sales. Both steps use the
+// agentConfig is the two-step agent for S14: Front hands buyers to Sales. Both steps use the
 // profile's providers; only Front (the entry) has STT, as the server requires.
 func handoffAgentConfig(p Profile) map[string]any {
 	front := agentConfig(p)
@@ -120,7 +120,7 @@ func handoffAgentConfig(p Profile) map[string]any {
 	}
 }
 
-// provisionFlow creates the two-step flow for S14 and returns its id.
+// provisionAgent creates the two-step agent for S14 and returns its id.
 func (s *server) provisionAgent(p Profile) (string, error) {
 	return s.id("agents", map[string]any{"name": "Live Check Graph", "description": "livecheck graph " + p.Name, "config": handoffAgentConfig(p)})
 }
@@ -134,7 +134,7 @@ func brokenSecret(s string) string {
 	return s[:len(s)-4] + "zzzz"
 }
 
-// provisionFailover creates the failover flow for S13 and returns its id.
+// provisionFailover creates the failover agent for S13 and returns its id.
 func (s *server) provisionFailover(p Profile) (string, error) {
 	prov, model, na := failoverPeer(p)
 	if na != "" {
@@ -143,7 +143,7 @@ func (s *server) provisionFailover(p Profile) (string, error) {
 	return s.id("agents", map[string]any{"name": "Live Check Failover", "description": "livecheck failover " + p.Name, "config": failoverConfig(p, prov, model)})
 }
 
-// attachTool registers the MCP server, discovers its tools and selects get_time for the flow.
+// attachTool registers the MCP server, discovers its tools and selects get_time for the agent.
 func (s *server) attachTool(fl, url string) error {
 	srv, err := s.id("mcp-servers", map[string]any{"name": "livecheck-tools", "endpoint": url, "enabled": true})
 	if err != nil {

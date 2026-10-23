@@ -50,7 +50,7 @@ func TestMCPSyncIntervalZeroStartsNoSyncer(t *testing.T) {
 	}
 }
 
-// enableTestManagement wires a throwaway SQLite flow store into s.
+// enableTestManagement wires a throwaway SQLite agent store into s.
 func enableTestManagement(t *testing.T, s *Server) {
 	t.Helper()
 	t.Setenv("GOVOICE_DATABASE_DSN", filepath.Join(t.TempDir(), "mgmt.db"))
@@ -61,8 +61,8 @@ func enableTestManagement(t *testing.T, s *Server) {
 	t.Cleanup(s.closeManagement)
 }
 
-// readyTestFlow enables the flow store and creates a complete Google flow,
-// ready on the test provider environment; it returns the flow ID.
+// readyTestAgent enables the agent store and creates a complete Google agent,
+// ready on the test provider environment; it returns the agent ID.
 func readyTestAgent(t *testing.T, s *Server) string {
 	t.Helper()
 	if s.agents == nil {
@@ -74,12 +74,12 @@ func readyTestAgent(t *testing.T, s *Server) string {
 		t.Fatal(err)
 	}
 	if a.Readiness.State != agent.ReadinessReady {
-		t.Fatalf("test flow not ready: %+v", a.Readiness)
+		t.Fatalf("test agent not ready: %+v", a.Readiness)
 	}
 	return a.ID
 }
 
-// A flow whose provider/stage has no factory in this build (e.g. xAI speech
+// An agent whose provider/stage has no factory in this build (e.g. xAI speech
 // without -tags xaispeech) must be reported at startup, not at call time.
 func TestUnavailableAgentProvidersReported(t *testing.T) {
 	s := apiTestServer(t)
@@ -89,7 +89,7 @@ func TestUnavailableAgentProvidersReported(t *testing.T) {
 	}
 	delete(s.registry.factories, factoryKey("google", "tts"))
 	bad := s.unavailableAgentProviders(t.Context(), s.agents)
-	if len(bad) != 1 || bad[0] != "flow "+id+" tts=google" {
+	if len(bad) != 1 || bad[0] != "agent "+id+" tts=google" {
 		t.Fatalf("got %v", bad)
 	}
 }
@@ -121,14 +121,14 @@ func TestManagementStartsWithoutAKeyring(t *testing.T) {
 	}
 }
 
-// A start EnableManagement refuses (a production store with flows this build cannot run, an unusable
+// A start EnableManagement refuses (a production store with agents this build cannot run, an unusable
 // recording directory) closes the store: nothing may still point at it and the APIs stay unavailable.
 func TestRefusedManagementStartLeavesNoClosedStoreBehind(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		refuse func(t *testing.T, s *Server)
 	}{
-		{"production flow this build cannot run", func(t *testing.T, s *Server) {
+		{"production agent this build cannot run", func(t *testing.T, s *Server) {
 			s.cfg.Profile = ProfileProduction
 			delete(s.registry.factories, factoryKey("google", "tts"))
 		}},
@@ -158,7 +158,7 @@ func TestRefusedManagementStartLeavesNoClosedStoreBehind(t *testing.T) {
 				t.Fatal("the start was not refused")
 			}
 			if s.store != nil || s.agents != nil || s.mcpService != nil || s.mgmt.Load() != nil || s.recSink != nil {
-				t.Fatalf("a refused start left store=%v flows=%v mcp=%v mgmt=%v recSink=%v",
+				t.Fatalf("a refused start left store=%v agents=%v mcp=%v mgmt=%v recSink=%v",
 					s.store != nil, s.agents != nil, s.mcpService != nil, s.mgmt.Load() != nil, s.recSink != nil)
 			}
 			if code := apiRequest(s, http.MethodGet, "/api/v1/agents", "management-test-key-32-bytes-long-and-separate", "").Code; code != http.StatusServiceUnavailable {

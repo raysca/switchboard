@@ -39,7 +39,7 @@ func TestCallBehaviorAStalledTTSUnitFailsOverAndLaterUnitsAreSpoken(t *testing.T
 		`{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"Stall"},` +
 			`"tts":{"provider":"echo","voice":"stallvoice","fallbacks":[{"provider":"echo","voice":"okvoice"}]}}`)})
 	if err != nil || f.Readiness.State != agent.ReadinessReady {
-		t.Fatalf("flow: %+v err=%v", f.Readiness, err)
+		t.Fatalf("agent: %+v err=%v", f.Readiness, err)
 	}
 	c := r.dial(f.ID)
 	c.say("First sentence here. Second sentence here. Third sentence here.")

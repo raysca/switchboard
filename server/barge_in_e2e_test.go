@@ -41,7 +41,7 @@ func indexFrom(log []string, entry string, from int) int {
 // within a second and the whole reply plays for several seconds, so a later turn cuts it off mid-play.
 var longReply = strings.TrimSpace(strings.Repeat("This sentence keeps the reply going. ", 10))
 
-// bargeInRig is the flow rig with the echo providers on Google-like timing: "instant" synthesis makes two
+// bargeInRig is the agent rig with the echo providers on Google-like timing: "instant" synthesis makes two
 // 20 ms frames per piece, too little audio for a reply to still be playing when the next turn arrives.
 func bargeInRig(t *testing.T) *agentRigE2E {
 	return newAgentRigE2E(t, newProbe(), func(c *Config) { c.Providers.Echo.Mimic = "google" })

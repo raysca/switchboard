@@ -36,7 +36,7 @@ func TestCreateListGetAndUpdatePublishImmutableVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 	if a.Version == nil || a.Version.Number != 1 || a.Readiness.State != ReadinessReady {
-		t.Fatalf("created flow=%+v", a)
+		t.Fatalf("created agent=%+v", a)
 	}
 	changed := json.RawMessage(`{"stt":{"provider":"google","model":"google.stt"},"llm":{"provider":"google","model":"google.llm"},"tts":{"provider":"google","voice":"google.tts"}}`)
 	updated, err := svc.Update(ctx, a.ID, UpdateRequest{Name: stringPointer("Support v2"), Config: changed})
@@ -56,7 +56,7 @@ func TestCreateListGetAndUpdatePublishImmutableVersions(t *testing.T) {
 	}
 }
 
-// Flows are attached to providers at creation; an incomplete config is
+// Agents are attached to providers at creation; an incomplete config is
 // rejected with bounded, content-free reasons.
 func TestCreateRequiresAttachedProvidersWithSafeReasons(t *testing.T) {
 	svc := testService(t)
@@ -106,10 +106,10 @@ func TestDuplicateArchiveAndVersionScopedSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := svc.Get(ctx, a.ID); err != nil {
-		t.Fatalf("archived flow should remain readable: %v", err)
+		t.Fatalf("archived agent should remain readable: %v", err)
 	}
 	if _, err := svc.StartSession(ctx, a.ID, "new"); err == nil {
-		t.Fatal("archived flow accepted a new session")
+		t.Fatal("archived agent accepted a new session")
 	}
 }
 
@@ -330,7 +330,7 @@ func TestCreateAndUpdatePublishAtomicallyOnDatabaseFailure(t *testing.T) {
 	}
 	var count int
 	if err := svc.store.DB().QueryRow("SELECT count(*) FROM agents WHERE name='Rejected'").Scan(&count); err != nil || count != 0 {
-		t.Fatalf("failed create left flow row count=%d err=%v", count, err)
+		t.Fatalf("failed create left agent row count=%d err=%v", count, err)
 	}
 	created, err := svc.Create(ctx, CreateRequest{Name: "Before", Config: validConfig()})
 	if err != nil {
@@ -418,7 +418,7 @@ func TestRuntimeResolutionFollowsProviderAvailability(t *testing.T) {
 	}
 	av["google/stt"] = Unavailable{Reason: "missing_credential", MissingEnv: []string{"GOOGLE_APPLICATION_CREDENTIALS"}}
 	if _, err := svc.ResolveCurrent(ctx, a.ID); err == nil {
-		t.Fatal("runtime resolved an flow whose provider lost its credentials")
+		t.Fatal("runtime resolved an agent whose provider lost its credentials")
 	}
 	got, _ := svc.Get(ctx, a.ID)
 	if got.Readiness.State != ReadinessNotReady || !strings.Contains(strings.Join(got.Readiness.Reasons, ","), "missing_credential_stt") ||
@@ -427,7 +427,7 @@ func TestRuntimeResolutionFollowsProviderAvailability(t *testing.T) {
 	}
 	delete(av, "google/stt")
 	if _, err := svc.ResolveCurrent(ctx, a.ID); err != nil {
-		t.Fatalf("flow did not recover: %v", err)
+		t.Fatalf("agent did not recover: %v", err)
 	}
 }
 
@@ -489,7 +489,7 @@ func TestPublishRefusesCallWideSettingsOnANonStartStep(t *testing.T) {
 	}
 }
 
-// A stored version may carry settings publish now refuses (a call-wide setting on a later step; a route sound the
+// A stored version may carry settings publish now refuses (a call-wide setting on a later step; a handoff sound the
 // server dropped). Duplicate copies it anyway: the dead step settings are left out (they were ignored), the sound
 // name is kept (the call just runs without it).
 func TestDuplicateCopiesALegacyStoredVersion(t *testing.T) {
@@ -525,7 +525,7 @@ func TestDuplicateCopiesALegacyStoredVersion(t *testing.T) {
 		t.Fatalf("dead step settings were copied: %+v", sales.Config)
 	}
 	if g.HandoffCue == nil || g.HandoffCue.Name != "gone" {
-		t.Fatalf("route cue = %+v, want the stored name", g.HandoffCue)
+		t.Fatalf("handoff cue = %+v, want the stored name", g.HandoffCue)
 	}
 	// new edits are still checked
 	if _, err := svc.Create(ctx, CreateRequest{Name: "new", Config: json.RawMessage(legacy)}); !errors.Is(err, ErrInvalidConfig) {

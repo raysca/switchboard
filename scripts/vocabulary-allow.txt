@@ -38,3 +38,41 @@ e2e/tests-oneport/**	R	client route	# SPA fallback
 deploy/smoke-cloudrun.sh	R	client route	# SPA fallback
 server/api_routes_table_test.go	R	api_routes_table	# HTTP routing table test (file name)
 server/tool_frames_e2e_test.go	F	FramesFlowThrough	# frames flowing (verb)
+core/failover_test.go	R	RoutesReenter	# test name: candidates are routed to the next provider (generic English)
+core/naming_test.go	R	Route	# the naming test that bans Route in core's exported API
+scripts/dev-seed.mjs	R	route	# HTTP path parameter of the api() helper
+server/adminui/adminui_test.go	R	ClientRoutes	# SPA client-side routes
+server/api/agents.go	R	management route handler	# HTTP handler
+server/api/traces.go	R	tracesRoute	# HTTP sub-route handler
+server/api_agent_boundary_test.go	R	*	# HTTP management-boundary test (file is HTTP-only for R)
+server/api_operations_boundary_test.go	R	*	# HTTP management-boundary test (file is HTTP-only for R)
+server/api_provider_boundary_test.go	R	*	# HTTP management-boundary test (file is HTTP-only for R)
+server/api_session_boundary_test.go	R	*	# HTTP management-boundary test (file is HTTP-only for R)
+server/api_boundary_test.go	R	AuthRoute	# HTTP route-separation test name
+server/api_mcp_boundary_test.go	R	not routed	# HTTP request routing
+server/api_routes_table_test.go	R	DemoRoutes	# HTTP routing table test
+server/live_calls_api.go	R	liveCallRoute	# HTTP path matcher
+server/live_calls_api_test.go	R	LiveCallRoutes	# HTTP routes of the live-call API
+server/live_calls_api_test.go	R	stored-session routes	# HTTP routes
+server/management.go	R	providersRoutes	# HTTP handler
+server/providers_test.go	R	providersRoutes	# HTTP handler
+server/mcp/http_test.go	R	Routes	# HTTP routes of the MCP API (test names)
+server/mcp/http_test.go	R	routes	# HTTP routes table in the test
+server/mcp/mcptest/mcptest.go	R	would route	# generic English (request routing)
+server/mcp/sdk_client.go	R	proxy routing	# generic English (network proxy)
+server/mcp/update_test.go	R	PatchRoute	# HTTP route test name
+server/server.go	R	setupRoutes	# HTTP mux setup
+server/server.go	R	adminRoutes	# HTTP mux for the admin listener
+server/api/traces_test.go	F	"flow" + "_id="	# proves the old query key is refused (split so the guard does not read it as a live use)
+server/api_boundary_test.go	F	"flow"+"_id"	# proves the old token claim is absent
+server/api_boundary_test.go	F	"flows	# proves the old collection path is gone
+server/config_defaults_test.go	F	max_sessions_per_" + "flow	# proves the old YAML keys are refused
+server/config_defaults_test.go	F	allow_" + "flow_background	# proves the old YAML keys are refused
+server/config_defaults_test.go	F	for_" + "flows	# proves the old YAML keys are refused
+server/config.go	F	flows to VAD	# audio data flow
+server/redaction_test.go	F	flowing	# data flow
+server/turn_stop_test.go	F	flowing	# data flow
+tools/provtest/report.go	F	flowing	# data flow
+tools/provtest/stt.go	F	flowing	# data flow
+server/storage/schema_names_test.go	F	"flow"	# the test that bans the old word in the schema
+server/storage/schema_names_test.go	F	says flow	# failure text of that test

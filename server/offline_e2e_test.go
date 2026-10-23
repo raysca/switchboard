@@ -135,7 +135,7 @@ func offlineAgent(t *testing.T, r *agentRigE2E, cfg string) string {
 	t.Helper()
 	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "offline", Config: []byte(cfg)})
 	if err != nil || f.Readiness.State != agent.ReadinessReady {
-		t.Fatalf("offline flow: %+v err=%v", f.Readiness, err)
+		t.Fatalf("offline agent: %+v err=%v", f.Readiness, err)
 	}
 	return f.ID
 }

@@ -33,7 +33,7 @@ func TestSilenceTakesNoFallbacksAndIsNotOne(t *testing.T) {
 		return json.RawMessage("{" + fmt.Sprintf(text, sttFB, llmFB, ttsFB) + "}")
 	}
 	if _, err := DecodeConfig(cfg("", "", "")); err != nil {
-		t.Fatalf("a plain text-only flow must be valid: %v", err)
+		t.Fatalf("a plain text-only agent must be valid: %v", err)
 	}
 	for name, c := range map[string]json.RawMessage{
 		"silence stt with a real fallback": cfg(`,"fallbacks":[{"provider":"google","model":"s"}]`, "", ""),
@@ -148,7 +148,7 @@ func TestLegacyConfigHasEmptyChain(t *testing.T) {
 	}
 }
 
-// A session pins the chain with its flow version: a later update moves the
+// A session pins the chain with its agent version: a later update moves the
 // current pointer but the session still resolves the old chain.
 func TestSessionPinsChain(t *testing.T) {
 	svc := testService(t)

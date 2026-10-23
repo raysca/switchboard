@@ -216,7 +216,7 @@ var scenarios = []scenario{
 			_, _, why := failoverPeer(p)
 			return why
 		}, run: s13},
-	{id: "S14", title: "routed flow: route from Front to Sales, then Sales answers", class: classAgent,
+	{id: "S14", title: "multi-step agent: handoff from Front to Sales, then Sales answers", class: classAgent,
 		// text turns only. Reply 1: the transfer round and Front's farewell (2 LLM requests), then Sales'
 		// greeting (1); turn 2 is one Sales reply. Three short replies, four LLM requests in all.
 		shape: func(*opts) shape { return shape{turns: 3, extraLLM: 1, short: true, noSTT: true} },
@@ -802,7 +802,7 @@ func s14(x *sctx, r *Result) {
 		return
 	}
 	reached := c.wait(45*time.Second, func() bool { return strings.Contains(said(mark), agentMarker) })
-	r.check("route reached the sales agent", reached, "")
+	r.check("handoff reached the sales agent", reached, "")
 	r.m("reply", truncate(c.texts(mark, "bot-llm-text", false), 90))
 	if reached {
 		r.m("handoff_ms", msv(time.Since(mark)))
@@ -815,7 +815,7 @@ func s14(x *sctx, r *Result) {
 			r.m("handoff", e.Details)
 		}
 	}
-	r.check("server recorded the route", handoffs == 1, fmt.Sprint(handoffs))
+	r.check("server recorded the handoff", handoffs == 1, fmt.Sprint(handoffs))
 
 	c.quiet(600 * time.Millisecond)
 	mark = time.Now()

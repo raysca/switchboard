@@ -204,7 +204,7 @@ func TestAgentHandoffMovesTheCallToTheSalesStep(t *testing.T) {
 	r.say(t, "t3", "what are your prices")
 	r.waitSpoken(t, "SALES here.", 2)
 	if strings.Count(r.spoken(), "FRONT here.") != 1 {
-		t.Fatalf("the front step must not answer after the route: %q", r.spoken())
+		t.Fatalf("the front step must not answer after the handoff: %q", r.spoken())
 	}
 
 	r.mu.Lock()
@@ -215,7 +215,7 @@ func TestAgentHandoffMovesTheCallToTheSalesStep(t *testing.T) {
 	}
 	for _, k := range []core.HandoffEventKind{core.HandoffCommitted, core.HandoffPreparing, core.HandoffActive} {
 		if !kinds[k] {
-			t.Fatalf("missing route event %q in %+v", k, r.events)
+			t.Fatalf("missing handoff event %q in %+v", k, r.events)
 		}
 	}
 	if len(r.voices) != 2 || r.voices[1] != "sales-voice" {

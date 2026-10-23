@@ -32,7 +32,7 @@ func TestOfflineBreakerStateIsObservable(t *testing.T) {
 	}
 }
 
-// A flow that fails over to or from offline uses offline's own breakers, never xai's.
+// An agent that fails over to or from offline uses offline's own breakers, never xai's.
 func TestOfflineFailoverUsesItsOwnBreakers(t *testing.T) {
 	r := NewRegistry()
 	if r.sttBreaker("offline") != r.offlineSTTBreaker || r.ttsBreaker("offline") != r.offlineTTSBreaker ||

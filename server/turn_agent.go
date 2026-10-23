@@ -19,7 +19,7 @@ func (t TurnConfig) effectiveSpeechTimeout() time.Duration {
 	return cmp.Or(t.SpeechTimeout, coreturn.DefaultUserSpeechTimeout)
 }
 
-// endOfTurn names the detector the server's own chain uses, in the words a flow chooses it by.
+// endOfTurn names the detector the server's own chain uses, in the words an agent chooses it by.
 func (t TurnConfig) endOfTurn() string {
 	switch {
 	case slices.Contains(t.Stop, "turn-analyzer"):
@@ -30,8 +30,8 @@ func (t TurnConfig) endOfTurn() string {
 	return agent.EndOfTurnDefault
 }
 
-// forCall is the server's turn settings with a flow's choices laid over them, member by member. The
-// server's config is shared by every call, so the result never aliases its slices, and a flow can only
+// forCall is the server's turn settings with an agent's choices laid over them, member by member. The
+// server's config is shared by every call, so the result never aliases its slices, and an agent can only
 // shorten the mute cap.
 func (t TurnConfig) forCall(f *agent.TurnSettings) TurnConfig {
 	t.Mute = slices.Clone(t.Mute)
@@ -60,7 +60,7 @@ func (t TurnConfig) forCall(f *agent.TurnSettings) TurnConfig {
 	return t
 }
 
-// flowStop is the stop chain for a flow's end_of_turn. It replaces only the detector entries: an
+// agentStop is the stop chain for an agent's end_of_turn. It replaces only the detector entries: an
 // llm-completion entry is the prompt protocol, which stays the server's. Every chain keeps speech-timeout
 // (a chain of llm-completion alone is refused by turnStopDetector), so default is [] only without it.
 func agentStop(endOfTurn string, server []string) []string {

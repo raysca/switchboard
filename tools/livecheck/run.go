@@ -72,7 +72,7 @@ type runCfg struct {
 	logLevel        string
 }
 
-// runPlan executes the plan: one fresh server (ephemeral ports, own flow store and provider env) per
+// runPlan executes the plan: one fresh server (ephemeral ports, own agent store and provider env) per
 // profile x mode x server class. Failures are recorded per result and never abort other profiles.
 func runPlan(ctx context.Context, cfg runCfg, rep *Report) {
 	spent := cfg.spentBase

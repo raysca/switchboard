@@ -61,7 +61,7 @@ func (f *fakeAgents) Archive(_ context.Context, id string) error {
 func (f *fakeAgents) List(context.Context, int, int) ([]agent.Agent, error) { return f.list, nil }
 func (f *fakeAgents) Create(_ context.Context, r agent.CreateRequest) (agent.Agent, error) {
 	f.creates = append(f.creates, r)
-	fl := agent.Agent{ID: "flow1", Name: r.Name}
+	fl := agent.Agent{ID: "agent1", Name: r.Name}
 	f.list = append(f.list, fl)
 	return fl, nil
 }
@@ -69,7 +69,7 @@ func (f *fakeAgents) Create(_ context.Context, r agent.CreateRequest) (agent.Age
 func TestInstallDentalCreatesTheServerAndTheAgent(t *testing.T) {
 	srv, fl := &fakeServers{}, &fakeAgents{}
 	res, err := InstallDental(context.Background(), srv, fl, "https://dental.example.com/mcp")
-	if err != nil || !res.MCPCreated || !res.AgentCreated || res.Tools != len(dentalmcp.ToolNames) || res.AgentID != "flow1" {
+	if err != nil || !res.MCPCreated || !res.AgentCreated || res.Tools != len(dentalmcp.ToolNames) || res.AgentID != "agent1" {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
 	if srv.list[0].AuthEnv != AuthEnv || srv.list[0].Endpoint != "https://dental.example.com/mcp" {
@@ -77,12 +77,12 @@ func TestInstallDentalCreatesTheServerAndTheAgent(t *testing.T) {
 	}
 	req := fl.creates[0]
 	if len(req.MCPTools) != len(dentalmcp.ToolNames) {
-		t.Fatalf("flow tool selections = %d", len(req.MCPTools))
+		t.Fatalf("agent tool selections = %d", len(req.MCPTools))
 	}
-	// The stored config is a valid three-step flow the server accepts.
+	// The stored config is a valid three-step agent the server accepts.
 	g, err := agent.Decode(req.Config)
 	if err != nil || len(g.Steps) != 3 || len(g.Handoffs) != 2 {
-		t.Fatalf("config: steps=%d routes=%d err=%v", len(g.Steps), len(g.Handoffs), err)
+		t.Fatalf("config: steps=%d handoffs=%d err=%v", len(g.Steps), len(g.Handoffs), err)
 	}
 	for _, s := range g.Steps {
 		if !s.EndCall {
@@ -115,7 +115,7 @@ func TestInstallDentalTwiceChangesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	res, err := InstallDental(context.Background(), srv, fl, "https://d/mcp")
-	if err != nil || res.MCPCreated || res.AgentCreated || srv.creates != 1 || len(fl.creates) != 1 || res.AgentID != "flow1" {
+	if err != nil || res.MCPCreated || res.AgentCreated || srv.creates != 1 || len(fl.creates) != 1 || res.AgentID != "agent1" {
 		t.Fatalf("second run: res=%+v err=%v creates=%d/%d", res, err, srv.creates, len(fl.creates))
 	}
 }
@@ -134,7 +134,7 @@ func TestInstallDentalRefusesAServerMissingATool(t *testing.T) {
 	srv.list = []storage.MCPServer{{ID: "srv1", Name: ServerName, Endpoint: "https://d/mcp"}}
 	short := &shortServers{fakeServers: srv}
 	if _, err := InstallDental(context.Background(), short, &fakeAgents{}, "https://d/mcp"); err == nil {
-		t.Fatal("a server that does not offer every dental tool must not get a flow")
+		t.Fatal("a server that does not offer every dental tool must not get an agent")
 	}
 }
 
@@ -157,10 +157,10 @@ func TestInstallDentalReplacesAnAgentPointingAtAnotherServer(t *testing.T) {
 	stale := agent.Agent{ID: "old", Name: AgentName, Version: &agent.Version{MCPTools: []agent.ToolSelection{{ServerID: "gone", RemoteName: "find_patient"}}}}
 	fl := &fakeAgents{list: []agent.Agent{stale}}
 	res, err := InstallDental(context.Background(), srv, fl, "https://d/mcp")
-	if err != nil || !res.AgentCreated || res.AgentID != "flow1" || len(fl.archived) != 1 || fl.archived[0] != "old" {
+	if err != nil || !res.AgentCreated || res.AgentID != "agent1" || len(fl.archived) != 1 || fl.archived[0] != "old" {
 		t.Fatalf("res=%+v err=%v archived=%v", res, err, fl.archived)
 	}
-	// A flow that points at the current server is left alone.
+	// An agent that points at the current server is left alone.
 	fresh := &fakeAgents{list: []agent.Agent{{ID: "ok", Name: AgentName, Version: &agent.Version{MCPTools: []agent.ToolSelection{{ServerID: "srv1"}}}}}}
 	res, err = InstallDental(context.Background(), srv, fresh, "https://d/mcp")
 	if err != nil || res.AgentCreated || res.AgentID != "ok" || len(fresh.archived) != 0 {

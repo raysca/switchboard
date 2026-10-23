@@ -105,7 +105,7 @@ func DefaultConfig(profile Profile) *Config {
 	cfg.STT.ReplayBuffer = 10 * time.Second
 	cfg.Failover.LLMBudget, cfg.Failover.LLMFirstToken = defaultLLMFailoverBudget, defaultLLMFirstToken
 	// Quiet-caller handling is on: a call nobody is on would otherwise cost money until max_call_duration.
-	// idle.user_timeout: 0 turns it off; a flow can set its own (flow idle).
+	// idle.user_timeout: 0 turns it off; an agent can set its own (agent idle).
 	cfg.Idle.UserTimeout, cfg.Idle.MaxPrompts = defaultUserTimeout, defaultMaxPrompts
 	cfg.Idle.Prompt, cfg.Idle.Goodbye = defaultIdlePrompt, defaultIdleBye
 	cfg.Idle.BotMaxStuck = 3

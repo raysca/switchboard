@@ -113,7 +113,7 @@ func TestRegistry_BuildCallPipelineFromAgentSpec(t *testing.T) {
 		t.Fatal("expected build to reject unusable secrets")
 	}
 
-	// Factories receive exactly the flow's stage settings and credential.
+	// Factories receive exactly the agent's stage settings and credential.
 	got := map[string]StageSpec{}
 	stub := func(stage string, proc core.Processor) ProcessorFactory {
 		return func(c *Config, spec StageSpec) (core.Processor, error) { got[stage] = spec; return proc, nil }

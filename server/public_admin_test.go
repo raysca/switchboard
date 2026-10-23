@@ -120,7 +120,7 @@ func TestAFallingBackUIDoesNotAnswerForServerPaths(t *testing.T) {
 			t.Errorf("%s: %d %q (must be a plain 404, not the UI)", p, w.Code, w.Body.String())
 		}
 	}
-	if w := publicRequest(s, http.MethodGet, "/flows/abc", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `id="root"`) {
+	if w := publicRequest(s, http.MethodGet, "/agents/abc", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `id="root"`) {
 		t.Fatalf("a client route must get the UI: %d", w.Code)
 	}
 	if w := publicRequest(s, http.MethodGet, "/assets/gone.js", ""); w.Code != http.StatusNotFound {

@@ -33,7 +33,7 @@ type mcpCallRig struct {
 
 func newMCPCallRig(t *testing.T, mods ...func(*Config)) *mcpCallRig {
 	t.Helper()
-	// Registered before the flow rig so it closes after the rig's Shutdown: the calls' DELETEs
+	// Registered before the agent rig so it closes after the rig's Shutdown: the calls' DELETEs
 	// still reach the MCP server and end its sessions.
 	mcp := mcptest.New(mcptest.Options{Token: "tok-1"})
 	ts := httptest.NewServer(mcp.Handler())
@@ -93,13 +93,13 @@ func (r *mcpCallRig) discovered(id string) (string, map[string]string) {
 	return id, hashes
 }
 
-// flowWith creates a plain echo flow with the given tools of one server attached.
+// agentWith creates a plain echo agent with the given tools of one server attached.
 func (r *mcpCallRig) agentWith(serverID string, hashes map[string]string, required bool, async []string, tools ...string) agent.Agent {
 	r.t.Helper()
 	return r.agentWithExtra("", serverID, hashes, required, async, tools...)
 }
 
-// flowWithExtra is flowWith with more top-level config members (a JSON fragment starting with a comma).
+// agentWithExtra is agentWith with more top-level config members (a JSON fragment starting with a comma).
 func (r *mcpCallRig) agentWithExtra(extra, serverID string, hashes map[string]string, required bool, async []string, tools ...string) agent.Agent {
 	r.t.Helper()
 	sel := make([]agent.ToolSelection, 0, len(tools))
@@ -114,7 +114,7 @@ func (r *mcpCallRig) agentWithExtra(extra, serverID string, hashes map[string]st
 	cfg := `{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"P"},"tts":{"provider":"echo","voice":"v"},"async_tools":` + string(asyncJSON) + extra + `}`
 	a, err := r.s.agents.Create(r.t.Context(), agent.CreateRequest{Name: "MCP " + strings.Join(tools, "+"), Config: json.RawMessage(cfg), MCPTools: sel})
 	if err != nil {
-		r.t.Fatalf("flow: %v", err)
+		r.t.Fatalf("agent: %v", err)
 	}
 	r.agentID = a.ID
 	return a
@@ -244,7 +244,7 @@ func TestMCPCallUnreachable(t *testing.T) {
 	eventually(t, "the call to go on", func() bool { return c.replies("hello") > 0 })
 }
 
-// R5b: a synchronous tool that runs past tool_cue.after_ms plays the flow's hold sound, which stops when the
+// R5b: a synchronous tool that runs past tool_cue.after_ms plays the agent's hold sound, which stops when the
 // tool returns (before the reply is spoken). An async tool plays none, and an unknown cue is refused at publish.
 func TestMCPCallAHoldSoundPlaysWhileASlowToolRuns(t *testing.T) {
 	const holdCue = `,"audio":{"tool_cue":{"name":"chime","after_ms":300}}`
@@ -347,7 +347,7 @@ func TestMCPCallBargeInStopsTheHoldSound(t *testing.T) {
 	}
 }
 
-// An empty token variable counts as missing: flow readiness names it, and setting it clears it.
+// An empty token variable counts as missing: agent readiness names it, and setting it clears it.
 func TestAgentReadinessNamesAnEmptyMCPTokenVariable(t *testing.T) {
 	r := newMCPCallRig(t)
 	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
@@ -370,7 +370,7 @@ func TestAgentReadinessNamesAnEmptyMCPTokenVariable(t *testing.T) {
 }
 
 // The background syncer, wired by EnableManagement, marks a server whose endpoint went away failed
-// (after two failed rounds, which the unit test TestSyncTwoStrikes pins exactly) and a flow that
+// (after two failed rounds, which the unit test TestSyncTwoStrikes pins exactly) and an agent that
 // requires its tool not ready; restarting the endpoint makes both healthy again. Rounds come from a
 // short timer, so the strike counting is not asserted here.
 func TestMCPCallBackgroundSyncFailsAndHealsAServerAndAgentReadiness(t *testing.T) {
@@ -408,15 +408,15 @@ func TestMCPCallBackgroundSyncFailsAndHealsAServerAndAgentReadiness(t *testing.T
 		return d.Data.ValidationState, string(got.Readiness.State)
 	}
 	if s, f := state(); s != "healthy" || f != string(agent.ReadinessReady) {
-		t.Fatalf("before: server %q flow %q", s, f)
+		t.Fatalf("before: server %q agent %q", s, f)
 	}
 	down.Store(true)
-	eventually(t, "the server to be marked failed and the flow not ready", func() bool {
+	eventually(t, "the server to be marked failed and the agent not ready", func() bool {
 		s, f := state()
 		return s == "connection_failed" && f != string(agent.ReadinessReady)
 	})
 	down.Store(false)
-	eventually(t, "the server healthy and the flow ready again", func() bool {
+	eventually(t, "the server healthy and the agent ready again", func() bool {
 		s, f := state()
 		return s == "healthy" && f == string(agent.ReadinessReady)
 	})

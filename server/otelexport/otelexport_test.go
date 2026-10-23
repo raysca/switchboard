@@ -33,7 +33,7 @@ func ev(e *Exporter, name string, at time.Time, turn core.TurnID, attrs map[stri
 
 func TestSpanTreeAndAttributes(t *testing.T) {
 	e, mem, clock := fixture(Config{})
-	st := e.Session("flow-1", "ver-9")
+	st := e.Session("agent-1", "ver-9")
 	ctx := context.Background()
 
 	sess := st.StartSpan(ctx, ev(e, "session.start", t0, "", nil))
@@ -76,7 +76,7 @@ func TestSpanTreeAndAttributes(t *testing.T) {
 		}
 		return m
 	}
-	if a := attrs(root); a["govoice.agent.id"] != "flow-1" || a["govoice.agent.version"] != "ver-9" {
+	if a := attrs(root); a["govoice.agent.id"] != "agent-1" || a["govoice.agent.version"] != "ver-9" {
 		t.Fatalf("root attrs %v", a)
 	}
 	a := attrs(llmS)

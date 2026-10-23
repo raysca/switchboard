@@ -12,7 +12,7 @@ import (
 )
 
 // attachRecording starts recording the call when the server enables it AND the
-// flow opted in (with disclosure confirmed). It returns a stop func that
+// agent opted in (with disclosure confirmed). It returns a stop func that
 // finalizes the file; stop is nil when the call is not recorded. Recording can
 // never fail the call: sink errors only cost the recording.
 func (s *Server) attachRecording(call CallSpec, agentID string, sessionID uint64, conn *ws.Connection, session *core.Session) (stop func()) {

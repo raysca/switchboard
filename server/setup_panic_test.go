@@ -44,8 +44,8 @@ func TestSetupPanicReleasesAdmissionAndRow(t *testing.T) {
 	waitSetupReleased(t, r, r.dial(r.createHandoffAgent("salesvoice")), 0)
 }
 
-// A panic after the flow is resolved but before the build's fail path exists (here a nil step background
-// in the call's flow) must still end the stored row and release the admission slot.
+// A panic after the agent is resolved but before the build's fail path exists (here a nil step background
+// in the call's agent) must still end the stored row and release the admission slot.
 func TestSetupPanicAfterResolveEndsRow(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe())
 	r.s.adjustCall = func(call *CallSpec) {
@@ -66,7 +66,7 @@ func TestResolveCallPanicEndsRow(t *testing.T) {
 func TestFailPathPanicReleasesAdmissionOnce(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe())
 	r.s.registry.Register("echo.tts", func(cfg *Config, spec StageSpec) (core.Processor, error) { return nil, errors.New("tts down") })
-	if err := r.s.admission.AcquireSession("other", "other-flow", true); err != nil {
+	if err := r.s.admission.AcquireSession("other", "other-agent", true); err != nil {
 		t.Fatal(err)
 	}
 	r.s.logger = slog.New(panicOnSetupFailure{slog.NewTextHandler(io.Discard, nil)}) // fail's last step panics

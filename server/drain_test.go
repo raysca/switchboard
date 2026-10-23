@@ -22,7 +22,7 @@ import (
 	"govoice/transport/ws"
 )
 
-// drainFixture is a server with fake providers and one live flow.
+// drainFixture is a server with fake providers and one live agent.
 func drainFixture(t *testing.T, drain time.Duration) (*Server, *httptest.Server, func(clientReady bool) (*websocket.Conn, error)) {
 	t.Helper()
 	s := apiTestServer(t)
@@ -177,7 +177,7 @@ func TestDrain_DeadlineSendsGoingAway(t *testing.T) {
 func TestFinishCallWaitsForRecordingWhenReleasePanics(t *testing.T) {
 	s := apiTestServer(t)
 	sessionID := uint64(9999)
-	principal, agentID := "panic-test-principal", "panic-test-flow"
+	principal, agentID := "panic-test-principal", "panic-test-agent"
 	if err := s.admission.AcquireSession(principal, agentID, true); err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ func TestFinishCallWaitsForRecordingWhenReleasePanics(t *testing.T) {
 func TestFinishCallRecordingPanicDoesNotStick(t *testing.T) {
 	s := apiTestServer(t)
 	sessionID := uint64(10000)
-	principal, agentID := "rec-panic-principal", "rec-panic-flow"
+	principal, agentID := "rec-panic-principal", "rec-panic-agent"
 	if err := s.admission.AcquireSession(principal, agentID, true); err != nil {
 		t.Fatal(err)
 	}

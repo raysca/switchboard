@@ -61,7 +61,7 @@ func TestEchoTTSChoosesStreamingLikeGoogle(t *testing.T) {
 
 func TestEchoBrokenVoiceFailsToBuild(t *testing.T) {
 	if _, err := NewRegistry().factories["echo.tts"](DefaultConfig(ProfileDevelopment), StageSpec{Voice: "brokenvoice"}); err == nil {
-		t.Fatal("brokenvoice must not build: the e2e suites use it to fail a route")
+		t.Fatal("brokenvoice must not build: the e2e suites use it to fail a handoff")
 	}
 }
 

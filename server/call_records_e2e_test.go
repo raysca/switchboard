@@ -69,7 +69,7 @@ func TestCallRecordsAnAgentThatEndedTheCall(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe(), serverIdle(0, ""))
 	a, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Closer", Config: endCallAgentJSON(true, false)})
 	if err != nil || a.Readiness.State != agent.ReadinessReady {
-		t.Fatalf("flow: %+v err=%v", a.Readiness, err)
+		t.Fatalf("agent: %+v err=%v", a.Readiness, err)
 	}
 	r.agentID = a.ID
 	c := r.dial(a.ID)

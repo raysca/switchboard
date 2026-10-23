@@ -1,4 +1,4 @@
-# Text-only speech (registerSilence): needs no key and recognises and speaks nothing, so a flow that names
+# Text-only speech (registerSilence): needs no key and recognises and speaks nothing, so an agent that names
 # it for both speech stages is driven by typed turns and answers in text. Pair it with a real model.
 id: silence
 name: Silence (text only)

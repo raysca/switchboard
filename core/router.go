@@ -102,7 +102,7 @@ func closeStages(s StepStages) {
 	closeProc(s.TTS)
 }
 
-// Close ends the route with the session: a step built but never installed
+// Close ends the handoff with the session: a step built but never installed
 // is closed, and a build still running closes its stages when it finishes.
 func (rt *Router) Close() {
 	rt.mu.Lock()
@@ -121,7 +121,7 @@ func (rt *Router) emit(e HandoffEvent) {
 	}
 }
 
-// Commit starts the route to target. It returns at once; the step is built
+// Commit starts the handoff to target. It returns at once; the step is built
 // in the background while the old step finishes its farewell.
 func (rt *Router) Commit(target string) error {
 	sc := rt.cfg.LLM.Session()

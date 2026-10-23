@@ -90,7 +90,7 @@ func clipUTF8(s string, n int) string {
 	return s[:n] + "..."
 }
 
-// summaryConfig turns the flow's options into the core config. Both triggers
+// summaryConfig turns the agent's options into the core config. Both triggers
 // sit below their limits so summarizing precedes budget eviction: short voice
 // turns usually hit max_messages long before max_tokens.
 func summaryConfig(o agent.SummarizationConfig, maxMessages, maxTokens int, c textCompleter, onResult func(string, time.Duration, int)) *core.SummaryConfig {

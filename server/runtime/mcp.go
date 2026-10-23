@@ -1,4 +1,4 @@
-// Package runtime binds immutable flow snapshots to public core tool contracts.
+// Package runtime binds immutable agent snapshots to public core tool contracts.
 // MCP SDK and server types stay on the Server side of the framework boundary.
 package runtime
 
@@ -124,7 +124,7 @@ func (e *sessionExecutor) close(ctx context.Context) error {
 // wrapper. The MCP package holds the credential lease only in memory.
 func StartSession(ctx context.Context, agents *agent.Service, mcpService *mcp.Service, agentID, sessionID, caller string) (*Session, error) {
 	if agents == nil || mcpService == nil {
-		return nil, errors.New("flow and MCP services are required")
+		return nil, errors.New("agent and MCP services are required")
 	}
 	snapshot, err := agents.ResolveCurrent(ctx, agentID)
 	if err != nil {
@@ -134,10 +134,10 @@ func StartSession(ctx context.Context, agents *agent.Service, mcpService *mcp.Se
 }
 
 // StartSnapshotSession starts a session from an already resolved snapshot: the
-// current version, or a draft over it (flow.Service.ResolveDraft).
+// current version, or a draft over it (agent.Service.ResolveDraft).
 func StartSnapshotSession(ctx context.Context, agents *agent.Service, mcpService *mcp.Service, snapshot agent.Snapshot, sessionID, caller string) (*Session, error) {
 	if agents == nil || mcpService == nil {
-		return nil, errors.New("flow and MCP services are required")
+		return nil, errors.New("agent and MCP services are required")
 	}
 	items := make([]captured, 0, len(snapshot.MCPTools))
 	agentCfg, _ := agent.StartConfig(snapshot.Version.Config) // already validated at publish; unusable config = no async tools
@@ -191,7 +191,7 @@ func StartSnapshotSession(ctx context.Context, agents *agent.Service, mcpService
 }
 
 // MCPTool is the captured MCP tool a model-facing tool name stands for; false
-// for a built-in tool (a route's transfer, end_call, send_dtmf).
+// for a built-in tool (a handoff's transfer, end_call, send_dtmf).
 func (s *Session) MCPTool(name string) (agent.MCPToolSnapshot, bool) {
 	for _, t := range s.Snapshot.MCPTools {
 		if runtimeToolName(t.ServerID, t.RemoteName) == name {

@@ -72,7 +72,7 @@ func TestNoSecretLeavesTheServer(t *testing.T) {
 	plain, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "Plain", Config: json.RawMessage(
 		`{"stt":{"provider":"echo","model":"chirp_2"},"llm":{"provider":"xai","model":"grok-4.20-0309-non-reasoning"},"tts":{"provider":"echo","voice":"en-US-Chirp3-HD-Aoede"}}`)})
 	if err != nil || plain.Readiness.State != agent.ReadinessReady {
-		t.Fatalf("plain flow: %+v err=%v", plain.Readiness, err)
+		t.Fatalf("plain agent: %+v err=%v", plain.Readiness, err)
 	}
 	handoffID := r.createHandoffAgent("salesvoice")
 	w := apiRequest(s, http.MethodPost, "/api/v1/mcp-servers", e2eMgmtKey, `{"name":"crm","endpoint":"https://1.1.1.1/rpc","transport":"streamable-http","auth_env":"MCP_TOKEN_CRM","enabled":true}`)

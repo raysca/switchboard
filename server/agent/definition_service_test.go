@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// twoStepFlow is a front-desk entry (the standard valid config) and a sales
+// twoStepAgent is a front-desk entry (the standard valid config) and a sales
 // step whose LLM uses salesProvider.
 func twoStepAgent(salesProvider string) json.RawMessage {
 	return json.RawMessage(`{"start":"front","steps":[` +
@@ -62,7 +62,7 @@ func TestFlatConfigStillReadyAndReadsAsOneStep(t *testing.T) {
 		t.Fatalf("err=%v readiness=%+v", err, a.Readiness)
 	}
 	if g, err := Decode(a.Version.Config); err != nil || len(g.Steps) != 1 {
-		t.Fatalf("a flat flow must read back as a one-node graph: %v", err)
+		t.Fatalf("a flat agent must read back as a one-node graph: %v", err)
 	}
 }
 

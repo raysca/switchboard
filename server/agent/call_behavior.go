@@ -9,9 +9,9 @@ import (
 	coreturn "govoice/core/turn"
 )
 
-// IdleSettings is a flow's quiet-caller behavior (call-level: the start step). Present, it replaces
+// IdleSettings is an agent's quiet-caller behavior (call-level: the start step). Present, it replaces
 // the server's user-idle settings as one unit; members it leaves out take the built-in defaults.
-// Pointers tell "absent" from an explicit 0: a timeout of 0 turns the handling off for the flow.
+// Pointers tell "absent" from an explicit 0: a timeout of 0 turns the handling off for the agent.
 type IdleSettings struct {
 	// UserTimeoutMS is the silence before each question: 0 (off) or 1000..300000.
 	UserTimeoutMS *int `json:"user_timeout_ms,omitempty"`
@@ -24,7 +24,7 @@ type IdleSettings struct {
 	Goodbye string `json:"goodbye,omitempty"`
 }
 
-// TurnSettings is a flow's interruption rules and end-of-turn choice (call-level: the start step). Each
+// TurnSettings is an agent's interruption rules and end-of-turn choice (call-level: the start step). Each
 // member overrides the server's turn setting only when present; absent means the server's.
 type TurnSettings struct {
 	// MinWords is how many words of caller speech cut the agent off: 0 (off, any speech does) or 1..10.
@@ -42,7 +42,7 @@ type TurnSettings struct {
 	SmartHoldMS *int `json:"smart_hold_ms,omitempty"`
 }
 
-// AudioSettings is a flow's call audio (call-level). Each member overrides the server's setting
+// AudioSettings is an agent's call audio (call-level). Each member overrides the server's setting
 // only when present.
 type AudioSettings struct {
 	// Denoise present turns noise reduction on for the call.
@@ -62,14 +62,14 @@ type DenoiseSettings struct {
 }
 
 // BackgroundSettings names a sound from the server's audio.backgrounds catalogue, never a path. An empty
-// name means no background for this flow, even when the server has a default one.
+// name means no background for this agent, even when the server has a default one.
 type BackgroundSettings struct {
 	Name   string   `json:"name"`              // present even when empty: {"name":""} is "none"
 	GainDB *float64 `json:"gain_db,omitempty"` // -60..0, default -30
 	Loop   *bool    `json:"loop,omitempty"`    // default true
 }
 
-// The end-of-turn choices a flow may name (turn.end_of_turn).
+// The end-of-turn choices an agent may name (turn.end_of_turn).
 const (
 	EndOfTurnDefault = "default"
 	EndOfTurnSmart   = "smart"
@@ -82,7 +82,7 @@ const (
 	maxIdleTimeoutMS = 300000
 	maxIdlePrompts   = 10
 
-	MinCallDurationSeconds = 60 // the shortest call limit a flow may set (the editor shows it too)
+	MinCallDurationSeconds = 60 // the shortest call limit an agent may set (the editor shows it too)
 	maxCallDurationSeconds = 86400
 
 	maxTurnMinWords = 10
@@ -135,7 +135,7 @@ func (a *AudioSettings) validate() error {
 	}
 	if b := a.Background; b != nil {
 		switch {
-		case b.Name == "": // "no background for this flow", even when the server has a default
+		case b.Name == "": // "no background for this agent", even when the server has a default
 			if b.GainDB != nil || b.Loop != nil {
 				return fmt.Errorf("%w: audio.background with no name (none) takes no gain_db or loop", ErrInvalidConfig)
 			}

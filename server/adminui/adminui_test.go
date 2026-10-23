@@ -35,7 +35,7 @@ func TestServesIndexAndAssets(t *testing.T) {
 
 func TestClientRoutesFallBackToIndexButMissingFilesDoNot(t *testing.T) {
 	h := Handler(site)
-	for _, p := range []string{"/flows", "/flows/abc/edit", "/calls/42"} {
+	for _, p := range []string{"/agents", "/agents/abc/edit", "/calls/42"} {
 		if w := get(h, "GET", p); w.Code != 200 || !strings.Contains(w.Body.String(), "Switchboard") {
 			t.Errorf("%s: %d", p, w.Code)
 		}
@@ -92,7 +92,7 @@ func TestServerPathsNeverGetTheUI(t *testing.T) {
 			t.Errorf("%s: %d %q", p, w.Code, w.Body.String())
 		}
 	}
-	for _, p := range []string{"/flows/api", "/metricsx"} {
+	for _, p := range []string{"/agents/api", "/metricsx"} {
 		if w := get(h, "GET", p); w.Code != 200 {
 			t.Errorf("%s must get the SPA: %d", p, w.Code)
 		}

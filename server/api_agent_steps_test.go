@@ -64,7 +64,7 @@ func TestAgentsAPIAcceptsAgentAndStillAcceptsFlat(t *testing.T) {
 	var graph agentResp
 	_ = json.Unmarshal(w.Body.Bytes(), &graph)
 	if graph.Data.Readiness.State != agent.ReadinessReady || !strings.Contains(string(graph.Data.Version.Config), `"steps"`) {
-		t.Fatalf("graph flow = %+v", graph.Data)
+		t.Fatalf("graph agent = %+v", graph.Data)
 	}
 
 	flat := `{"name":"flat","config":{` + agentStages(true) + `}}`
@@ -83,7 +83,7 @@ func TestAgentsAPIRejectsInvalidAgent(t *testing.T) {
 	s := agentAPIServer(t)
 	w := apiRequest(s, http.MethodPost, "/api/v1/agents", agentMgmtKey, agentBody("bad", "nowhere"))
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("route to a missing step: %d %s", w.Code, w.Body)
+		t.Fatalf("handoff to a missing step: %d %s", w.Code, w.Body)
 	}
 }
 

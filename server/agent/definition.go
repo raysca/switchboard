@@ -8,15 +8,15 @@ import (
 	"strings"
 )
 
-// Definition limits keep a stored flow and a call's step set bounded.
+// Definition limits keep a stored agent and a call's step set bounded.
 const (
 	MaxSteps     = 8
 	MaxHandoffs  = 32
 	maxCondition = 512
 )
 
-// Definition is the stored flow: steps (each a full per-step Config), routes
-// between them, and the call-level route cue. A flat Config is a one-step Definition.
+// Definition is the stored agent: steps (each a full per-step Config), handoffs
+// between them, and the call-level handoff cue. A flat Config is a one-step Definition.
 type Definition struct {
 	Start      string      `json:"start"`
 	Steps      []Step      `json:"steps"`
@@ -36,7 +36,7 @@ type Step struct {
 	// async_tools, idle and audio are call-level: only the start step may set them (audio.background alone may be set on any step).
 	Config Config `json:"-"`
 	// Tools lists the MCP tools ("<mcp_server_id>/<remote_name>") this step
-	// exposes, a subset of the flow version's selected tools.
+	// exposes, a subset of the agent version's selected tools.
 	Tools []string `json:"tools,omitempty"`
 	// EndCall gives the step the end_call tool: the model can hang up after saying goodbye.
 	EndCall  bool      `json:"end_call,omitempty"`
@@ -95,7 +95,7 @@ func invalid(format string, a ...any) error {
 }
 
 // Decode strictly decodes a stored config. A flat Config (no "steps")
-// becomes a one-step flow named "main".
+// becomes a one-step agent named "main".
 func Decode(raw json.RawMessage) (Definition, error) {
 	var probe map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &probe); err != nil || probe == nil {
@@ -261,7 +261,7 @@ func (g Definition) HandoffsFrom(id string) []Handoff {
 	return out
 }
 
-// StartConfig is the call-level config of a stored flow, flat or with steps.
+// StartConfig is the call-level config of a stored agent, flat or with steps.
 func StartConfig(raw json.RawMessage) (Config, error) {
 	g, err := Decode(raw)
 	if err != nil {
@@ -299,7 +299,7 @@ func (g Definition) Problems(av Availability) (reasons, missingEnv []string) {
 	return reasons, uniq(missingEnv)
 }
 
-// checkStepTools rejects a step that exposes a tool the flow version has not selected.
+// checkStepTools rejects a step that exposes a tool the agent version has not selected.
 func checkStepTools(g Definition, selected []ToolSelection) error {
 	have := make(map[string]bool, len(selected))
 	for _, s := range selected {

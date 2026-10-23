@@ -13,7 +13,7 @@ import (
 // IdleConfig enables the user-idle prompt/hang-up and the bot-idle (stuck
 // model or TTS) watchdog (Pipecat UserIdleController and idle_timeout). Both
 // are server-wide defaults: user idle is on by default (15 s, 2 asks, a spoken goodbye;
-// user_timeout: 0 turns it off) and a flow can replace it (flow idle). The bot-idle watchdog
+// user_timeout: 0 turns it off) and an agent can replace it (agent idle). The bot-idle watchdog
 // is off by default. Neither adds a processor when off.
 type IdleConfig struct {
 	// UserTimeout is the silence after the bot stops speaking (or the call
@@ -39,7 +39,7 @@ type IdleConfig struct {
 	BotFallback string        `yaml:"bot_fallback"`
 }
 
-// The built-in quiet-caller defaults: what the server config starts from and what a flow's idle settings
+// The built-in quiet-caller defaults: what the server config starts from and what an agent's idle settings
 // fall back to for any member they leave out.
 const (
 	defaultUserTimeout = 15 * time.Second
@@ -48,7 +48,7 @@ const (
 	defaultIdleBye     = "I'll end the call now. Goodbye."
 )
 
-// forCall is the idle config one call runs: the server's, unless its flow sets idle. A flow's idle
+// forCall is the idle config one call runs: the server's, unless its agent sets idle. An agent's idle
 // replaces the user-idle members as one unit (members it leaves out take the built-in defaults, so what
 // the editor shows is what the call does); the bot-idle watchdog always stays the server's.
 func (c IdleConfig) forCall(f *agent.IdleSettings) IdleConfig {

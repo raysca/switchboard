@@ -16,7 +16,7 @@ import (
 	"govoice/transport/ws"
 )
 
-// A panic in OnSessionReady (server flow or provider-constructor code) runs on
+// A panic in OnSessionReady (server agent or provider-constructor code) runs on
 // the read goroutine: it must end that call, not the process.
 func TestPanicInOnSessionReadyEndsTheCallNotTheProcess(t *testing.T) {
 	now := time.Now()

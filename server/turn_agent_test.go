@@ -159,7 +159,7 @@ func TestTurnForCallDoesNotAliasOrMutateTheServersConfig(t *testing.T) {
 	got := srv.forCall(&agent.TurnSettings{Mute: &agentMute})
 	got.Mute[0] = "scribbled"
 	if agentMute[0] != "always" {
-		t.Fatal("the result aliases the flow's slice")
+		t.Fatal("the result aliases the agent's slice")
 	}
 }
 
@@ -289,21 +289,21 @@ func TestBuildCallPipelineUsesTheAgentsTurnSettings(t *testing.T) {
 	} else if _, wrapped := llm.ToolExecutor.(*markedExecutor); !wrapped {
 		t.Fatal("tools are wrapped although nothing asks for function_call mute")
 	}
-	// The flow's list is the one parsed: an unknown name only fails the build if it is the flow's.
+	// The agent's list is the one parsed: an unknown name only fails the build if it is the agent's.
 	if _, _, err := turnTestBuild(t, cfg, CallSpec{Turn: &agent.TurnSettings{Mute: &[]string{"nope"}}}); err == nil {
-		t.Fatal("the flow's mute list was not used")
+		t.Fatal("the agent's mute list was not used")
 	}
 	if _, llm, err := turnTestBuild(t, cfg, CallSpec{Turn: &agent.TurnSettings{Mute: &[]string{"function_call"}}}); err != nil {
 		t.Fatal(err)
 	} else if _, wrapped := llm.ToolExecutor.(*markedExecutor); wrapped {
-		t.Fatal("function_call from the flow did not create the tool activity")
+		t.Fatal("function_call from the agent did not create the tool activity")
 	}
-	// Push-to-talk keeps the flow's mute; a server with the manager off ignores the rest.
+	// Push-to-talk keeps the agent's mute; a server with the manager off ignores the rest.
 	if _, _, err := turnTestBuild(t, cfg, CallSpec{PushToTalk: true, Turn: &agent.TurnSettings{MinWords: ptr(3), Mute: &[]string{"nope"}}}); err == nil {
-		t.Fatal("push-to-talk dropped the flow's mute list")
+		t.Fatal("push-to-talk dropped the agent's mute list")
 	}
-	// The flow's chain is the one built: smart needs the model, and fails the build without it (readiness
-	// keeps such a flow off the line); eager and a timeout need nothing.
+	// The agent's chain is the one built: smart needs the model, and fails the build without it (readiness
+	// keeps such an agent off the line); eager and a timeout need nothing.
 	smart := CallSpec{Turn: &agent.TurnSettings{EndOfTurn: "smart", SmartHoldMS: ptr(1500)}}
 	if _, _, err := turnTestBuild(t, cfg, smart); err == nil || !strings.Contains(err.Error(), "smart-turn model is not loaded") {
 		t.Fatalf("smart without the model: %v", err)
@@ -317,7 +317,7 @@ func TestBuildCallPipelineUsesTheAgentsTurnSettings(t *testing.T) {
 	off := DefaultConfig(ProfileDevelopment)
 	off.Idle.UserTimeout, off.Turn.Manager = 0, false
 	if _, _, err := turnTestBuild(t, off, CallSpec{Turn: &agent.TurnSettings{MinWords: ptr(3)}}); err != nil {
-		t.Fatalf("manager off must ignore the flow's turn settings: %v", err)
+		t.Fatalf("manager off must ignore the agent's turn settings: %v", err)
 	}
 }
 
@@ -345,17 +345,17 @@ func TestTurnSettingsIgnoredWarningIsLoggedOncePerAgentVersion(t *testing.T) {
 		build("v1")
 	}
 	if n := strings.Count(buf.String(), "turn.manager is off"); n != 1 {
-		t.Fatalf("warned %d times for one flow version, want 1: %s", n, buf.String())
+		t.Fatalf("warned %d times for one agent version, want 1: %s", n, buf.String())
 	}
 	build("v2")
 	if n := strings.Count(buf.String(), "turn.manager is off"); n != 2 {
-		t.Fatalf("a new flow version must warn once more: %d", n)
+		t.Fatalf("a new agent version must warn once more: %d", n)
 	}
 }
 
 func TestCallStopWaitsForTheAgentsSpeechTimeout(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
-	cfg.Turn.SpeechTimeout = 600 * time.Millisecond // the server's own; the flow's 900 ms must win
+	cfg.Turn.SpeechTimeout = 600 * time.Millisecond // the server's own; the agent's 900 ms must win
 	vadStop := cfg.vadStop(0)
 	ends := func(call CallSpec, silence time.Duration) bool {
 		t.Helper()
@@ -369,12 +369,12 @@ func TestCallStopWaitsForTheAgentsSpeechTimeout(t *testing.T) {
 	}
 	agentCall := CallSpec{Turn: &agent.TurnSettings{SpeechTimeoutMS: ptr(900)}}
 	if ends(agentCall, vadStop+899*time.Millisecond) {
-		t.Fatal("the turn ended before the flow's 900 ms resume window")
+		t.Fatal("the turn ended before the agent's 900 ms resume window")
 	}
 	if !ends(agentCall, vadStop+900*time.Millisecond) {
-		t.Fatal("the turn did not end at the flow's 900 ms resume window")
+		t.Fatal("the turn did not end at the agent's 900 ms resume window")
 	}
 	if !ends(CallSpec{}, vadStop+600*time.Millisecond) || ends(CallSpec{}, vadStop+599*time.Millisecond) {
-		t.Fatal("a flow without the setting must keep the server's 600 ms")
+		t.Fatal("an agent without the setting must keep the server's 600 ms")
 	}
 }
