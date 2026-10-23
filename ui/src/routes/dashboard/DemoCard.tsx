@@ -8,7 +8,7 @@ export function DemoCard({ client }: { client: ApiClient }) {
   const status = useQuery({ queryKey: ["demo"], queryFn: () => client.getDemo(), retry: false });
   const install = useMutation({
     mutationFn: () => client.installDentalDemo(),
-    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: ["demo"] }), qc.invalidateQueries({ queryKey: ["flows"] })]),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: ["demo"] }), qc.invalidateQueries({ queryKey: ["agents"] })]),
   });
   const d = status.data?.dental;
   if (!d?.available) return null;

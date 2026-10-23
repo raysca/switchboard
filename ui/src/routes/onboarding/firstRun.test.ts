@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderStatus } from "../../api/client";
-import { DEFAULT_JOB, flowFor, stacksFrom } from "./firstRun";
+import { DEFAULT_JOB, agentFor, stacksFrom } from "./firstRun";
 
 const svc = (extra: object = {}) => ({ available: true, custom: true, ...extra });
 const google: ProviderStatus = {
@@ -53,10 +53,10 @@ describe("stacksFrom", () => {
   });
 });
 
-describe("flowFor", () => {
+describe("agentFor", () => {
   const [g] = stacksFrom([google]);
   it("builds a flat flow from the stack's catalog defaults, the name and the job", () => {
-    expect(flowFor(g, { name: "  Front desk ", job: " Answer calls. ", voice: "puck" })).toEqual({
+    expect(agentFor(g, { name: "  Front desk ", job: " Answer calls. ", voice: "puck" })).toEqual({
       name: "Front desk",
       description: "",
       enabled: true,
@@ -68,14 +68,14 @@ describe("flowFor", () => {
     });
   });
   it("falls back to the default voice when the chosen one is not in the catalog", () => {
-    expect((flowFor(g, { name: "x", job: "y", voice: "nope" }).config as { tts: { voice: string } }).tts.voice).toBe("aoede");
+    expect((agentFor(g, { name: "x", job: "y", voice: "nope" }).config as { tts: { voice: string } }).tts.voice).toBe("aoede");
   });
   it("leaves the language out when the catalog names none", () => {
     const [x] = stacksFrom([xai]);
-    expect((flowFor(x, { name: "x", job: "y", voice: "ara" }).config as { stt: object }).stt).toEqual({ provider: "xai", model: "scribe" });
+    expect((agentFor(x, { name: "x", job: "y", voice: "ara" }).config as { stt: object }).stt).toEqual({ provider: "xai", model: "scribe" });
   });
   it("adds the greeting, trimmed, only when there is one", () => {
-    const cfg = (greeting?: string) => flowFor(g, { name: "x", job: "y", voice: "aoede", greeting }).config as { greeting?: string };
+    const cfg = (greeting?: string) => agentFor(g, { name: "x", job: "y", voice: "aoede", greeting }).config as { greeting?: string };
     expect(cfg("  Hello, thanks for calling.  ").greeting).toBe("Hello, thanks for calling.");
     expect(cfg("   ")).not.toHaveProperty("greeting");
     expect(cfg()).not.toHaveProperty("greeting");

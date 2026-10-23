@@ -7,7 +7,7 @@ import { TurnTimeline } from "../../components/timeline/TurnTimeline";
 import { CallTranscript } from "./CallTranscript";
 import { LiveCallControls } from "./LiveCallControls";
 import { ReplyWaterfall } from "./ReplyWaterfall";
-import { callerLabel, clock, endReasonText, endedByFlow, failedRoutes, formatMs, interruptedCount, medianReplyMs, outcome, path, stepsFor, transcript, turnRows, versionLabel } from "./callStats";
+import { callerLabel, clock, endReasonText, endedByAgent, failedHandoffs, formatMs, interruptedCount, medianReplyMs, outcome, path, stepsFor, transcript, turnRows, versionLabel } from "./callStats";
 import { useNow } from "./useNow";
 
 export type CallViewProps = { client: ApiClient; keyValue: string | null };
@@ -40,7 +40,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
     retry: false,
     refetchInterval: running ? LIVE_POLL_MS : false,
   });
-  const flowsQuery = useQuery({ queryKey: ["flows"], queryFn: () => client.getFlows(), enabled: on, retry: false });
+  const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: () => client.getAgents(), enabled: on, retry: false });
 
   // Polling stops with the status, and its last fetch predates the final replies: fetch once more.
   const status = sessionQuery.data?.status;
@@ -88,16 +88,16 @@ export function CallView({ client, keyValue }: CallViewProps) {
   }
 
   const s = sessionQuery.data;
-  const flow = (flowsQuery.data ?? []).find((f) => f.id === s.agent_id);
-  const fallback = flow?.name ?? "Assistant";
-  const st = stepsFor(s, flow);
+  const agent = (agentsQuery.data ?? []).find((f) => f.id === s.agent_id);
+  const fallback = agent?.name ?? "Assistant";
+  const st = stepsFor(s, agent);
   const turns = turnsQuery.data ?? [];
   const median = medianReplyMs(turns);
   const traces = tracesQuery.data ?? null;
   const o = outcome(s);
   const label = (id: string) => st.names.get(id) ?? id;
-  const ended = endedByFlow(traces);
-  const failed = failedRoutes(traces);
+  const ended = endedByAgent(traces);
+  const failed = failedHandoffs(traces);
 
   const stateBar = (
     <span className="call-state">
@@ -113,8 +113,8 @@ export function CallView({ client, keyValue }: CallViewProps) {
         <div>
           <dt>Flow</dt>
           <dd>
-            {flow && !flow.archived ? <Link to={`/flows/${encodeURIComponent(flow.id)}`}>{flow.name}</Link> : <span>{flow ? `${flow.name} (archived)` : "Unknown flow"}</span>}{" "}
-            <span className="chip">{versionLabel(s, flow)}</span>
+            {agent && !agent.archived ? <Link to={`/flows/${encodeURIComponent(agent.id)}`}>{agent.name}</Link> : <span>{agent ? `${agent.name} (archived)` : "Unknown flow"}</span>}{" "}
+            <span className="chip">{versionLabel(s, agent)}</span>
             {s.draft && <> <span className="chip">Draft</span></>}
           </dd>
         </div>

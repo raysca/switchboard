@@ -1,8 +1,8 @@
 import { Link, useSearchParams } from "react-router";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import type { FlowDTO, ApiClient, ApiError } from "../../api/client";
+import type { AgentDTO, ApiClient, ApiError } from "../../api/client";
 import { EmptyState, ErrorState, LoadingState } from "../../components/primitives";
-import { useActiveSessions } from "../flows/useActiveSessions";
+import { useActiveSessions } from "../agents/useActiveSessions";
 import { callerLabel, clock, endReasonText, formatMs, outcome, versionLabel } from "./callStats";
 import { useNow } from "./useNow";
 
@@ -23,29 +23,29 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
   const pageNumber = Number(params.get("page"));
   // Shown to people as 1, 2, 3…; kept in the URL only from page 2, so Back and links land on the same page.
   const page = Number.isInteger(pageNumber) && pageNumber >= 2 ? pageNumber - 1 : 0;
-  const flowId = params.get("flow") ?? "";
+  const agentId = params.get("flow") ?? "";
   const raw = params.get("outcome");
   const outcomeId: OutcomeFilter = raw === "live" || raw === "ended" ? raw : "";
   const status = outcomeId === "live" ? "active" : outcomeId === "ended" ? "ended" : undefined;
 
   // One extra row tells us whether an older page exists; the API returns no total.
   const calls = useQuery({
-    queryKey: ["sessions", "list", flowId, outcomeId, page],
-    queryFn: () => client.getSessions({ limit: PAGE + 1, offset: page * PAGE, status, agent_id: flowId || undefined }),
+    queryKey: ["sessions", "list", agentId, outcomeId, page],
+    queryFn: () => client.getSessions({ limit: PAGE + 1, offset: page * PAGE, status, agent_id: agentId || undefined }),
     enabled: !!keyValue,
     retry: false,
     refetchInterval: 10_000,
     // Keep the table (and the focused pager button) on screen while the next page loads.
     placeholderData: keepPreviousData,
   });
-  const flowsQuery = useQuery({ queryKey: ["flows"], queryFn: () => client.getFlows(), enabled: !!keyValue, retry: false });
+  const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: () => client.getAgents(), enabled: !!keyValue, retry: false });
   const active = useActiveSessions(client, keyValue);
 
-  const setFilter = (next: { flow?: string; outcome?: OutcomeFilter }) => {
-    const flow = next.flow ?? flowId;
+  const setFilter = (next: { agent?: string; outcome?: OutcomeFilter }) => {
+    const agent = next.agent ?? agentId;
     const out = next.outcome ?? outcomeId;
     const p = new URLSearchParams();
-    if (flow) p.set("flow", flow);
+    if (agent) p.set("flow", agent);
     if (out) p.set("outcome", out);
     setParams(p, { replace: true });
   };
@@ -78,13 +78,13 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
     );
   }
 
-  const flows = new Map<string, FlowDTO>((flowsQuery.data ?? []).map((f) => [f.id, f]));
+  const agents = new Map<string, AgentDTO>((agentsQuery.data ?? []).map((f) => [f.id, f]));
   // The live count follows the flow filter, like the table does.
-  const liveNow = active.data?.filter((s) => !flowId || s.agent_id === flowId).length;
+  const liveNow = active.data?.filter((s) => !agentId || s.agent_id === agentId).length;
   // The API returns at most LIVE_CAP live calls: at the cap the count is a floor, with or without a flow filter.
   const liveText = liveNow === undefined ? "" : (active.data?.length ?? 0) >= LIVE_CAP ? `${liveNow}+` : String(liveNow);
   const hasOlder = (calls.data?.length ?? 0) > PAGE;
-  const filtered = flowId !== "" || outcomeId !== "";
+  const filtered = agentId !== "" || outcomeId !== "";
 
   return (
     <>
@@ -92,10 +92,10 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
       <div className="calls-toolbar">
         <label className="form-field calls-flow" htmlFor="calls-flow">
           <span>Flow</span>
-          <select id="calls-flow" value={flowId} onChange={(e) => setFilter({ flow: e.target.value })}>
+          <select id="calls-flow" value={agentId} onChange={(e) => setFilter({ agent: e.target.value })}>
             <option value="">All flows</option>
-            {flowId !== "" && !flows.has(flowId) && <option value={flowId}>Unknown flow</option>}
-            {[...flows.values()].map((f) => (
+            {agentId !== "" && !agents.has(agentId) && <option value={agentId}>Unknown flow</option>}
+            {[...agents.values()].map((f) => (
               <option key={f.id} value={f.id}>
                 {f.name}
                 {f.archived ? " (archived)" : ""}
@@ -130,7 +130,7 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
           <section className="message-panel">
             <h2>No calls match these filters.</h2>
             <p>
-              <button type="button" className="action-button-small" onClick={() => setFilter({ flow: "", outcome: "" })}>
+              <button type="button" className="action-button-small" onClick={() => setFilter({ agent: "", outcome: "" })}>
                 Clear filters
               </button>
             </p>
@@ -171,7 +171,7 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
               <tbody>
                 {rows.map((s) => {
                   const o = outcome(s);
-                  const f = flows.get(s.agent_id);
+                  const f = agents.get(s.agent_id);
                   return (
                     <tr key={s.id}>
                       <td>

@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
-import type { FlowDTO } from "../../api/client";
+import type { AgentDTO } from "../../api/client";
 import { DeleteServerDialog } from "./DeleteServerDialog";
 
-const flow = (id: string, name: string): FlowDTO => ({
+const agent = (id: string, name: string): AgentDTO => ({
   id,
   name,
   description: "",
@@ -17,11 +17,11 @@ const flow = (id: string, name: string): FlowDTO => ({
   updated_at: "",
 });
 
-function setup(over: Partial<{ inUse: boolean; flows: FlowDTO[] | undefined; pending: boolean; error: string | null }> = {}) {
+function setup(over: Partial<{ inUse: boolean; agents: AgentDTO[] | undefined; pending: boolean; error: string | null }> = {}) {
   const fns = { onDelete: vi.fn(), onDetach: vi.fn(), onCancel: vi.fn() };
   render(
     <MemoryRouter>
-      <DeleteServerDialog name="billing" flows={[]} inUse={false} pending={false} error={null} {...fns} {...over} />
+      <DeleteServerDialog name="billing" agents={[]} inUse={false} pending={false} error={null} {...fns} {...over} />
     </MemoryRouter>,
   );
   return { ...fns, user: userEvent.setup() };
@@ -39,7 +39,7 @@ describe("DeleteServerDialog", () => {
   });
 
   it("when the server is still in use, names the flows and needs a second, explicit confirmation", async () => {
-    const { onDetach, onDelete, user } = setup({ inUse: true, flows: [flow("f1", "Front desk"), flow("f2", "Support triage")] });
+    const { onDetach, onDelete, user } = setup({ inUse: true, agents: [agent("f1", "Front desk"), agent("f2", "Support triage")] });
     expect(screen.getByRole("dialog", { name: "billing is still in use" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Front desk" })).toHaveAttribute("href", "/flows/f1");
     expect(screen.getByRole("link", { name: "Support triage" })).toBeVisible();
@@ -51,7 +51,7 @@ describe("DeleteServerDialog", () => {
   });
 
   it("still explains a conflict caused by calls in progress when no flow is known to use it", () => {
-    setup({ inUse: true, flows: undefined });
+    setup({ inUse: true, agents: undefined });
     expect(screen.getByText(/calls in progress/)).toBeVisible();
     expect(screen.getByText("Which flows use it could not be loaded.")).toBeVisible();
   });

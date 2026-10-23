@@ -4,7 +4,7 @@ import { Modal } from "../../components/Modal";
 export type DeleteServerDialogProps = {
   name: string;
   /** The flows that pin this server's tools; `undefined` when the flow list could not be loaded. */
-  flows: { id: string; name: string }[] | undefined;
+  agents: { id: string; name: string }[] | undefined;
   /** The server refused a plain delete because flows or calls in progress use it. */
   inUse: boolean;
   pending: boolean;
@@ -15,7 +15,7 @@ export type DeleteServerDialogProps = {
 };
 
 /** Delete asks first. When the server says the server is in use, detaching is a second, explicit step that names what it affects. */
-export function DeleteServerDialog({ name, flows, inUse, pending, error, onDelete, onDetach, onCancel }: DeleteServerDialogProps) {
+export function DeleteServerDialog({ name, agents, inUse, pending, error, onDelete, onDetach, onCancel }: DeleteServerDialogProps) {
   return (
     <Modal title={inUse ? `${name} is still in use` : `Delete ${name}?`} onCancel={onCancel}>
       {inUse ? (
@@ -23,11 +23,11 @@ export function DeleteServerDialog({ name, flows, inUse, pending, error, onDelet
           <p>
             Flows or calls in progress still use this server's tools. Detaching removes its tools from the flows that use them; those flows need review before they take calls again. Calls in progress finish first.
           </p>
-          {flows === undefined ? (
+          {agents === undefined ? (
             <p className="subtext">Which flows use it could not be loaded.</p>
-          ) : flows.length > 0 ? (
+          ) : agents.length > 0 ? (
             <ul className="drift-flows">
-              {flows.map((f) => (
+              {agents.map((f) => (
                 <li key={f.id}>
                   <Link to={`/flows/${encodeURIComponent(f.id)}`}>{f.name}</Link>
                 </li>

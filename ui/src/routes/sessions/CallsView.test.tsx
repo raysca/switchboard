@@ -3,11 +3,11 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
-import type { FlowDTO, ApiClient, SessionDTO } from "../../api/client";
+import type { AgentDTO, ApiClient, SessionDTO } from "../../api/client";
 import { ApiError } from "../../api/client";
 import { CallsView } from "./CallsView";
 
-const flow = (over: Partial<FlowDTO> = {}): FlowDTO => ({
+const agent = (over: Partial<AgentDTO> = {}): AgentDTO => ({
   id: "a1",
   name: "Front desk",
   description: "",
@@ -48,7 +48,7 @@ const listOnly = (rows: SessionDTO[] | ((p: { offset?: number; status?: string; 
 function setup(client: Partial<ApiClient>, path = "/sessions", key: string | null = "k") {
   const full = {
     getSessions: listOnly([call()]),
-    getFlows: vi.fn().mockResolvedValue([flow(), flow({ id: "a2", name: "Appointments" })]),
+    getAgents: vi.fn().mockResolvedValue([agent(), agent({ id: "a2", name: "Appointments" })]),
     ...client,
   } as unknown as ApiClient;
   render(
@@ -230,7 +230,7 @@ describe("CallsView", () => {
   });
 
   it("lists calls with an unknown flow when the flow list fails", async () => {
-    setup({ getFlows: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) });
+    setup({ getAgents: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) });
     expect(await screen.findByText("Unknown flow")).toBeVisible();
     expect(screen.queryByRole("alert")).toBeNull();
   });

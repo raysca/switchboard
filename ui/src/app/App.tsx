@@ -20,7 +20,7 @@ import {
 } from "../components/primitives";
 import { getBrowserCapabilities } from "./capabilities";
 import { ProvidersView } from "../routes/providers/ProvidersView";
-import { FlowsView } from "../routes/flows/FlowsView";
+import { AgentsView } from "../routes/agents/AgentsView";
 import { MCPView } from "../routes/mcp/MCPView";
 import { CallsView } from "../routes/sessions/CallsView";
 import { DashboardView } from "../routes/dashboard/DashboardView";
@@ -29,10 +29,10 @@ import { sections } from "../routes/sections";
 
 // The flow editor (React Flow), the call detail and first run are only opened sometimes: load them on demand so the first screen stays small.
 const OnboardingView = lazy(() => import("../routes/onboarding/OnboardingView").then((m) => ({ default: m.OnboardingView })));
-const FlowPage = lazy(() => import("../routes/flows/FlowPage").then((m) => ({ default: m.FlowPage })));
+const AgentPage = lazy(() => import("../routes/agents/AgentPage").then((m) => ({ default: m.AgentPage })));
 const CallView = lazy(() => import("../routes/sessions/CallView").then((m) => ({ default: m.CallView })));
 
-function RouteFocus() {
+function HandoffFocus() {
   const location = useLocation();
   const previousPath = useRef(location.pathname);
   useEffect(() => {
@@ -64,8 +64,8 @@ function RouteFocus() {
 
 /** An old /agents/:id bookmark opens the same flow. */
 function LegacyAgentRedirect() {
-  const { flowId = "" } = useParams();
-  return <Navigate to={`/flows/${encodeURIComponent(flowId)}`} replace />;
+  const { agentId = "" } = useParams();
+  return <Navigate to={`/flows/${encodeURIComponent(agentId)}`} replace />;
 }
 
 /** A magic link carries the key in the address fragment (#key=...): never sent to a server, never logged. */
@@ -150,7 +150,7 @@ export function App({ initialPath }: { initialPath?: string }) {
   return (
     <QueryClientProvider client={queryClient}>
       <Router {...(initialPath ? { initialEntries: [initialPath] } : {})}>
-        <RouteFocus />
+        <HandoffFocus />
         <a className="skip-link" href="#main">
           Skip to content
         </a>
@@ -241,11 +241,11 @@ export function App({ initialPath }: { initialPath?: string }) {
                     <ProvidersView client={client} keyValue={keyValue} />
                   }
                 />
-                <Route path="/flows" element={<FlowsView client={client} keyValue={keyValue} />} />
-                <Route path="/flows/new" element={<FlowPage client={client} keyValue={keyValue} />} />
-                <Route path="/flows/:flowId" element={<FlowPage client={client} keyValue={keyValue} />} />
+                <Route path="/flows" element={<AgentsView client={client} keyValue={keyValue} />} />
+                <Route path="/flows/new" element={<AgentPage client={client} keyValue={keyValue} />} />
+                <Route path="/flows/:agentId" element={<AgentPage client={client} keyValue={keyValue} />} />
                 <Route path="/agents" element={<Navigate to="/flows" replace />} />
-                <Route path="/agents/:flowId" element={<LegacyAgentRedirect />} />
+                <Route path="/agents/:agentId" element={<LegacyAgentRedirect />} />
                 <Route
                   path="/mcp-servers"
                   element={<MCPView client={client} keyValue={keyValue} />}

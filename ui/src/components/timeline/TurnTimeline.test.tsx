@@ -195,9 +195,9 @@ describe("TurnTimeline", () => {
     render(<TurnTimeline turns={turns} traces={traces} />);
     await user.click(screen.getByRole("button", { name: /Show traces/i }));
 
-    const route = screen.getByText("Routed to sales").closest("[data-testid='span-item']") as HTMLElement;
-    expect(route).toHaveAttribute("data-route", "true");
-    expect(route.querySelector(".lamp")).not.toBeNull();
+    const handoff = screen.getByText("Routed to sales").closest("[data-testid='span-item']") as HTMLElement;
+    expect(handoff).toHaveAttribute("data-route", "true");
+    expect(handoff.querySelector(".lamp")).not.toBeNull();
     // Other spans stay as they were.
     expect(screen.getByText("llm.generate").closest("[data-testid='span-item']")).not.toHaveAttribute("data-route");
   });

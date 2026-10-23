@@ -35,8 +35,8 @@ describe("admin shell", () => {
   it("keeps old /agents bookmarks working", async () => {
     render(<App initialPath="/agents/abc" />);
     const nav = within(screen.getByRole("navigation", { name: "Main navigation" }));
-    const flowsLink = await nav.findByRole("link", { name: "Flows" });
-    await waitFor(() => expect(flowsLink).toHaveAttribute("aria-current", "page"));
+    const agentsLink = await nav.findByRole("link", { name: "Flows" });
+    await waitFor(() => expect(agentsLink).toHaveAttribute("aria-current", "page"));
     expect(screen.queryByText("Area not found")).toBeNull();
   });
 

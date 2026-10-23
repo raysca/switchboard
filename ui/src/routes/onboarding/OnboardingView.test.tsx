@@ -4,9 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { OnboardingView } from "./OnboardingView";
-import { ApiError, type ApiClient, type FlowDTO, type ProviderStatus } from "../../api/client";
+import { ApiError, type ApiClient, type AgentDTO, type ProviderStatus } from "../../api/client";
 
-vi.mock("../flows/FlowVoiceTest", () => ({ FlowVoiceTest: ({ flow }: { flow: { name: string } }) => <div data-testid="voice-test">{flow.name}</div> }));
+vi.mock("../agents/AgentVoiceTest", () => ({ AgentVoiceTest: ({ agent }: { agent: { name: string } }) => <div data-testid="voice-test">{agent.name}</div> }));
 
 const svc = (extra: object = {}) => ({ available: true, custom: true, ...extra });
 const google: ProviderStatus = {
@@ -33,7 +33,7 @@ const xai: ProviderStatus = {
     tts: svc({ available: false, reason: "missing_env", missing_env: ["XAI_API_KEY"], voices: [{ id: "ara", label: "Ara" }] }),
   },
 };
-const flow: FlowDTO = {
+const agent: AgentDTO = {
   id: "flow-1",
   name: "Front Desk",
   description: "",
@@ -52,8 +52,8 @@ function Where() {
 function setup(client: Partial<ApiClient> = {}, path = "/onboarding", key: string | null = "k") {
   const full = {
     getProviders: vi.fn().mockResolvedValue([google]),
-    getFlows: vi.fn().mockResolvedValue([]),
-    createFlow: vi.fn().mockResolvedValue(flow),
+    getAgents: vi.fn().mockResolvedValue([]),
+    createAgent: vi.fn().mockResolvedValue(agent),
     ...client,
   } as unknown as ApiClient;
   render(
@@ -124,8 +124,8 @@ describe("OnboardingView", () => {
     await user.clear(screen.getByLabelText("What should it do?"));
     await user.type(screen.getByLabelText("What should it do?"), "Answer for Northline.");
     await user.click(screen.getByRole("button", { name: "Create and call it" }));
-    await waitFor(() => expect(client.createFlow).toHaveBeenCalledOnce());
-    expect(client.createFlow).toHaveBeenCalledWith({
+    await waitFor(() => expect(client.createAgent).toHaveBeenCalledOnce());
+    expect(client.createAgent).toHaveBeenCalledWith({
       name: "Front desk",
       description: "",
       enabled: true,
@@ -144,8 +144,8 @@ describe("OnboardingView", () => {
     expect(screen.getByText("The agent says this word for word when a call connects. Optional.")).toBeVisible();
     await user.type(screen.getByLabelText("First thing it says"), "Hello, thanks for calling Northline.");
     await user.click(screen.getByRole("button", { name: "Create and call it" }));
-    await waitFor(() => expect(client.createFlow).toHaveBeenCalledOnce());
-    expect((client.createFlow as ReturnType<typeof vi.fn>).mock.calls[0][0].config.greeting).toBe("Hello, thanks for calling Northline.");
+    await waitFor(() => expect(client.createAgent).toHaveBeenCalledOnce());
+    expect((client.createAgent as ReturnType<typeof vi.fn>).mock.calls[0][0].config.greeting).toBe("Hello, thanks for calling Northline.");
   });
 
   it("does not create a flow whose greeting is over the server's limit, and says why", async () => {
@@ -155,18 +155,18 @@ describe("OnboardingView", () => {
     await user.paste("é".repeat(260));
     expect(screen.getByText("Greeting is over 500 bytes.")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Create and call it" }));
-    expect(client.createFlow).not.toHaveBeenCalled();
+    expect(client.createAgent).not.toHaveBeenCalled();
   });
 
   it("needs a name before it creates anything", async () => {
     const { client, user } = setup({}, "/onboarding?step=2");
     await user.click(await screen.findByRole("button", { name: "Create and call it" }));
-    expect(client.createFlow).not.toHaveBeenCalled();
+    expect(client.createAgent).not.toHaveBeenCalled();
     expect(screen.getByLabelText("Name")).toBeInvalid();
   });
 
   it("shows a failed create and stays on step 2", async () => {
-    const { user } = setup({ createFlow: vi.fn().mockRejectedValue(new ApiError("name already in use", "conflict", 409, "req-1")) }, "/onboarding?step=2");
+    const { user } = setup({ createAgent: vi.fn().mockRejectedValue(new ApiError("name already in use", "conflict", 409, "req-1")) }, "/onboarding?step=2");
     await user.type(await screen.findByLabelText("Name"), "Front desk");
     await user.click(screen.getByRole("button", { name: "Create and call it" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("name already in use");
@@ -195,7 +195,7 @@ describe("OnboardingView", () => {
   });
 
   it("shows the configured summary when a provider is detected and a flow exists, with ways back in", async () => {
-    setup({ getFlows: vi.fn().mockResolvedValue([flow]) });
+    setup({ getAgents: vi.fn().mockResolvedValue([agent]) });
     expect(await screen.findByText(/system configured and ready/i)).toBeVisible();
     expect(screen.getByText("Front Desk")).toBeVisible();
     expect(screen.getByRole("link", { name: "Manage flows" })).toHaveAttribute("href", "/flows");
@@ -205,7 +205,7 @@ describe("OnboardingView", () => {
   });
 
   it("treats an install whose only flow is archived as having no flows", async () => {
-    setup({ getFlows: vi.fn().mockResolvedValue([{ ...flow, archived: true }]) });
+    setup({ getAgents: vi.fn().mockResolvedValue([{ ...agent, archived: true }]) });
     expect(await screen.findByRole("heading", { name: "Choose how your flow hears, thinks and speaks." })).toBeVisible();
   });
 
@@ -218,7 +218,7 @@ describe("OnboardingView", () => {
 
 describe("OnboardingView steps 3 and 4", () => {
   it("step 3 shows the test call for the created flow, without saying nothing is live", async () => {
-    setup({ getFlows: vi.fn().mockResolvedValue([flow]) }, "/onboarding?step=3&flow=flow-1");
+    setup({ getAgents: vi.fn().mockResolvedValue([agent]) }, "/onboarding?step=3&flow=flow-1");
     expect(await screen.findByRole("heading", { name: "Say hello." })).toBeVisible();
     expect(screen.getByTestId("voice-test")).toHaveTextContent("Front Desk");
     expect(screen.getByRole("link", { name: "Open the flow editor" })).toHaveAttribute("href", "/flows/flow-1");
@@ -228,13 +228,13 @@ describe("OnboardingView steps 3 and 4", () => {
   });
 
   it("goes on from the test call to connecting", async () => {
-    const { user } = setup({ getFlows: vi.fn().mockResolvedValue([flow]) }, "/onboarding?step=3&flow=flow-1");
+    const { user } = setup({ getAgents: vi.fn().mockResolvedValue([agent]) }, "/onboarding?step=3&flow=flow-1");
     await user.click(await screen.findByRole("button", { name: "Next: connect" }));
     expect(screen.getByTestId("where")).toHaveTextContent("step=4&flow=flow-1");
   });
 
   it("step 4 prints the token request with the real flow id and the client snippet", async () => {
-    setup({ getFlows: vi.fn().mockResolvedValue([flow]) }, "/onboarding?step=4&flow=flow-1");
+    setup({ getAgents: vi.fn().mockResolvedValue([agent]) }, "/onboarding?step=4&flow=flow-1");
     expect(await screen.findByRole("heading", { name: "Put it in front of callers." })).toBeVisible();
     const token = screen.getByLabelText("Token request");
     expect(token).toHaveTextContent("POST /api/v1/voice-tokens");
@@ -247,13 +247,13 @@ describe("OnboardingView steps 3 and 4", () => {
   });
 
   it("never puts the management key in a snippet", async () => {
-    setup({ getFlows: vi.fn().mockResolvedValue([flow]) }, "/onboarding?step=4&flow=flow-1", "super-secret-key");
+    setup({ getAgents: vi.fn().mockResolvedValue([agent]) }, "/onboarding?step=4&flow=flow-1", "super-secret-key");
     await screen.findByRole("heading", { name: "Put it in front of callers." });
     expect(document.body.textContent).not.toContain("super-secret-key");
   });
 
   it("copies a snippet, and says so", async () => {
-    const { user } = setup({ getFlows: vi.fn().mockResolvedValue([flow]) }, "/onboarding?step=4&flow=flow-1");
+    const { user } = setup({ getAgents: vi.fn().mockResolvedValue([agent]) }, "/onboarding?step=4&flow=flow-1");
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     await user.click((await screen.findAllByRole("button", { name: "Copy" }))[0]);
@@ -262,19 +262,19 @@ describe("OnboardingView steps 3 and 4", () => {
   });
 
   it("says so when the clipboard refuses", async () => {
-    const { user } = setup({ getFlows: vi.fn().mockResolvedValue([flow]) }, "/onboarding?step=4&flow=flow-1");
+    const { user } = setup({ getAgents: vi.fn().mockResolvedValue([agent]) }, "/onboarding?step=4&flow=flow-1");
     Object.defineProperty(navigator, "clipboard", { value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) }, configurable: true });
     await user.click((await screen.findAllByRole("button", { name: "Copy" }))[1]);
     expect(await screen.findByText("Could not copy. Select the text and copy it yourself.")).toBeVisible();
   });
 
   it("falls back when the flow in the link was archived meanwhile", async () => {
-    setup({ getFlows: vi.fn().mockResolvedValue([{ ...flow, archived: true }]) }, "/onboarding?step=4&flow=flow-1");
+    setup({ getAgents: vi.fn().mockResolvedValue([{ ...agent, archived: true }]) }, "/onboarding?step=4&flow=flow-1");
     expect(await screen.findByRole("heading", { name: "Tell it what job it's doing." })).toBeVisible();
   });
 
   it("uses the flow just created even before the list has caught up", async () => {
-    const { user } = setup({ getFlows: vi.fn().mockResolvedValueOnce([]).mockResolvedValue([]) });
+    const { user } = setup({ getAgents: vi.fn().mockResolvedValueOnce([]).mockResolvedValue([]) });
     await user.click(await screen.findByRole("button", { name: "Continue" }));
     await user.type(screen.getByLabelText("Name"), "Front Desk");
     await user.click(screen.getByRole("button", { name: "Create and call it" }));
@@ -284,14 +284,14 @@ describe("OnboardingView steps 3 and 4", () => {
 
 describe("OnboardingView review fixes", () => {
   it("keeps the test call up when a background refetch fails", async () => {
-    const getFlows = vi.fn().mockResolvedValueOnce([flow]).mockRejectedValue(new ApiError("blip", "internal", 500, "r"));
-    setup({ getFlows }, "/onboarding?step=3&flow=flow-1");
+    const getAgents = vi.fn().mockResolvedValueOnce([agent]).mockRejectedValue(new ApiError("blip", "internal", 500, "r"));
+    setup({ getAgents }, "/onboarding?step=3&flow=flow-1");
     expect(await screen.findByTestId("voice-test")).toBeVisible();
     await act(async () => {
       focusManager.setFocused(false);
       focusManager.setFocused(true);
     });
-    await waitFor(() => expect(getFlows.mock.calls.length).toBeGreaterThan(1));
+    await waitFor(() => expect(getAgents.mock.calls.length).toBeGreaterThan(1));
     expect(screen.getByTestId("voice-test")).toBeVisible();
     expect(screen.queryByRole("alert")).toBeNull();
   });
@@ -314,7 +314,7 @@ describe("OnboardingView review fixes", () => {
   });
 
   it("puts the voice token in the web client snippet", async () => {
-    setup({ getFlows: vi.fn().mockResolvedValue([flow]) }, "/onboarding?step=4&flow=flow-1");
+    setup({ getAgents: vi.fn().mockResolvedValue([agent]) }, "/onboarding?step=4&flow=flow-1");
     expect(await screen.findByLabelText("Web client")).toHaveTextContent("wss://[YOUR SERVER]/ws?token=[VOICE TOKEN]");
   });
 
@@ -330,7 +330,7 @@ describe("OnboardingView review fixes", () => {
     expect(screen.getByLabelText("Voice")).toHaveValue("zed");
     await user.type(screen.getByLabelText("Name"), "x");
     await user.click(screen.getByRole("button", { name: "Create and call it" }));
-    await waitFor(() => expect(client.createFlow).toHaveBeenCalled());
-    expect((client.createFlow as ReturnType<typeof vi.fn>).mock.calls[0][0].config.tts.voice).toBe("zed");
+    await waitFor(() => expect(client.createAgent).toHaveBeenCalled());
+    expect((client.createAgent as ReturnType<typeof vi.fn>).mock.calls[0][0].config.tts.voice).toBe("zed");
   });
 });

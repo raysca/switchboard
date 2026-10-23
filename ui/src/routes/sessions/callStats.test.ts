@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { FlowDTO, SessionDTO, SessionTracesDTO, TraceSpanDTO, TurnDTO } from "../../api/client";
-import { callerLabel, clock, endReasonText, endedByFlow, failedRoutes, formatMs, interruptedCount, medianReplyMs, mmss, replyMs, outcome, path, steps, stepsFor, transcript, turnRows, versionLabel } from "./callStats";
+import type { AgentDTO, SessionDTO, SessionTracesDTO, TraceSpanDTO, TurnDTO } from "../../api/client";
+import { callerLabel, clock, endReasonText, endedByAgent, failedHandoffs, formatMs, interruptedCount, medianReplyMs, mmss, replyMs, outcome, path, steps, stepsFor, transcript, turnRows, versionLabel } from "./callStats";
 
-const flow = (config: Record<string, unknown> = {}): FlowDTO => ({
+const agent = (config: Record<string, unknown> = {}): AgentDTO => ({
   id: "a1",
   name: "Front desk",
   description: "",
@@ -54,8 +54,8 @@ describe("outcome", () => {
 
 describe("versionLabel", () => {
   it("names the version only when it is the flow's current one", () => {
-    expect(versionLabel(session(), flow())).toBe("v7");
-    expect(versionLabel(session({ agent_version_id: "v6" }), flow())).toBe("earlier version");
+    expect(versionLabel(session(), agent())).toBe("v7");
+    expect(versionLabel(session({ agent_version_id: "v6" }), agent())).toBe("earlier version");
     expect(versionLabel(session(), undefined)).toBe("earlier version");
   });
 });
@@ -75,18 +75,18 @@ describe("clock", () => {
 
 describe("steps", () => {
   it("reads names and the start step from the current version", () => {
-    const st = steps(flow(graph));
+    const st = steps(agent(graph));
     expect(st.names.get("b")).toBe("Billing");
     expect(st.start).toBe("r");
   });
   it("is empty for a flat flow or an unknown one", () => {
-    expect(steps(flow({ llm: {} })).names.size).toBe(0);
+    expect(steps(agent({ llm: {} })).names.size).toBe(0);
     expect(steps(undefined).names.size).toBe(0);
   });
 });
 
 describe("path", () => {
-  const st = steps(flow(graph));
+  const st = steps(agent(graph));
   it("lists the steps in the order the call visited them", () => {
     expect(path(traces(toBilling), st, "Front desk")).toEqual(["Reception", "Billing"]);
   });
@@ -100,16 +100,16 @@ describe("path", () => {
   });
 });
 
-describe("failedRoutes", () => {
+describe("failedHandoffs", () => {
   it("returns the step ids of routes that failed", () => {
     const failed = span("handoff.failed", "2026-10-12T14:00:30Z", { from_step: "r", to_step: "b" });
-    expect(failedRoutes(traces(failed, toBilling))).toEqual([{ from: "r", to: "b" }]);
-    expect(failedRoutes(null)).toEqual([]);
+    expect(failedHandoffs(traces(failed, toBilling))).toEqual([{ from: "r", to: "b" }]);
+    expect(failedHandoffs(null)).toEqual([]);
   });
 });
 
 describe("transcript", () => {
-  const st = steps(flow(graph));
+  const st = steps(agent(graph));
   const turns = [
     turn(1, "2026-10-12T14:00:01Z", "2026-10-12T14:00:01Z", "", "Hi, you're through. How can I help?"),
     turn(2, "2026-10-12T14:00:06Z", "2026-10-12T14:00:09Z", "My bill went up.", "I can look into that."),
@@ -122,7 +122,7 @@ describe("transcript", () => {
       { kind: "say", who: "step", label: "Reception", at: "00:01", text: "Hi, you're through. How can I help?", interrupted: false },
       { kind: "say", who: "caller", label: "Caller", at: "00:06", text: "My bill went up.", interrupted: false },
       { kind: "say", who: "step", label: "Reception", at: "00:09", text: "I can look into that.", interrupted: false },
-      { kind: "route", at: "00:41", from: "Reception", to: "Billing" },
+      { kind: "handoff", at: "00:41", from: "Reception", to: "Billing" },
       { kind: "say", who: "caller", label: "Caller", at: "00:43", text: "Put it back on?", interrupted: false },
       { kind: "say", who: "step", label: "Billing", at: "00:45", text: "Let me check", interrupted: true },
     ]);
@@ -141,7 +141,7 @@ describe("transcript", () => {
   it("keeps a route that happened after the last turn", () => {
     const late = span("handoff.active", "2026-10-12T14:03:00Z", { from_step: "b", to_step: "r" });
     const lines = transcript(session(), turns, traces(toBilling, late), st, "Front desk");
-    expect(lines.at(-1)).toEqual({ kind: "route", at: "03:00", from: "Billing", to: "Reception" });
+    expect(lines.at(-1)).toEqual({ kind: "handoff", at: "03:00", from: "Billing", to: "Reception" });
   });
 });
 
@@ -152,7 +152,7 @@ describe("interruptedCount", () => {
 });
 
 describe("transcript: words the system put in the caller's mouth", () => {
-  const st = steps(flow(graph));
+  const st = steps(agent(graph));
   it("leaves out the internal prompts the server records as caller turns", () => {
     const lines = transcript(
       session(),
@@ -172,7 +172,7 @@ describe("transcript: words the system put in the caller's mouth", () => {
 });
 
 describe("idle and note-triggered turns (empty or system transcript)", () => {
-  const st = steps(flow(graph));
+  const st = steps(agent(graph));
   const turns = [
     turn(1, "2026-10-12T14:00:10Z", "2026-10-12T14:00:11Z", "", "Are you still there?"),
     turn(2, "2026-10-12T14:00:20Z", "2026-10-12T14:00:21Z", "[async tool result:context_note]", "Noted, a VIP."),
@@ -196,7 +196,7 @@ describe("idle and note-triggered turns (empty or system transcript)", () => {
 
 describe("stepsFor", () => {
   it("does not claim the current start step for a call on an earlier version, but keeps the names", () => {
-    const f = flow(graph);
+    const f = agent(graph);
     expect(stepsFor(session(), f).start).toBe("r");
     const old = stepsFor(session({ agent_version_id: "v6" }), f);
     expect(old.start).toBeUndefined();
@@ -232,13 +232,13 @@ describe("turnRows", () => {
 
   it("finds the step that ended the call", () => {
     const t = traces(span("call.end", "2026-10-12T14:04:12Z", { reason: "ended_by_agent", from_step: "b" }));
-    expect(endedByFlow(t)).toEqual({ step: "b" });
-    expect(endedByFlow(traces())).toBeNull();
-    expect(endedByFlow(null)).toBeNull();
+    expect(endedByAgent(t)).toEqual({ step: "b" });
+    expect(endedByAgent(traces())).toBeNull();
+    expect(endedByAgent(null)).toBeNull();
   });
   it("ignores a hangup ending and a span that is not call.end", () => {
-    expect(endedByFlow(traces(span("call.end", "2026-10-12T14:04:12Z", { reason: "hangup", from_step: "b" })))).toBeNull();
-    expect(endedByFlow(traces(span("handoff.active", "2026-10-12T14:04:12Z", { reason: "ended_by_agent", from_step: "b" })))).toBeNull();
+    expect(endedByAgent(traces(span("call.end", "2026-10-12T14:04:12Z", { reason: "hangup", from_step: "b" })))).toBeNull();
+    expect(endedByAgent(traces(span("handoff.active", "2026-10-12T14:04:12Z", { reason: "ended_by_agent", from_step: "b" })))).toBeNull();
   });
 });
 

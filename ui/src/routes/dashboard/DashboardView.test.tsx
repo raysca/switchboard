@@ -50,7 +50,7 @@ function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
     getOperationsStatus: vi.fn().mockResolvedValue(createMockOperations()),
     getDemo: vi.fn().mockResolvedValue({ dental: { available: false, installed: false } }),
-    getFlows: vi.fn().mockResolvedValue([
+    getAgents: vi.fn().mockResolvedValue([
       { id: "agent-1", name: "Support Agent", readiness: { state: "ready" } },
       { id: "agent-2", name: "Sales Agent", readiness: { state: "not_ready" } },
     ]),
@@ -169,7 +169,7 @@ describe("DashboardView setup checklist", () => {
   const show = (overrides: Partial<ApiClient>) => renderWithProviders(<DashboardView client={createMockClient(overrides)} keyValue="test-key" />);
 
   it("shows two steps to a first call when nothing is set up", async () => {
-    show({ getProviders: vi.fn().mockResolvedValue(prov(false)), getFlows: vi.fn().mockResolvedValue([]) });
+    show({ getProviders: vi.fn().mockResolvedValue(prov(false)), getAgents: vi.fn().mockResolvedValue([]) });
     expect(await screen.findByRole("heading", { name: "Two steps to your first call." })).toBeVisible();
     expect(within(screen.getByRole("list", { name: "Setup checklist" })).getAllByRole("listitem")).toHaveLength(2);
     expect(screen.getByRole("link", { name: "See providers" })).toHaveAttribute("href", "/providers");
@@ -177,7 +177,7 @@ describe("DashboardView setup checklist", () => {
   });
 
   it("says one step when a provider is already detected", async () => {
-    show({ getProviders: vi.fn().mockResolvedValue(prov(true)), getFlows: vi.fn().mockResolvedValue([]) });
+    show({ getProviders: vi.fn().mockResolvedValue(prov(true)), getAgents: vi.fn().mockResolvedValue([]) });
     expect(await screen.findByRole("heading", { name: "One step to your first call." })).toBeVisible();
     expect(screen.getByText("Google is ready.")).toBeVisible();
   });
@@ -189,7 +189,7 @@ describe("DashboardView setup checklist", () => {
   });
 
   it("does not claim anything is missing when the provider list failed", async () => {
-    show({ getProviders: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")), getFlows: vi.fn().mockResolvedValue([]) });
+    show({ getProviders: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")), getAgents: vi.fn().mockResolvedValue([]) });
     await screen.findByRole("heading", { name: /Recent calls/ });
     expect(screen.queryByRole("heading", { name: /to your first call/ })).toBeNull();
   });

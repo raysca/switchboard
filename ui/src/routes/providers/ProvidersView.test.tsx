@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { ProvidersView } from "./ProvidersView";
-import type { FlowDTO, ApiClient, ProviderStatus, ProviderTest } from "../../api/client";
+import type { AgentDTO, ApiClient, ProviderStatus, ProviderTest } from "../../api/client";
 import { ApiError } from "../../api/client";
 
 const google: ProviderStatus = {
@@ -27,7 +27,7 @@ const xai: ProviderStatus = {
   env: ["XAI_API_KEY"],
   services: { llm: { available: false, reason: "missing_env", missing_env: ["XAI_API_KEY"], custom: true, models: [{ id: "grok", label: "Grok 4" }] } },
 };
-const flow = (id: string, name: string, config: Record<string, unknown>, archived = false): FlowDTO => ({
+const agent = (id: string, name: string, config: Record<string, unknown>, archived = false): AgentDTO => ({
   id,
   name,
   description: "",
@@ -38,8 +38,8 @@ const flow = (id: string, name: string, config: Record<string, unknown>, archive
   created_at: "",
   updated_at: "",
 });
-const front = flow("f1", "Front desk", { stt: { provider: "google" }, llm: { provider: "google" }, tts: { provider: "google" } });
-const graph = flow("f2", "Support triage", { start: "a", steps: [{ id: "a", config: { llm: { provider: "xai" } } }], handoffs: [] });
+const front = agent("f1", "Front desk", { stt: { provider: "google" }, llm: { provider: "google" }, tts: { provider: "google" } });
+const graph = agent("f2", "Support triage", { start: "a", steps: [{ id: "a", config: { llm: { provider: "xai" } } }], handoffs: [] });
 
 function Where() {
   const l = useLocation();
@@ -48,7 +48,7 @@ function Where() {
 function setup(client: Partial<ApiClient>, path = "/providers", key: string | null = "k") {
   const full = {
     getProviders: vi.fn().mockResolvedValue([google, xai]),
-    getFlows: vi.fn().mockResolvedValue([front, graph]),
+    getAgents: vi.fn().mockResolvedValue([front, graph]),
     ...client,
   } as unknown as ApiClient;
   render(
@@ -163,7 +163,7 @@ describe("ProvidersView", () => {
   });
 
   it("says which flows use the provider, once each, and links to them", async () => {
-    setup({ getFlows: vi.fn().mockResolvedValue([front, graph, flow("old", "Old", front.current_version!.config, true)]) });
+    setup({ getAgents: vi.fn().mockResolvedValue([front, graph, agent("old", "Old", front.current_version!.config, true)]) });
     const panel = await screen.findByRole("complementary");
     const used = within(panel).getByRole("region", { name: "Used by" });
     expect(within(used).getAllByRole("link").map((a) => a.textContent)).toEqual(["Front desk"]);
@@ -171,12 +171,12 @@ describe("ProvidersView", () => {
   });
 
   it("says when no flow uses the provider yet", async () => {
-    setup({ getFlows: vi.fn().mockResolvedValue([]) });
+    setup({ getAgents: vi.fn().mockResolvedValue([]) });
     expect(await screen.findByText("No flow uses this provider yet.")).toBeVisible();
   });
 
   it("still lists providers when the flow list fails, with the counts left out", async () => {
-    setup({ getFlows: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) });
+    setup({ getAgents: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) });
     await screen.findByRole("table");
     expect(within(rowOf("Google")).getByText("—")).toBeVisible();
     expect(screen.getByText("The flows could not be loaded, so which flows use this provider is unknown.")).toBeVisible();
@@ -184,8 +184,8 @@ describe("ProvidersView", () => {
   });
 
   it("says 'at least' when the flow list was cut at the API's page size", async () => {
-    const many = Array.from({ length: 100 }, (_, i) => flow(`f${i}`, `Flow ${i}`, { llm: { provider: "google" } }));
-    setup({ getFlows: vi.fn().mockResolvedValue(many) });
+    const many = Array.from({ length: 100 }, (_, i) => agent(`f${i}`, `Flow ${i}`, { llm: { provider: "google" } }));
+    setup({ getAgents: vi.fn().mockResolvedValue(many) });
     await screen.findByRole("table");
     expect(within(rowOf("Google")).getByText("100+")).toBeVisible();
   });
@@ -212,8 +212,8 @@ describe("ProvidersView", () => {
   });
 
   it("says a provider with no match is unchecked beyond the first 100 flows, instead of 'none use it'", async () => {
-    const many = Array.from({ length: 100 }, (_, i) => flow(`f${i}`, `Flow ${i}`, { llm: { provider: "google" } }));
-    const { user } = setup({ getFlows: vi.fn().mockResolvedValue(many) });
+    const many = Array.from({ length: 100 }, (_, i) => agent(`f${i}`, `Flow ${i}`, { llm: { provider: "google" } }));
+    const { user } = setup({ getAgents: vi.fn().mockResolvedValue(many) });
     await screen.findByRole("table");
     await user.click(screen.getByRole("button", { name: "xAI" }));
     expect(screen.getByText("No flow among the first 100 uses this provider; later flows were not checked.")).toBeVisible();
@@ -221,9 +221,9 @@ describe("ProvidersView", () => {
   });
 
   it("counts a provider that a flow names only as a fallback", async () => {
-    const withFallback = flow("fb", "Failover", { llm: { provider: "google" }, tts: { provider: "google", fallbacks: [{ provider: "cartesia" }] } });
+    const withFallback = agent("fb", "Failover", { llm: { provider: "google" }, tts: { provider: "google", fallbacks: [{ provider: "cartesia" }] } });
     const cartesia: ProviderStatus = { id: "cartesia", display_name: "Cartesia", capabilities: [], detected: false, env: ["CARTESIA_API_KEY"], services: { tts: { available: false, reason: "missing_env", missing_env: ["CARTESIA_API_KEY"], custom: true } } };
-    const { user } = setup({ getProviders: vi.fn().mockResolvedValue([google, cartesia]), getFlows: vi.fn().mockResolvedValue([withFallback]) });
+    const { user } = setup({ getProviders: vi.fn().mockResolvedValue([google, cartesia]), getAgents: vi.fn().mockResolvedValue([withFallback]) });
     await screen.findByRole("table");
     expect(within(rowOf("Cartesia")).getByText("1")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Cartesia" }));

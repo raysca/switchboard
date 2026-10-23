@@ -16,17 +16,17 @@ export function DriftPanel({ client, tool, schema, items }: { client: ApiClient;
 
   const accept = useMutation({
     mutationFn: async (d: Drift) => {
-      const { selection } = repin(d.flow);
+      const { selection } = repin(d.agent);
       if (!selection) throw new Error("The server's current schema is unknown, so there is nothing to accept.");
       // Every update publishes the config it is sent, so re-read it: a cached copy could revert someone's newer edit.
-      const fresh = await client.getFlow(d.flow.id);
+      const fresh = await client.getAgent(d.agent.id);
       if (!fresh.current_version) throw new Error("This flow has no published version to re-pin.");
-      return client.updateFlow(d.flow.id, { config: fresh.current_version.config, mcp_tools: selection });
+      return client.updateAgent(d.agent.id, { config: fresh.current_version.config, mcp_tools: selection });
     },
     onSuccess: () => {
       setAccepting(null);
       setError(null);
-      void queryClient.invalidateQueries({ queryKey: ["flows"] });
+      void queryClient.invalidateQueries({ queryKey: ["agents"] });
     },
     onError: (err) => setError(formatApiError(err, "Could not publish the new version")),
   });
@@ -37,17 +37,17 @@ export function DriftPanel({ client, tool, schema, items }: { client: ApiClient;
       <p>Flows that require it need your review before they take calls again. Flows that use it optionally keep working without it.</p>
       <ul className="drift-flows">
         {items.map((d) => (
-          <li key={d.flow.id}>
-            <Link to={`/flows/${encodeURIComponent(d.flow.id)}`}>{d.flow.name}</Link>
+          <li key={d.agent.id}>
+            <Link to={`/flows/${encodeURIComponent(d.agent.id)}`}>{d.agent.name}</Link>
             <span className="subtext">{d.dep.required ? "requires it" : "uses it optionally"}</span>
             <code>
               {short(d.dep.selected_schema_hash)} → {short(d.dep.current_schema_hash)}
             </code>
-            {repin(d.flow).selection && (
+            {repin(d.agent).selection && (
               <button
                 type="button"
                 className="action-button-small"
-                aria-label={`Accept new schema for ${d.flow.name}`}
+                aria-label={`Accept new schema for ${d.agent.name}`}
                 onClick={() => {
                   setError(null);
                   setAccepting(d);
@@ -65,13 +65,13 @@ export function DriftPanel({ client, tool, schema, items }: { client: ApiClient;
       </pre>
 
       {accepting && (
-        <Modal title={`Accept the new schema for ${accepting.flow.name}?`} onCancel={() => setAccepting(null)}>
+        <Modal title={`Accept the new schema for ${accepting.agent.name}?`} onCancel={() => setAccepting(null)}>
           <p>
-            This publishes a new version of {accepting.flow.name} that re-pins {repin(accepting.flow).tools.join(", ")} to the schemas the servers offer now. Calls in progress finish on the version they started on.
+            This publishes a new version of {accepting.agent.name} that re-pins {repin(accepting.agent).tools.join(", ")} to the schemas the servers offer now. Calls in progress finish on the version they started on.
           </p>
-          {repin(accepting.flow).blockedBy.length > 0 && (
+          {repin(accepting.agent).blockedBy.length > 0 && (
             <p role="note" className="tool-console__error">
-              The server will refuse until {repin(accepting.flow).blockedBy.map((d) => d.remote_name).join(", ")} is fixed: it is missing, or its server is unavailable.
+              The server will refuse until {repin(accepting.agent).blockedBy.map((d) => d.remote_name).join(", ")} is fixed: it is missing, or its server is unavailable.
             </p>
           )}
           {error && (
@@ -83,7 +83,7 @@ export function DriftPanel({ client, tool, schema, items }: { client: ApiClient;
             <button type="button" className="action-button-small" onClick={() => setAccepting(null)}>
               Cancel
             </button>
-            <button type="button" className="action-button" disabled={accept.isPending || repin(accepting.flow).blockedBy.length > 0} onClick={() => accept.mutate(accepting)}>
+            <button type="button" className="action-button" disabled={accept.isPending || repin(accepting.agent).blockedBy.length > 0} onClick={() => accept.mutate(accepting)}>
               {accept.isPending ? "Publishing…" : "Publish new version"}
             </button>
           </div>
@@ -106,8 +106,8 @@ export function MissingTools({ items }: { items: Drift[] }) {
             {items
               .filter((d) => d.dep.remote_name === name)
               .map((d) => (
-                <li key={d.flow.id}>
-                  <Link to={`/flows/${encodeURIComponent(d.flow.id)}`}>{d.flow.name}</Link>
+                <li key={d.agent.id}>
+                  <Link to={`/flows/${encodeURIComponent(d.agent.id)}`}>{d.agent.name}</Link>
                   <span className="subtext">{d.dep.required ? "requires it" : "uses it optionally"}</span>
                 </li>
               ))}

@@ -1,4 +1,4 @@
-import type { FlowDTO, ProviderStatus } from "../../api/client";
+import type { AgentDTO, ProviderStatus } from "../../api/client";
 
 export const SERVICES = ["stt", "llm", "tts"] as const;
 export type Service = (typeof SERVICES)[number];
@@ -61,6 +61,6 @@ function stageProviders(config: unknown): string[] {
 }
 
 /** Flows whose current version uses the provider in any stage or step. Archived flows never count. */
-export function flowsUsing(flows: FlowDTO[], providerId: string): FlowDTO[] {
-  return flows.filter((f) => !f.archived && stageProviders(f.current_version?.config).includes(providerId));
+export function agentsUsing(agents: AgentDTO[], providerId: string): AgentDTO[] {
+  return agents.filter((f) => !f.archived && stageProviders(f.current_version?.config).includes(providerId));
 }

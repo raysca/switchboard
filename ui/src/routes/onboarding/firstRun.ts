@@ -1,4 +1,4 @@
-import type { CreateFlowInput, ProviderStatus } from "../../api/client";
+import type { CreateAgentInput, ProviderStatus } from "../../api/client";
 import { missingEnv } from "../providers/providerStats";
 
 export type Entry = { id: string; label: string; default?: boolean };
@@ -42,7 +42,7 @@ export function stacksFrom(providers: ProviderStatus[]): Stack[] {
 	return stacks.sort((a, b) => Number(b.ready) - Number(a.ready) || simulated(a) - simulated(b) || a.provider.display_name.localeCompare(b.provider.display_name));
 }
 
-export function flowFor(stack: Stack, input: { name: string; job: string; voice: string; greeting?: string }): CreateFlowInput {
+export function agentFor(stack: Stack, input: { name: string; job: string; voice: string; greeting?: string }): CreateAgentInput {
   const provider = stack.provider.id;
   const voice = stack.tts.voices.some((v) => v.id === input.voice) ? input.voice : stack.tts.voice;
   return {

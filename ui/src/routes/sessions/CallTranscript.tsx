@@ -9,7 +9,7 @@ export function CallTranscript({ lines }: { lines: CallLine[] }) {
       {lines.length > 0 && (
         <ol className="call-transcript" aria-label="Transcript">
           {lines.map((l, i) =>
-            l.kind === "route" ? (
+            l.kind === "handoff" ? (
               <li key={i} className="call-transcript__route">
                 <span aria-hidden="true">⇢</span> Routed {l.from} → {l.to}
               </li>

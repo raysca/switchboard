@@ -144,7 +144,7 @@ export const toolSelectionSchema = z.object({
 });
 export type ToolSelection = z.infer<typeof toolSelectionSchema>;
 
-export const flowVersionSchema = z.object({
+export const agentVersionSchema = z.object({
   id: z.string(),
   number: z.number(),
   schema_version: z.number(),
@@ -154,7 +154,7 @@ export const flowVersionSchema = z.object({
   mcp_tools: z.array(toolSelectionSchema),
   mcp_review_required: z.boolean().optional(),
 });
-type FlowVersionDTO = z.infer<typeof flowVersionSchema>;
+type AgentVersionDTO = z.infer<typeof agentVersionSchema>;
 
 export const toolDependencySchema = z.object({
   mcp_server_id: z.string(),
@@ -174,28 +174,28 @@ const readinessSchema = z.object({
 });
 type ReadinessDTO = z.infer<typeof readinessSchema>;
 
-export const flowSchema = z.object({
+export const agentSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string(),
   enabled: z.boolean(),
   archived: z.boolean(),
-  current_version: flowVersionSchema.nullish(),
+  current_version: agentVersionSchema.nullish(),
   readiness: readinessSchema,
   created_at: z.string(),
   updated_at: z.string(),
 });
-export type FlowDTO = z.infer<typeof flowSchema>;
+export type AgentDTO = z.infer<typeof agentSchema>;
 
-const FLOW_PAGE = 100; // the server's max page (server/api/api.go ParsePagination)
-export const FLOW_PAGES_MAX = 10; // ponytail: 1000 flows, O(n²) de-dup is fine at that size; offsets can skip a flow deleted mid-walk until the next refetch; a server-side search replaces this if anyone gets near it
+const AGENT_PAGE = 100; // the server's max page (server/api/api.go ParsePagination)
+export const AGENT_PAGES_MAX = 10; // ponytail: 1000 flows, O(n²) de-dup is fine at that size; offsets can skip a flow deleted mid-walk until the next refetch; a server-side search replaces this if anyone gets near it
 
-const flowsEnvelope = z.object({
-  data: z.array(flowSchema),
+const agentsEnvelope = z.object({
+  data: z.array(agentSchema),
 });
-const flowVersionEnvelope = z.object({ data: flowVersionSchema });
-const flowEnvelope = z.object({
-  data: flowSchema,
+const agentVersionEnvelope = z.object({ data: agentVersionSchema });
+const agentEnvelope = z.object({
+  data: agentSchema,
 });
 const archiveEnvelope = z.object({
   data: z.object({
@@ -203,7 +203,7 @@ const archiveEnvelope = z.object({
   }),
 });
 
-export type CreateFlowInput = {
+export type CreateAgentInput = {
   name: string;
   description: string;
   enabled?: boolean;
@@ -211,7 +211,7 @@ export type CreateFlowInput = {
   mcp_tools?: ToolSelection[];
 };
 
-type UpdateFlowInput = {
+type UpdateAgentInput = {
   name?: string;
   description?: string;
   enabled?: boolean;
@@ -325,7 +325,7 @@ export function spanAttrs(span: TraceSpanDTO): Record<string, unknown> {
 /**
  * A route span's event ("preparing", "active", "failed") and the steps it joins, or null for other spans.
  */
-export function routeSpan(span: TraceSpanDTO): { event: string; from: string; to: string } | null {
+export function handoffSpan(span: TraceSpanDTO): { event: string; from: string; to: string } | null {
   const event = /^handoff\.(\w+)$/.exec(span.name)?.[1];
   const a = spanAttrs(span);
   const from = a.from_step;
@@ -563,35 +563,35 @@ export function createApiClient(
       (await request("/providers", providersEnvelope)).data,
     // ponytail: one page of the server max (100); page through when someone has more flows.
     // Includes archived flows (sessions still name them); list views filter them out.
-    getFlows: async () => {
-      const all: FlowDTO[] = [];
-      for (let page = 0; page < FLOW_PAGES_MAX; page++) {
-        const batch = (await request(`/agents?limit=${FLOW_PAGE}&offset=${page * FLOW_PAGE}`, flowsEnvelope)).data;
+    getAgents: async () => {
+      const all: AgentDTO[] = [];
+      for (let page = 0; page < AGENT_PAGES_MAX; page++) {
+        const batch = (await request(`/agents?limit=${AGENT_PAGE}&offset=${page * AGENT_PAGE}`, agentsEnvelope)).data;
         for (const f of batch) if (!all.some((g) => g.id === f.id)) all.push(f); // a flow created between pages shifts offsets
-        if (batch.length < FLOW_PAGE) break;
+        if (batch.length < AGENT_PAGE) break;
       }
       return all;
     },
-    getFlow: async (id: string) =>
-      (await request(`/agents/${encodeURIComponent(id)}`, flowEnvelope)).data,
+    getAgent: async (id: string) =>
+      (await request(`/agents/${encodeURIComponent(id)}`, agentEnvelope)).data,
     /** One earlier publish of a flow (config and tools), read-only: a rollback publishes it again. */
-    getFlowVersion: async (id: string, number: number) =>
-      (await request(`/agents/${encodeURIComponent(id)}/versions/${number}`, flowVersionEnvelope)).data,
-    createFlow: async (input: CreateFlowInput) =>
+    getAgentVersion: async (id: string, number: number) =>
+      (await request(`/agents/${encodeURIComponent(id)}/versions/${number}`, agentVersionEnvelope)).data,
+    createAgent: async (input: CreateAgentInput) =>
       (
-        await request("/agents", flowEnvelope, {
+        await request("/agents", agentEnvelope, {
           method: "POST",
           body: input,
         })
       ).data,
-    updateFlow: async (id: string, input: UpdateFlowInput) =>
+    updateAgent: async (id: string, input: UpdateAgentInput) =>
       (
-        await request(`/agents/${encodeURIComponent(id)}`, flowEnvelope, {
+        await request(`/agents/${encodeURIComponent(id)}`, agentEnvelope, {
           method: "PUT",
           body: input,
         })
       ).data,
-    archiveFlow: async (id: string) =>
+    archiveAgent: async (id: string) =>
       (
         await request(
           `/agents/${encodeURIComponent(id)}/archive`,
@@ -599,11 +599,11 @@ export function createApiClient(
           { method: "POST" },
         )
       ).data,
-    duplicateFlow: async (id: string, input?: { name?: string }) =>
+    duplicateAgent: async (id: string, input?: { name?: string }) =>
       (
         await request(
           `/agents/${encodeURIComponent(id)}/duplicate`,
-          flowEnvelope,
+          agentEnvelope,
           {
             method: "POST",
             body: input,

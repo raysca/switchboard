@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { FlowDTO, ProviderStatus } from "../../api/client";
-import { catalogLines, credential, flowsUsing, hasService, missingEnv, serviceList, serviceState } from "./providerStats";
+import type { AgentDTO, ProviderStatus } from "../../api/client";
+import { catalogLines, credential, agentsUsing, hasService, missingEnv, serviceList, serviceState } from "./providerStats";
 
 const google: ProviderStatus = {
   id: "google",
@@ -26,7 +26,7 @@ const xai: ProviderStatus = {
   },
 };
 
-const flow = (id: string, config: Record<string, unknown>, archived = false): FlowDTO => ({
+const agent = (id: string, config: Record<string, unknown>, archived = false): AgentDTO => ({
   id,
   name: id,
   description: "",
@@ -89,9 +89,9 @@ describe("catalogLines", () => {
   });
 });
 
-describe("flowsUsing", () => {
-  const flat = flow("flat", { stt: { provider: "google" }, llm: { provider: "google" }, tts: { provider: "google" } });
-  const graph = flow("graph", {
+describe("agentsUsing", () => {
+  const flat = agent("flat", { stt: { provider: "google" }, llm: { provider: "google" }, tts: { provider: "google" } });
+  const graph = agent("graph", {
     start: "a",
     steps: [
       { id: "a", config: { stt: { provider: "google" }, llm: { provider: "google" }, tts: { provider: "google" } } },
@@ -100,20 +100,20 @@ describe("flowsUsing", () => {
     handoffs: [],
   });
   it("counts a flow once, whichever stage or step uses the provider", () => {
-    expect(flowsUsing([flat, graph], "google").map((f) => f.id)).toEqual(["flat", "graph"]);
-    expect(flowsUsing([flat, graph], "xai").map((f) => f.id)).toEqual(["graph"]);
+    expect(agentsUsing([flat, graph], "google").map((f) => f.id)).toEqual(["flat", "graph"]);
+    expect(agentsUsing([flat, graph], "xai").map((f) => f.id)).toEqual(["graph"]);
   });
   it("counts a provider a stage names only as a fallback", () => {
-    const f = flow("fb", { llm: { provider: "google" }, tts: { provider: "google", fallbacks: [{ provider: "cartesia" }, {}, "x"] } });
-    expect(flowsUsing([f], "cartesia").map((x) => x.id)).toEqual(["fb"]);
+    const f = agent("fb", { llm: { provider: "google" }, tts: { provider: "google", fallbacks: [{ provider: "cartesia" }, {}, "x"] } });
+    expect(agentsUsing([f], "cartesia").map((x) => x.id)).toEqual(["fb"]);
   });
   it("survives a step that is not an object", () => {
-    expect(flowsUsing([flow("n", { steps: [null, { config: { llm: { provider: "google" } } }] })], "google").map((x) => x.id)).toEqual(["n"]);
+    expect(agentsUsing([agent("n", { steps: [null, { config: { llm: { provider: "google" } } }] })], "google").map((x) => x.id)).toEqual(["n"]);
   });
   it("never counts an archived flow, a flow with no version, or a malformed config", () => {
-    const gone = flow("gone", flat.current_version!.config, true);
-    const bare = { ...flow("bare", {}), current_version: undefined } as FlowDTO;
-    const odd = flow("odd", { steps: "nope", llm: "google" });
-    expect(flowsUsing([gone, bare, odd], "google")).toEqual([]);
+    const gone = agent("gone", flat.current_version!.config, true);
+    const bare = { ...agent("bare", {}), current_version: undefined } as AgentDTO;
+    const odd = agent("odd", { steps: "nope", llm: "google" });
+    expect(agentsUsing([gone, bare, odd], "google")).toEqual([]);
   });
 });

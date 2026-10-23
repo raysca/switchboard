@@ -3,13 +3,13 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Link, MemoryRouter, Route, Routes } from "react-router";
-import type { FlowDTO, ApiClient, SessionDTO, SessionTracesDTO, TraceSpanDTO, TurnDTO } from "../../api/client";
+import type { AgentDTO, ApiClient, SessionDTO, SessionTracesDTO, TraceSpanDTO, TurnDTO } from "../../api/client";
 import { ApiError } from "../../api/client";
 import { CallView } from "./CallView";
 
 const ID = "0192aaaa-0000-7000-8000-000000000001";
 const graph = { start: "r", steps: [{ id: "r", name: "Reception" }, { id: "b", name: "Billing" }], handoffs: [] };
-const flow = (over: Partial<FlowDTO> = {}): FlowDTO => ({
+const agent = (over: Partial<AgentDTO> = {}): AgentDTO => ({
   id: "a1",
   name: "Front desk",
   description: "",
@@ -60,7 +60,7 @@ function setup(client: Partial<ApiClient>, path = `/sessions/${ID}`, key: string
     getSession: vi.fn().mockResolvedValue(session()),
     getSessionTurns: vi.fn().mockResolvedValue(turns),
     getSessionTraces: vi.fn().mockResolvedValue(traces(toBilling)),
-    getFlows: vi.fn().mockResolvedValue([flow()]),
+    getAgents: vi.fn().mockResolvedValue([agent()]),
     ...client,
   } as unknown as ApiClient;
   render(
@@ -141,7 +141,7 @@ describe("CallView", () => {
   });
 
   it("still shows the call when the flow list fails", async () => {
-    setup({ getFlows: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")), getSessionTraces: vi.fn().mockResolvedValue(traces()) });
+    setup({ getAgents: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")), getSessionTraces: vi.fn().mockResolvedValue(traces()) });
     expect(await screen.findByRole("list", { name: "Transcript" })).toHaveTextContent("Assistant · 00:01");
     expect(within(figure("Flow")).getByText("Unknown flow")).toBeVisible();
     expect(screen.queryByRole("alert")).toBeNull();
@@ -288,7 +288,7 @@ describe("CallView", () => {
       getSession: vi.fn().mockResolvedValue(session({ status: "active", ended_at: null })),
       getSessionTurns: vi.fn().mockResolvedValue(turns),
       getSessionTraces: vi.fn().mockResolvedValue(traces(toBilling)),
-      getFlows: vi.fn().mockResolvedValue([flow()]),
+      getAgents: vi.fn().mockResolvedValue([agent()]),
     } as unknown as ApiClient;
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
