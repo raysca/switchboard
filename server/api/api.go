@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"govoice/server/agent"
 	"io"
 	"net/http"
@@ -160,6 +161,15 @@ func DecodeJSON(r *http.Request, dst any) error {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
+		// encoding/json reports `json: unknown field "x"` as a plain error with no type to match.
+		if q, ok := strings.CutPrefix(err.Error(), "json: unknown field "); ok {
+			if name, uerr := strconv.Unquote(q); uerr == nil {
+				if len(name) > 64 {
+					name = name[:64] + "..."
+				}
+				return fmt.Errorf("unknown field %q", name)
+			}
+		}
 		return errors.New("invalid JSON body")
 	}
 	var extra any

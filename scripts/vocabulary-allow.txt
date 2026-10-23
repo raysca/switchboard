@@ -35,7 +35,7 @@ server/config.go	R	TurnConfig routes live calls	# generic English
 core/core_test.go	R	routing	# frame direction routing
 core/turn/manager.go	R	route normally	# generic English
 vad/resilience_test.go	R	routes slog	# generic English
-docs/security/mcp.md	R	routes	# HTTP endpoints
+docs/security/mcp.md	R	/api/v1/mcp-servers` routes	# HTTP endpoints
 docs/decisions/pipecat-evals.md	R	per-turn routing	# generic English
 e2e/tests-oneport/**	R	client route	# SPA fallback
 deploy/smoke-cloudrun.sh	R	client route	# SPA fallback
@@ -115,3 +115,4 @@ server/mcp/http_test.go	R	MCPRoutesDistinguish	# HTTP routes (test name)
 server/storage/storage.go	F	FROM flows WHERE	# refuses a pre-rename database
 server/storage/storage_test.go	F	CREATE TABLE flows	# builds a pre-rename database
 server/storage/storage_test.go	F	.flows (id	# same, in Postgres
+docs/security/mcp.md	R	api_routes.go	# HTTP routing table file name

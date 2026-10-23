@@ -2,7 +2,7 @@
 
 Reference: `pipecat-impl/` @ `2967e1c09ad484076089bc88427d305fe8f79fa9`. Pipecat paths are relative to `pipecat-impl/src/pipecat/`; Switchboard paths to the repo root. Scope: a robust, fast, scalable voice server. Out of scope: video, new transports, the `pipecat-flows` Python DSL (Switchboard has its own stored agents with steps and handoffs; see the Agents row), bus and multi-worker setups, speech-to-speech. This is the "Pipecat behavioral parity" surface of `docs/pipecat-compatibility.md`; it says nothing about RTVI client or Whisker conformance.
 
-Last checked 2026-10-22 against `main` at `82d8bbf`: defaults, statuses and cited paths/tests were re-checked against the code (TestParityMatrix enforces paths, tests and declared differences only); prose details may lag. Benchmark and live-provider figures come from the cited pages and were not re-run.
+Last checked 2026-10-22 against `main` at `82d8bbf`: defaults, statuses and cited paths/tests were re-checked against the code (TestParityMatrix enforces paths, tests and declared differences only); prose details may lag; paths renamed by the agent rename, statuses not re-checked. Benchmark and live-provider figures come from the cited pages and were not re-run.
 
 **Status**: `parity` = same observable behavior on the paired fixtures or tests cited; `partial` = a real subset, or same behavior with the gaps listed; `intentionally different` = deliberate other design (or a Switchboard-only addition); `not planned` = not built, no plan to; `planned (hook exists)` = the Go hook is in the tree and tested, nothing in the server reaches it yet; `parked` = kept for a documented deliverable, not on a call path.
 

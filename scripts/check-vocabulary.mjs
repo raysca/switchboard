@@ -15,7 +15,7 @@ const PATTERNS = [
   ['R3', 'R', /(?<![A-Z])ROUTES?(?![A-Z])/],
 ];
 // Families (F, R) a line hits.
-export const families = line => [...new Set(PATTERNS.filter(([, , re]) => re.test(line)).map(([, f]) => f))];
+const families = line => [...new Set(PATTERNS.filter(([, , re]) => re.test(line)).map(([, f]) => f))];
 
 const globRe = g => new RegExp('^' + g.replace(/[.+^${}()|[\]\\?]/g, '\\$&').replace(/\*\*/g, '\0').replace(/\*/g, '[^/]*').replace(/\0/g, '.*') + '$');
 const rules = readFileSync('scripts/vocabulary-allow.txt', 'utf8').split('\n').filter(l => l.trim() && !l.startsWith('#')).map((l, i) => {

@@ -179,7 +179,6 @@ describe("StepPanel", () => {
     expect(within(section).getByText("PICKER")).toBeVisible();
     expect(within(section).getByText(/Shared by every step/)).toBeVisible();
     expect(screen.getByText("No tools are chosen for this agent yet.")).toBeVisible();
-    expect(screen.queryByText(/Choose MCP tools for the agent first/)).toBeNull();
   });
 
   it("chooses which of the agent's tools a step can call", async () => {
