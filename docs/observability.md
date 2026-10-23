@@ -95,7 +95,7 @@ Switchboard provides an in-memory, circular ring buffer for deep incident diagno
 
 ### Routes between steps
 
-A flow with more than one step moves the call between steps. Every timeline event carries a `step` field (the step that was answering). Routes add these event types: `step_preparing` (target being built), `route` (`from->to`, `duration_ms` from the transfer to the new step being active), `step_active`, `step_closed` (the step the call left was closed) and `route_failed` (the caller stays on the old step; `error` is redacted). When storage is enabled the same lifecycle is persisted as trace spans named `handoff.preparing`, `handoff.active`, `handoff.closed`, `handoff.failed` (attributes `from_step`, `to_step`) on the stored session, so the designer can replay the path.
+A flow with more than one step moves the call between steps. Every timeline event carries a `step` field (the step that was answering). Handoffs add these event types: `step_preparing` (target being built), `handoff` (`from->to`, `duration_ms` from the transfer to the new step being active), `step_active`, `step_closed` (the step the call left was closed) and `handoff_failed` (the caller stays on the old step; `error` is redacted). When storage is enabled the same lifecycle is persisted as trace spans named `handoff.preparing`, `handoff.active`, `handoff.closed`, `handoff.failed` (attributes `from_step`, `to_step`) on the stored session, so the designer can replay the path.
 
 Metrics (unlabelled: step ids are tenant data): `voice_handoffs_total`, `voice_handoff_failures_total`, and the `voice_handoff_seconds` histogram.
 
