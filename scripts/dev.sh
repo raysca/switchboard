@@ -132,7 +132,7 @@ export_urls() {
 
 server_up() { curl -fsS "$GOVOICE_ADMIN_URL/ready" >/dev/null 2>&1; }
 require_server() { server_up || die "no dev server at $GOVOICE_ADMIN_URL; start it with 'make dev'"; }
-require_flow() { [[ -n "${GOVOICE_DEV_FLOW_ID:-}" ]] || die "no dev flow yet: add provider keys to examples/.env and rerun 'make dev', or create one in the admin UI and set GOVOICE_DEV_FLOW_ID in ${DEV_ENV#"$ROOT"/}"; }
+require_flow() { [[ -n "${GOVOICE_DEV_AGENT_ID:-}" ]] || die "no dev flow yet: add provider keys to examples/.env and rerun 'make dev', or create one in the admin UI and set GOVOICE_DEV_AGENT_ID in ${DEV_ENV#"$ROOT"/}"; }
 
 # Starts a background process with prefixed output; remembers its pid.
 PIDS=()
@@ -201,8 +201,8 @@ cmd_up() {
   # GOVOICE_DEV_SEED=0 (make dev-fresh) starts with no flows, so /onboarding opens the first-run wizard.
   if [[ "${GOVOICE_DEV_SEED:-1}" == "0" ]]; then
     echo "dev: not seeding (GOVOICE_DEV_SEED=0): open /onboarding for the first-run wizard"
-  elif flow_id="$(node scripts/dev-seed.mjs)"; then
-    [[ -n "$flow_id" ]] && set_env GOVOICE_DEV_FLOW_ID "$flow_id" && GOVOICE_DEV_FLOW_ID="$flow_id"
+  elif agent_id="$(node scripts/dev-seed.mjs)"; then
+    [[ -n "$agent_id" ]] && set_env GOVOICE_DEV_AGENT_ID "$agent_id" && GOVOICE_DEV_AGENT_ID="$agent_id"
   else
     echo "dev: seeding failed (see [seed] output); the stack still runs" >&2
   fi
@@ -217,7 +217,7 @@ cmd_up() {
     Management key  $GOVOICE_MANAGEMENT_API_KEY   (for curl and the API; the admin UI does not need it)
     Admin API       $GOVOICE_ADMIN_URL
     Voice WebSocket $GOVOICE_WS_URL
-    Dev flow        ${GOVOICE_DEV_FLOW_ID:-none (see [seed] above)}
+    Dev flow        ${GOVOICE_DEV_AGENT_ID:-none (see [seed] above)}
     Data            ${DEV_DIR#"$ROOT"/}/  (SQLite store; the key is in dev.env)
     Test MCP        $MCPTEST_URL (/ok /open /fail/tools /fail/auth /fail/list /slow; black hole :$MCPTEST_HOLE_PORT)
 
@@ -235,13 +235,13 @@ cmd_web() {
   npm_ready "$ROOT/examples/rtvi_client"
   echo "dev: custom web client at http://127.0.0.1:$CLIENT_PORT (flow and keys prefilled by the server)"
   cd examples/rtvi_client
-  PORT="$CLIENT_PORT" HOST=127.0.0.1 GOVOICE_FLOW_ID="${GOVOICE_DEV_FLOW_ID:-}" exec node server.js
+  PORT="$CLIENT_PORT" HOST=127.0.0.1 GOVOICE_AGENT_ID="${GOVOICE_DEV_AGENT_ID:-}" exec node server.js
 }
 
 cmd_cli() {
   load_env; require_server; require_flow; need node "Node 20+"
   npm_ready "$ROOT/examples/rtvi_client"
-  local args=(--flow "$GOVOICE_DEV_FLOW_ID" --admin "$GOVOICE_ADMIN_URL" --ws "$GOVOICE_WS_URL")
+  local args=(--agent "$GOVOICE_DEV_AGENT_ID" --admin "$GOVOICE_ADMIN_URL" --ws "$GOVOICE_WS_URL")
   [[ -n "${TEXT:-}" ]] && args+=(--text "$TEXT")
   cd examples/rtvi_client && exec node cli.js "${args[@]}"
 }

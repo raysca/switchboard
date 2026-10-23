@@ -11,7 +11,7 @@ const NAME = "E2E Live Notes";
 const NOTE = "the caller is a VIP";
 
 test("an operator note and a reply request from the call page reach the running call", async ({ page, stack }) => {
-  await api(stack, "/flows", {
+  await api(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({ name: NAME, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }) } }),
   });

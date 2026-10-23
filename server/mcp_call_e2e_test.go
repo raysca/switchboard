@@ -282,7 +282,7 @@ func TestMCPCallAHoldSoundPlaysWhileASlowToolRuns(t *testing.T) {
 	t.Run("an unknown cue is refused at publish", func(t *testing.T) {
 		r := newMCPCallRig(t, withCue(t))
 		body := `{"name":"Nope","config":{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m"},"tts":{"provider":"echo","voice":"v"},"audio":{"tool_cue":{"name":"ding"}}}}`
-		w := apiRequest(r.s, http.MethodPost, "/api/v1/flows", e2eMgmtKey, body)
+		w := apiRequest(r.s, http.MethodPost, "/api/v1/agents", e2eMgmtKey, body)
 		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "audio.tool_cue.name") {
 			t.Fatalf("%d %s", w.Code, w.Body.String())
 		}

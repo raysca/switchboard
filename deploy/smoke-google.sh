@@ -64,11 +64,11 @@ flow="$(jq -n '{name: "smoke", config: {
   stt: {provider: "google", model: "chirp_2", language: "en-US"},
   llm: {provider: "google", model: "gemini-2.5-flash", system_prompt: "You are a release smoke test."},
   tts: {provider: "google", voice: "en-US-Chirp3-HD-Aoede"}}}' |
-  api POST /api/v1/flows)"
-flow_id="$(jq -er .data.id <<<"$flow")"
+  api POST /api/v1/agents)"
+agent_id="$(jq -er .data.id <<<"$flow")"
 test "$(jq -r .data.readiness.state <<<"$flow")" = "ready"
 
-token="$(jq -n --arg a "$flow_id" '{principal: "smoke", flow_id: $a}' |
+token="$(jq -n --arg a "$agent_id" '{principal: "smoke", agent_id: $a}' |
   api POST /api/v1/voice-tokens | jq -er .data.token)"
 test -n "$token"
 

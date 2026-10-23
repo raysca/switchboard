@@ -24,11 +24,11 @@ test("load the demo from the Dashboard: three steps, two routes", async ({ page,
   await expect(page.getByRole("link", { name: "Smile Dental front desk" })).toBeVisible();
   await step(page, "dentistry demo loaded");
 
-  const flows = await api<{ data: { id: string; name: string }[] }>(stack, "/flows");
+  const flows = await api<{ data: { id: string; name: string }[] }>(stack, "/agents");
   const installed = flows.data.find((f) => f.name === "Smile Dental front desk")!;
   const { config, mcp_tools } = await createEchoDentalVariant(stack, installed.id);
   expect(config.steps).toHaveLength(3);
-  expect(config.routes).toHaveLength(2);
+  expect(config.handoffs).toHaveLength(2);
   expect(config.steps.every((s: any) => s.end_call)).toBe(true);
   expect(mcp_tools).toHaveLength(7);
 });

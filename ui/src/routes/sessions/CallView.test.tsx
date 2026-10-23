@@ -8,7 +8,7 @@ import { ApiError } from "../../api/client";
 import { CallView } from "./CallView";
 
 const ID = "0192aaaa-0000-7000-8000-000000000001";
-const graph = { start: "r", steps: [{ id: "r", name: "Reception" }, { id: "b", name: "Billing" }], routes: [] };
+const graph = { start: "r", steps: [{ id: "r", name: "Reception" }, { id: "b", name: "Billing" }], handoffs: [] };
 const flow = (over: Partial<FlowDTO> = {}): FlowDTO => ({
   id: "a1",
   name: "Front desk",
@@ -24,8 +24,8 @@ const flow = (over: Partial<FlowDTO> = {}): FlowDTO => ({
 const session = (over: Partial<SessionDTO> = {}): SessionDTO => ({
   draft: false,
   id: ID,
-  flow_id: "a1",
-  flow_version_id: "v7",
+  agent_id: "a1",
+  agent_version_id: "v7",
   config_hash: "abcdef1234567890",
   started_at: "2026-10-12T14:00:00Z",
   ended_at: "2026-10-12T14:04:12Z",
@@ -53,7 +53,7 @@ const turns = [
 ];
 const span = (name: string, at: string, attributes: object): TraceSpanDTO => ({ id: `${name}-${at}`, name, started_at: at, ended_at: at, attributes });
 const traces = (...spans: TraceSpanDTO[]): SessionTracesDTO => ({ session_id: ID, spans, events: [], tool_calls: [] });
-const toBilling = span("route.active", "2026-10-12T14:00:41Z", { from_step: "r", to_step: "b" });
+const toBilling = span("handoff.active", "2026-10-12T14:00:41Z", { from_step: "r", to_step: "b" });
 
 function setup(client: Partial<ApiClient>, path = `/sessions/${ID}`, key: string | null = "k") {
   const full = {
@@ -126,14 +126,14 @@ describe("CallView", () => {
   });
 
   it("names the failed route and who kept the caller", async () => {
-    const failed = span("route.failed", "2026-10-12T14:00:30Z", { from_step: "r", to_step: "b" });
+    const failed = span("handoff.failed", "2026-10-12T14:00:30Z", { from_step: "r", to_step: "b" });
     setup({ getSessionTraces: vi.fn().mockResolvedValue(traces(failed)) });
     expect(await screen.findByRole("note")).toHaveTextContent("A route to Billing failed. The caller stayed with Reception.");
   });
 
   it("shows step ids the flow no longer has, and calls an old version 'earlier version'", async () => {
-    const gone = span("route.active", "2026-10-12T14:00:41Z", { from_step: "r", to_step: "zz-deleted" });
-    setup({ getSession: vi.fn().mockResolvedValue(session({ flow_version_id: "v6" })), getSessionTraces: vi.fn().mockResolvedValue(traces(gone)) });
+    const gone = span("handoff.active", "2026-10-12T14:00:41Z", { from_step: "r", to_step: "zz-deleted" });
+    setup({ getSession: vi.fn().mockResolvedValue(session({ agent_version_id: "v6" })), getSessionTraces: vi.fn().mockResolvedValue(traces(gone)) });
     await screen.findByRole("list", { name: "Transcript" });
     expect(within(figure("Flow")).getByText("earlier version")).toBeVisible();
     expect(within(figure("Path")).getByText("Reception → zz-deleted")).toBeVisible();
@@ -193,7 +193,7 @@ describe("CallView", () => {
   });
 
   it("labels a call on an earlier version with the flow's name, not the current start step", async () => {
-    setup({ getSession: vi.fn().mockResolvedValue(session({ flow_version_id: "v6" })), getSessionTraces: vi.fn().mockResolvedValue(traces()) });
+    setup({ getSession: vi.fn().mockResolvedValue(session({ agent_version_id: "v6" })), getSessionTraces: vi.fn().mockResolvedValue(traces()) });
     const list = await screen.findByRole("list", { name: "Transcript" });
     expect(list).toHaveTextContent("Front desk · 00:01");
     expect(list).not.toHaveTextContent("Reception ·");
@@ -246,12 +246,12 @@ describe("CallView", () => {
   });
 
   it("says when the flow ended the call", async () => {
-    setup({ getSessionTraces: vi.fn().mockResolvedValue(traces(toBilling, span("call.end", "2026-10-12T14:04:12Z", { reason: "ended_by_flow", from_step: "b" }))) });
+    setup({ getSessionTraces: vi.fn().mockResolvedValue(traces(toBilling, span("call.end", "2026-10-12T14:04:12Z", { reason: "ended_by_agent", from_step: "b" }))) });
     expect(await screen.findByText("Ended by the flow (Billing)")).toBeVisible();
   });
 
   it("shows who called and why the call ended, in words", async () => {
-    setup({ getSession: vi.fn().mockResolvedValue(session({ caller: "flow-test-0192aaaa", end_reason: "silent_caller" })) });
+    setup({ getSession: vi.fn().mockResolvedValue(session({ caller: "agent-test-0192aaaa", end_reason: "silent_caller" })) });
     expect(await screen.findByText("Console test")).toBeVisible();
     expect(screen.getByText("Caller went silent")).toBeVisible();
   });

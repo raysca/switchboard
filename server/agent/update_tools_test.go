@@ -50,7 +50,7 @@ func stepsConfig(tools ...string) json.RawMessage {
 	for i, k := range tools {
 		quoted[i] = `"` + k + `"`
 	}
-	return json.RawMessage(`{"start":"a","steps":[{"id":"a","name":"A","tools":[` + strings.Join(quoted, ",") + `],"config":` + string(draftConfig("P")) + `}],"routes":[]}`)
+	return json.RawMessage(`{"start":"a","steps":[{"id":"a","name":"A","tools":[` + strings.Join(quoted, ",") + `],"config":` + string(draftConfig("P")) + `}],"handoffs":[]}`)
 }
 
 func TestUpdateCarriesTheToolSelectionAndPublishesOneVersion(t *testing.T) {

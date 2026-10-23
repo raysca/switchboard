@@ -141,7 +141,7 @@ from the flow version the call pins; turning recording off affects new calls,
 not calls already in progress.
 
 - **What is stored:** `<flowid>-<sessionid>-<unix>.wav` (stereo 16-bit PCM,
-  L = caller, R = bot) and a `.json` sidecar (session, flow (field `flow_id`) and call ids, start/end,
+  L = caller, R = bot) and a `.json` sidecar (session, flow (field `agent_id`) and call ids, start/end,
   format, and the user/assistant transcript turns, each capped at 4 KiB; an
   assistant turn cut off by barge-in holds only the heard prefix and is marked
   `interrupted`). File names contain ids only, never names or phone numbers. The caller audio and

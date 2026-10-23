@@ -86,8 +86,8 @@ export function repin(flow: FlowDTO): Repin {
 export function referencedFlows(details: unknown): { id: string; name: string }[] {
   if (!Array.isArray(details)) return [];
   const seen = new Map<string, string>();
-  for (const r of details as { FlowID?: unknown; FlowName?: unknown }[]) {
-    if (r && typeof r.FlowID === "string" && typeof r.FlowName === "string" && !seen.has(r.FlowID)) seen.set(r.FlowID, r.FlowName);
+  for (const r of details as { agent_id?: unknown; agent_name?: unknown }[]) {
+    if (r && typeof r.agent_id === "string" && typeof r.agent_name === "string" && !seen.has(r.agent_id)) seen.set(r.agent_id, r.agent_name);
   }
   return [...seen].map(([id, name]) => ({ id, name }));
 }

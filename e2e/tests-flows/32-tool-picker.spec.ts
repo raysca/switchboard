@@ -9,7 +9,7 @@ test.describe.configure({ mode: "serial" });
 
 const NAME = "E2E Tool Picker";
 type Flow = { name: string; current_version: { number: number; mcp_tools: { remote_name: string }[] } };
-const current = async (stack: Parameters<typeof api>[0]) => ((await api<{ data: Flow[] }>(stack, "/flows")).data.find((f) => f.name === NAME)!).current_version;
+const current = async (stack: Parameters<typeof api>[0]) => ((await api<{ data: Flow[] }>(stack, "/agents")).data.find((f) => f.name === NAME)!).current_version;
 
 test("tools chosen in the Tools tab are tested as a draft, then published with the flow", async ({ page, stack }) => {
   const server = await api<{ data: { id: string } }>(stack, "/mcp-servers", {
@@ -17,7 +17,7 @@ test("tools chosen in the Tools tab are tested as a draft, then published with t
     body: JSON.stringify({ name: "Picker ok", endpoint: `${stack.mcpUrl}/ok`, auth_env: "MCP_TOKEN_TEST", enabled: true }),
   });
   await api(stack, `/mcp-servers/${server.data.id}/validate`, { method: "POST" });
-  await api(stack, "/flows", {
+  await api(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({ name: NAME, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You use tools." }), tts: stage({ voice: "v" }) } }),
   });

@@ -262,7 +262,7 @@ export class VoiceClient {
     try {
       const tokenResp = await this.apiClient.issueVoiceToken({
         principal,
-        flow_id: flowId,
+        agent_id: flowId,
         ...(options.draft ? { draft: options.draft } : {}),
       });
       if (attempt !== this.attempt) return;

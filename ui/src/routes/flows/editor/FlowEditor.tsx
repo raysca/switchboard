@@ -162,17 +162,17 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
     const next = addDraftRoute(graph, from, to);
     if (next === graph) return;
     setGraph(next);
-    setFocusRoute(next.routes[next.routes.length - 1].id);
-    openStep(next, from, "routes");
+    setFocusRoute(next.handoffs[next.handoffs.length - 1].id);
+    openStep(next, from, "handoffs");
   };
   const select = (s: Selection) => {
     if (call.live) return;
     if (s?.kind === "step") openStep(graph, s.id);
     else if (s?.kind === "route") {
-      const e = graph.routes.find((x) => x.id === s.id);
+      const e = graph.handoffs.find((x) => x.id === s.id);
       if (e) {
         setFocusRoute(e.id);
-        openStep(graph, e.from, "routes");
+        openStep(graph, e.from, "handoffs");
       }
     } else if (panel?.kind === "step") close();
   };

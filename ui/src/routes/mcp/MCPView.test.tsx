@@ -368,7 +368,7 @@ describe("MCPView", () => {
   });
 
   it("names the flows the server says use the server, archived ones included", async () => {
-    const inUse = new ApiError("in use", "mcp_server_in_use", 409, "req-4", [{ FlowID: "a9", FlowName: "Archived line", RemoteName: "latest_invoice", Required: false }]);
+    const inUse = new ApiError("in use", "mcp_server_in_use", 409, "req-4", [{ agent_id: "a9", agent_name: "Archived line", remote_name: "latest_invoice", required: false }]);
     const { user } = setup({ deleteMCPServer: vi.fn().mockRejectedValue(inUse), getFlows: vi.fn().mockResolvedValue([]) });
     await user.click(await screen.findByRole("button", { name: "Delete" }));
     await user.click(screen.getByRole("button", { name: "Delete server" }));

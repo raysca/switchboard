@@ -284,7 +284,7 @@ export function BackgroundSelect({ id, bg, setBg, serverConfig, step = false }: 
   // Sentinel values the sound-name pattern (lowercase letters, digits, - and _) cannot produce.
   const noneValue = step ? "__none__" : "";
   const selected = bg === null ? (serverDefault ? "__default__" : "") : bgName === "" ? noneValue : bgName;
-  const denied = serverConfig !== undefined && !serverConfig.audio.allow_flow_background && !bgName;
+  const denied = serverConfig !== undefined && !serverConfig.audio.allow_agent_background && !bgName;
   return (
     <>
       <label className="form-field" htmlFor={id}>

@@ -7,7 +7,7 @@ import { fromFlowConfig } from "./model";
 const graph = fromFlowConfig({
   start: "a",
   steps: [{ id: "a", name: "Reception", config: { llm: { provider: "g", model: "m" }, tts: { provider: "g" } } }],
-  routes: [],
+  handoffs: [],
 });
 
 const panel = (onRestore?: () => Promise<void>, number = 3) =>

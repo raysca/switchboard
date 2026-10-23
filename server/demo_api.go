@@ -113,7 +113,7 @@ type demoStatusResp struct {
 	Dental struct {
 		Available bool   `json:"available"`
 		Installed bool   `json:"installed"`
-		AgentID   string `json:"flow_id,omitempty"`
+		AgentID   string `json:"agent_id,omitempty"`
 	} `json:"dental"`
 }
 
@@ -205,7 +205,7 @@ func (s *Server) autoInstallDemo() {
 			s.logger.Error("demo auto-install failed", "err", s.redactor.Redact(err.Error()))
 			return
 		}
-		s.logger.Info("demo installed", "flow", res.AgentID, "flow_created", res.AgentCreated, "mcp_created", res.MCPCreated)
+		s.logger.Info("demo installed", "agent", res.AgentID, "agent_created", res.AgentCreated, "mcp_created", res.MCPCreated)
 	}()
 }
 

@@ -14,7 +14,7 @@ func TestADraftCallCanUseAToolThatIsNotPublished(t *testing.T) {
 	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
 	a := r.agentWith(id, hashes, false, nil) // no tools attached
 	cfg := `{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"P"},"tts":{"provider":"echo","voice":"v"}}`
-	payload, _ := json.Marshal(map[string]any{"principal": "alice", "flow_id": a.ID, "draft": map[string]any{
+	payload, _ := json.Marshal(map[string]any{"principal": "alice", "agent_id": a.ID, "draft": map[string]any{
 		"config":    json.RawMessage(cfg),
 		"mcp_tools": []map[string]any{{"mcp_server_id": id, "remote_name": "lookup_order", "schema_hash": hashes["lookup_order"], "required": false}},
 	}})

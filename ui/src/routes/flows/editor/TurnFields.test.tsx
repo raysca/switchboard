@@ -13,7 +13,7 @@ const server = (turn: Partial<ServerConfigDTO["turn"]> = {}): ServerConfigDTO =>
   voice_token_max_lifetime_seconds: 60,
   client_ip: "",
   secure: false,
-  audio: { backgrounds: [], cues: [], allow_flow_background: true, background_default: "" },
+  audio: { backgrounds: [], cues: [], allow_agent_background: true, background_default: "" },
   idle: { user_timeout_ms: 0, max_prompts: 2, prompt_mode: "llm" },
   turn: { manager: true, min_words: 0, mute: [], max_mute_ms: 30000, speech_timeout_ms: 600, end_of_turn: "default", smart_turn_available: false, smart_hold_ms: 3000, ...turn },
 });

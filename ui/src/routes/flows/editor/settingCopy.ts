@@ -165,7 +165,7 @@ const COPY = {
     defaults: "Off.",
     careful: "Tick the disclosure only if callers are actually told: it is your compliance statement.",
   },
-  route_cue: {
+  handoff_cue: {
     label: "Route sound",
     what: "A short sound played while the call moves between steps, so the caller does not hear silence.",
     when: "When a transfer takes more than a moment.",

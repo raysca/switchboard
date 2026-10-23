@@ -31,7 +31,7 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
   // One extra row tells us whether an older page exists; the API returns no total.
   const calls = useQuery({
     queryKey: ["sessions", "list", flowId, outcomeId, page],
-    queryFn: () => client.getSessions({ limit: PAGE + 1, offset: page * PAGE, status, flow_id: flowId || undefined }),
+    queryFn: () => client.getSessions({ limit: PAGE + 1, offset: page * PAGE, status, agent_id: flowId || undefined }),
     enabled: !!keyValue,
     retry: false,
     refetchInterval: 10_000,
@@ -80,7 +80,7 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
 
   const flows = new Map<string, FlowDTO>((flowsQuery.data ?? []).map((f) => [f.id, f]));
   // The live count follows the flow filter, like the table does.
-  const liveNow = active.data?.filter((s) => !flowId || s.flow_id === flowId).length;
+  const liveNow = active.data?.filter((s) => !flowId || s.agent_id === flowId).length;
   // The API returns at most LIVE_CAP live calls: at the cap the count is a floor, with or without a flow filter.
   const liveText = liveNow === undefined ? "" : (active.data?.length ?? 0) >= LIVE_CAP ? `${liveNow}+` : String(liveNow);
   const hasOlder = (calls.data?.length ?? 0) > PAGE;
@@ -171,7 +171,7 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
               <tbody>
                 {rows.map((s) => {
                   const o = outcome(s);
-                  const f = flows.get(s.flow_id);
+                  const f = flows.get(s.agent_id);
                   return (
                     <tr key={s.id}>
                       <td>

@@ -66,7 +66,7 @@ func TestStoredAgentDrivesCall(t *testing.T) {
 	defer ts.Close()
 	lastTokenID := ""
 	call := func(agentID string) (*websocket.Conn, error) {
-		w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+agentID+`"}`)
+		w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+agentID+`"}`)
 		if w.Code != http.StatusCreated {
 			t.Fatalf("token: %d %s", w.Code, w.Body)
 		}
@@ -138,7 +138,7 @@ func TestStoredAgentDrivesCall(t *testing.T) {
 
 	// A flow that is no longer ready cannot take calls, even with a token
 	// minted while it was ready.
-	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+created.ID+`"}`)
+	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+created.ID+`"}`)
 	var resp struct {
 		Data struct{ Token string } `json:"data"`
 	}
@@ -219,7 +219,7 @@ func TestTextTurnReachesAgentLLM(t *testing.T) {
 
 	ts := httptest.NewServer(s.wsServer)
 	defer ts.Close()
-	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+agentID+`"}`)
+	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+agentID+`"}`)
 	var resp struct {
 		Data struct{ Token string } `json:"data"`
 	}
@@ -312,7 +312,7 @@ func TestShutdownEndsActiveSessionRows(t *testing.T) {
 	}
 	ts := httptest.NewServer(s.wsServer)
 	defer ts.Close()
-	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+agentID+`"}`)
+	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+agentID+`"}`)
 	var resp struct {
 		Data struct{ Token string } `json:"data"`
 	}
@@ -416,7 +416,7 @@ func TestStoredAgent_ConfiguresMaxParallelAndVADStopMS(t *testing.T) {
 	ts := httptest.NewServer(s.wsServer)
 	defer ts.Close()
 
-	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+created.ID+`"}`)
+	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+created.ID+`"}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("token creation: %d %s", w.Code, w.Body)
 	}
@@ -618,7 +618,7 @@ func TestCallRefusedWhenTheVariableIsGone(t *testing.T) {
 	for _, stage := range []string{"stt", "llm", "tts"} {
 		s.registry.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 	}
-	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+agentID+`"}`)
+	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+agentID+`"}`)
 	var resp struct {
 		Data struct{ Token string } `json:"data"`
 	}
@@ -705,7 +705,7 @@ func TestStoredAgent_VoiceSettingsReachStageSpec(t *testing.T) {
 	step := `{"llm":{"provider":"google","model":"m"},"tts":{"provider":"elevenlabs","voice_settings":` + vs + `}}`
 	rs := &runtime.Session{Snapshot: agent.Snapshot{Version: agent.Version{Config: json.RawMessage(`{"start":"front","steps":[` +
 		`{"id":"front","name":"Front","config":` + flat + `},{"id":"sales","name":"Sales","config":` + step + `}],` +
-		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"buy"}]}`)}}}
+		`"handoffs":[{"id":"e1","from":"front","to":"sales","condition":"buy"}]}`)}}}
 	call, err := s.callSpec(t.Context(), rs)
 	if err != nil {
 		t.Fatal(err)
@@ -772,7 +772,7 @@ func TestStoredAgent_SamplingReachesStageSpec(t *testing.T) {
 	step := `{"llm":{"provider":"google","model":"m",` + samp + `,"fallbacks":[{"provider":"xai","model":"grok"}]},"tts":{"provider":"google"}}`
 	rs := &runtime.Session{Snapshot: agent.Snapshot{Version: agent.Version{Config: json.RawMessage(`{"start":"front","steps":[` +
 		`{"id":"front","name":"Front","config":` + flat + `},{"id":"sales","name":"Sales","config":` + step + `}],` +
-		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"buy"}]}`)}}}
+		`"handoffs":[{"id":"e1","from":"front","to":"sales","condition":"buy"}]}`)}}}
 	call, err := s.callSpec(t.Context(), rs)
 	if err != nil {
 		t.Fatal(err)

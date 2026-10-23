@@ -170,7 +170,7 @@ func ConnectTarget(ctx context.Context, targetURL, adminURL, metricsURL, apiKey,
 
 // Provision creates the echo flow, returning its id.
 func (s *Server) Provision() (string, error) {
-	d, err := s.Call("POST", "flows", map[string]any{"name": "Loadtest Echo", "description": "echo provider", "config": map[string]any{
+	d, err := s.Call("POST", "agents", map[string]any{"name": "Loadtest Echo", "description": "echo provider", "config": map[string]any{
 		"stt": map[string]any{"provider": "echo", "model": "chirp_2", "language": "en-US"},
 		"llm": map[string]any{"provider": "echo", "model": "fake", "system_prompt": "fake"},
 		"tts": map[string]any{"provider": "echo", "voice": "fake"}}})

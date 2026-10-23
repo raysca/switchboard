@@ -101,6 +101,20 @@ func TestMCPDisableDeleteConflictAndConfirmedDetachRoutes(t *testing.T) {
 	if _, err := svc.store.MCP().Server(context.Background(), servers[0].ID); err != nil {
 		t.Fatalf("blocked delete removed server: %v", err)
 	}
+	// The 409 details are a wire contract (the console reads agent_id/agent_name): explicit keys, not Go field names.
+	var conflict struct {
+		Error struct {
+			Code    string           `json:"code"`
+			Details []map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(blocked.Body.Bytes(), &conflict); err != nil || conflict.Error.Code != "mcp_server_in_use" || len(conflict.Error.Details) != 1 {
+		t.Fatalf("conflict body=%s err=%v", blocked.Body.String(), err)
+	}
+	d := conflict.Error.Details[0]
+	if d["agent_id"] != created.ID || d["agent_name"] != "uses mcp" || d["remote_name"] != "lookup" || d["required"] != true || d["agent_version_id"] == "" || d["agent_version_id"] == nil || len(d) != 5 {
+		t.Fatalf("details keys/values = %v", d)
+	}
 	missingConfirmation := do("POST", "/api/v1/mcp-servers/"+servers[0].ID+"/detach-delete", `{"confirm":false}`)
 	if missingConfirmation.Code != 400 {
 		t.Fatalf("confirmation status=%d body=%s", missingConfirmation.Code, missingConfirmation.Body.String())

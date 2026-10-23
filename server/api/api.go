@@ -64,7 +64,7 @@ type Pagination struct {
 
 type VoiceTokenRequest struct {
 	Principal string `json:"principal"`
-	AgentID   string `json:"flow_id"`
+	AgentID   string `json:"agent_id"`
 	// Draft, when set, makes a token for a call that runs this config instead of
 	// the flow's published version (a test call). It is validated like a publish.
 	Draft *DraftRequest `json:"draft,omitempty"`
@@ -113,8 +113,8 @@ type ServerTurn struct {
 
 type ServerAudio struct {
 	Backgrounds          []string `json:"backgrounds"`
-	Cues                 []string `json:"cues"` // sound names a flow's route_cue may use
-	AllowAgentBackground bool     `json:"allow_flow_background"`
+	Cues                 []string `json:"cues"` // sound names an agent's handoff_cue may use
+	AllowAgentBackground bool     `json:"allow_agent_background"`
 	// BackgroundDefault is the sound every call plays unless its flow picks another or none ("" = none).
 	BackgroundDefault string `json:"background_default"`
 }

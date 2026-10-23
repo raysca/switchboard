@@ -38,7 +38,7 @@ func agentBody(name, handoffTo string) string {
 	return `{"name":"` + name + `","config":{"start":"front","steps":[` +
 		`{"id":"front","name":"Front desk","config":{` + agentStages(true) + `}},` +
 		`{"id":"sales","name":"Sales","config":{` + agentStages(false) + `}}],` +
-		`"routes":[{"id":"e1","from":"front","to":"` + handoffTo + `","condition":"wants to buy"}]}}`
+		`"handoffs":[{"id":"e1","from":"front","to":"` + handoffTo + `","condition":"wants to buy"}]}}`
 }
 
 type agentResp struct {
@@ -57,7 +57,7 @@ type agentResp struct {
 func TestAgentsAPIAcceptsAgentAndStillAcceptsFlat(t *testing.T) {
 	s := agentAPIServer(t)
 
-	w := apiRequest(s, http.MethodPost, "/api/v1/flows", agentMgmtKey, agentBody("two step", "sales"))
+	w := apiRequest(s, http.MethodPost, "/api/v1/agents", agentMgmtKey, agentBody("two step", "sales"))
 	if w.Code != http.StatusCreated {
 		t.Fatalf("graph create: %d %s", w.Code, w.Body)
 	}
@@ -68,7 +68,7 @@ func TestAgentsAPIAcceptsAgentAndStillAcceptsFlat(t *testing.T) {
 	}
 
 	flat := `{"name":"flat","config":{` + agentStages(true) + `}}`
-	w = apiRequest(s, http.MethodPost, "/api/v1/flows", agentMgmtKey, flat)
+	w = apiRequest(s, http.MethodPost, "/api/v1/agents", agentMgmtKey, flat)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("flat create: %d %s", w.Code, w.Body)
 	}
@@ -81,7 +81,7 @@ func TestAgentsAPIAcceptsAgentAndStillAcceptsFlat(t *testing.T) {
 
 func TestAgentsAPIRejectsInvalidAgent(t *testing.T) {
 	s := agentAPIServer(t)
-	w := apiRequest(s, http.MethodPost, "/api/v1/flows", agentMgmtKey, agentBody("bad", "nowhere"))
+	w := apiRequest(s, http.MethodPost, "/api/v1/agents", agentMgmtKey, agentBody("bad", "nowhere"))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("route to a missing step: %d %s", w.Code, w.Body)
 	}
@@ -89,11 +89,11 @@ func TestAgentsAPIRejectsInvalidAgent(t *testing.T) {
 
 func TestAgentsAPIAgentUpdatePublishesNewVersion(t *testing.T) {
 	s := agentAPIServer(t)
-	w := apiRequest(s, http.MethodPost, "/api/v1/flows", agentMgmtKey, `{"name":"a","config":{`+agentStages(true)+`}}`)
+	w := apiRequest(s, http.MethodPost, "/api/v1/agents", agentMgmtKey, `{"name":"a","config":{`+agentStages(true)+`}}`)
 	var created agentResp
 	_ = json.Unmarshal(w.Body.Bytes(), &created)
 	body := strings.TrimSuffix(strings.TrimPrefix(agentBody("a", "sales"), `{"name":"a",`), `}`)
-	w = apiRequest(s, http.MethodPatch, "/api/v1/flows/"+created.Data.ID, agentMgmtKey, "{"+body+"}")
+	w = apiRequest(s, http.MethodPatch, "/api/v1/agents/"+created.Data.ID, agentMgmtKey, "{"+body+"}")
 	if w.Code != http.StatusOK {
 		t.Fatalf("graph update: %d %s", w.Code, w.Body)
 	}

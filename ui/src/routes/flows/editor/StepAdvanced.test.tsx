@@ -153,7 +153,7 @@ describe("StepAdvanced", () => {
 
   describe("background sound on a step other than the start", () => {
     const server = {
-      audio: { backgrounds: ["cafe", "office"], cues: [], allow_flow_background: true, background_default: "cafe" },
+      audio: { backgrounds: ["cafe", "office"], cues: [], allow_agent_background: true, background_default: "cafe" },
     } as unknown as ServerConfigDTO;
     const two = fromFlowConfig({
       start: "a",
@@ -161,7 +161,7 @@ describe("StepAdvanced", () => {
         { id: "a", name: "A", config: { llm: { provider: "google", model: "gemini" }, tts: { provider: "google", voice: "aoede" }, stt: { provider: "google" } } },
         { id: "b", name: "B", config: { llm: { provider: "google", model: "gemini" }, tts: { provider: "google", voice: "aoede" } } },
       ],
-      routes: [{ id: "e1", from: "a", to: "b", condition: "x" }],
+      handoffs: [{ id: "e1", from: "a", to: "b", condition: "x" }],
     });
     function Two({ onChange, serverConfig = server, initial = two }: { onChange: (g: FlowDraft) => void; serverConfig?: ServerConfigDTO; initial?: FlowDraft }) {
       const [g, setG] = useState(initial);
@@ -202,7 +202,7 @@ describe("StepAdvanced", () => {
       const { unmount } = render(<StepAdvanced graph={two} step={two.steps[0]} providers={providers} serverConfig={server} onChange={vi.fn()} />);
       expect(screen.queryByLabelText("Background sound")).toBeNull();
       unmount();
-      render(<Two onChange={vi.fn()} serverConfig={{ ...server, audio: { ...server.audio, allow_flow_background: false } } as ServerConfigDTO} />);
+      render(<Two onChange={vi.fn()} serverConfig={{ ...server, audio: { ...server.audio, allow_agent_background: false } } as ServerConfigDTO} />);
       expect(screen.getByLabelText("Background sound")).toBeDisabled();
       expect(screen.getByText("This server does not allow flow background sounds.")).toBeVisible();
     });

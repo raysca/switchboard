@@ -17,7 +17,7 @@ export function outcome(s: SessionDTO): { label: string; live: boolean } {
 /** The API has no version list (spec S2): a version's number is known only while it is the flow's current one. */
 export function versionLabel(s: SessionDTO, flow: FlowDTO | undefined): string {
   const current = flow?.current_version;
-  return current && current.id === s.flow_version_id ? `v${current.number}` : "earlier version";
+  return current && current.id === s.agent_version_id ? `v${current.number}` : "earlier version";
 }
 
 export function mmss(seconds: number): string {
@@ -42,7 +42,7 @@ type Steps = { names: Map<string, string>; start: string | undefined };
  */
 export function stepsFor(s: SessionDTO, flow: FlowDTO | undefined): Steps {
   const st = steps(flow);
-  return flow?.current_version?.id === s.flow_version_id ? st : { names: st.names, start: undefined };
+  return flow?.current_version?.id === s.agent_version_id ? st : { names: st.names, start: undefined };
 }
 
 // The server records its own prompts as turns: after a route that happens while the call is idle, and
@@ -188,7 +188,7 @@ export function interruptedCount(turns: TurnDTO[]): number {
 export function endedByFlow(traces: SessionTracesDTO | null | undefined): { step: string } | null {
   for (const s of traces?.spans ?? []) {
     const a = spanAttrs(s);
-    if (s.name === "call.end" && a.reason === "ended_by_flow" && typeof a.from_step === "string") return { step: a.from_step };
+    if (s.name === "call.end" && a.reason === "ended_by_agent" && typeof a.from_step === "string") return { step: a.from_step };
   }
   return null;
 }
@@ -196,14 +196,14 @@ export function endedByFlow(traces: SessionTracesDTO | null | undefined): { step
 /** Who the call was: the label the integration chose. The console's own test calls say so. */
 export function callerLabel(caller: string): string {
   if (!caller) return "Not recorded";
-  return caller.startsWith("flow-test-") ? "Console test" : caller;
+  return caller.startsWith("agent-test-") ? "Console test" : caller;
 }
 
 const END_WORDS: Record<string, string> = {
   caller_hung_up: "Caller hung up",
   silent_caller: "Caller went silent",
   agent_stuck: "Agent stopped responding",
-  ended_by_flow: "Ended by the flow",
+  ended_by_agent: "Ended by the flow",
   time_limit: "Reached the time limit",
   connection_lost: "Connection lost",
   server_shutdown: "Server shutting down",
@@ -215,7 +215,7 @@ const END_WORDS: Record<string, string> = {
 /** Why a call ended, in words. An empty or unknown reason (an older call) is just "Ended". */
 export function endReasonText(reason: string, step?: string): string {
   const text = END_WORDS[reason] ?? "Ended";
-  return reason === "ended_by_flow" && step ? `${text} (${step})` : text;
+  return reason === "ended_by_agent" && step ? `${text} (${step})` : text;
 }
 
 type Stage = { label: "Heard" | "Model" | "Voice"; start: number; end: number };

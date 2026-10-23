@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -877,11 +878,14 @@ func TestAgentID_ComesOnlyFromToken(t *testing.T) {
 		Principal: "user-1",
 		AgentID:   "agent-from-token",
 	}
+	if raw, _ := json.Marshal(claims); !strings.Contains(string(raw), `"agent_id":"agent-from-token"`) {
+		t.Fatalf("the claim key on the wire is not agent_id: %s", raw)
+	}
 	tokStr, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(testSecret))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	wsURL := fmt.Sprintf("ws://%s/ws?token=%s&pipeline=other&flow_id=other", ts.Listener.Addr().String(), tokStr)
+	wsURL := fmt.Sprintf("ws://%s/ws?token=%s&pipeline=other&agent_id=other", ts.Listener.Addr().String(), tokStr)
 	c, _, err := websocket.Dial(ctx, wsURL, nil)
 	if err != nil {
 		t.Fatal(err)

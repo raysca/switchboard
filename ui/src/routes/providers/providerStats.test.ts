@@ -97,7 +97,7 @@ describe("flowsUsing", () => {
       { id: "a", config: { stt: { provider: "google" }, llm: { provider: "google" }, tts: { provider: "google" } } },
       { id: "b", config: { llm: { provider: "xai" }, tts: { provider: "google" } } },
     ],
-    routes: [],
+    handoffs: [],
   });
   it("counts a flow once, whichever stage or step uses the provider", () => {
     expect(flowsUsing([flat, graph], "google").map((f) => f.id)).toEqual(["flat", "graph"]);

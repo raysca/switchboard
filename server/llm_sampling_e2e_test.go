@@ -16,7 +16,7 @@ func TestAgentE2E_LLMSamplingReachesTheModel(t *testing.T) {
 	a, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Sampling", Config: json.RawMessage(`{"start":"front","steps":[` +
 		`{"id":"front","name":"Front desk","config":{"stt":{` + stage("") + `},"llm":{` + stage(`,"model":"m","system_prompt":"FRONT","temperature":0.3,"top_p":0.9,"max_output_tokens":200`) + `},"tts":{` + stage("") + `}}},` +
 		`{"id":"sales","name":"Sales","config":{"llm":{` + stage(`,"model":"m","system_prompt":"SALES","top_p":0.5`) + `},"tts":{` + stage("") + `}}}],` +
-		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."}]}`)})
+		`"handoffs":[{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."}]}`)})
 	if err != nil || a.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("create: %+v err=%v", a.Readiness, err)
 	}

@@ -26,7 +26,7 @@ const flow = (config: Record<string, unknown>): FlowDTO => ({
 const routedFlow = flow({
   start: "front",
   steps: [step("front", "Front"), step("sales", "Sales")],
-  routes: [{ id: "e1", from: "front", to: "sales", condition: "buy" }],
+  handoffs: [{ id: "e1", from: "front", to: "sales", condition: "buy" }],
 });
 
 function renderTest(a: FlowDTO, extra: Partial<FlowVoiceTestProps> = {}) {

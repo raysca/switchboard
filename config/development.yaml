@@ -29,7 +29,7 @@ limits:
   max_pending_handshakes: 50
   max_sessions: 100
   max_sessions_per_principal: 5
-  # max_sessions_per_flow: 0         # 0 = unlimited
+  # max_sessions_per_agent: 0         # 0 = unlimited
   # start_rate_per_principal: 0       # starts/sec per principal; 0 = unlimited
   # handshake_rate_per_ip: 20         # WebSocket upgrades/sec per source IP (burst max(5, 2x)); 0 = default 20
   # start_burst_per_principal: 1      # required >= 1 when rate > 0
@@ -119,7 +119,7 @@ warmup:
 #   completion: {}                       # llm-completion tuning
 #   mute: []                             # always | first_speech | until_first_bot_complete | function_call
 #   max_mute: 30s
-#   analyzer: {mode: "", workers: 1, model_path: third_party/smart_turn_v3.2_cpu.onnx, stop_secs: 3s, budget: 150ms, for_flows: false}  # for_flows: load the model so flows can choose end_of_turn smart (off: no worker process)
+#   analyzer: {mode: "", workers: 1, model_path: third_party/smart_turn_v3.2_cpu.onnx, stop_secs: 3s, budget: 150ms, for_agents: false}  # for_agents: load the model so flows can choose end_of_turn smart (off: no worker process)
 # first_clause_chars: 0                  # try 40 for earlier first audio
 # tts_merge: {enabled: false, margin: 300ms, cap: 250}  # xai/google only: merge sentences while audio slack allows (fewer requests); implies first_clause_chars 40 if 0
 # audio:
@@ -128,7 +128,7 @@ warmup:
 #   output_gain_db: 0
 #   backgrounds: {office: {file: ambience.wav, gain_db: -30, loop: true}}  # named sounds a call (or its flow) can play under the voice
 #   background_default: office       # every call plays this unless its flow picks another; empty: none
-#   allow_flow_background: true      # a flow may pick a sound from backgrounds (default true here, false in production)
+#   allow_agent_background: true      # a flow may pick a sound from backgrounds (default true here, false in production)
 # idle: {user_timeout: 15s, max_prompts: 2, prompt: "Are you still there?", prompt_mode: "", goodbye: "I'll end the call now. Goodbye.", bot_timeout: 0s, bot_max_stuck: 3, bot_fallback: ""}  # user_timeout: 0s turns quiet-caller handling off; a flow can set its own
 # dtmf: {detect: false, aggregate: false, send_tool: false, aggregate_timeout: 2s}
 # recording: {enabled: false, dir: "", retention_days: 7, max_duration: 1h, max_bytes: 268435456}

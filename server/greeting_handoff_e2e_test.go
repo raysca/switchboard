@@ -26,7 +26,7 @@ func handoffGreetingConfig(frontGreeting, salesGreeting, salesVoice string) stri
 	return `{"start":"front","steps":[` +
 		`{"id":"front","name":"Front desk","config":{"stt":{` + st(`,"model":"s"`) + `},"llm":{` + st(`,"model":"m","system_prompt":"FRONT"`) + `},"tts":{` + st(`,"voice":"frontvoice"`) + `}` + g(frontGreeting) + `}},` +
 		`{"id":"sales","name":"Sales","config":{"llm":{` + st(`,"model":"m","system_prompt":"SALES"`) + `},"tts":{` + st(`,"voice":"`+salesVoice+`"`) + `}` + g(salesGreeting) + `}}],` +
-		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."},{"id":"e2","from":"sales","to":"front","condition":"The caller wants support."}]}`
+		`"handoffs":[{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."},{"id":"e2","from":"sales","to":"front","condition":"The caller wants support."}]}`
 }
 
 func handoffGreetingAgent(t *testing.T, r *agentRigE2E, frontGreeting, salesGreeting, salesVoice string) string {

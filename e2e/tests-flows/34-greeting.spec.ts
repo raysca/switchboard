@@ -11,10 +11,10 @@ const NAME = "E2E Greeting";
 const OPENING = "Hello from the front desk.";
 const SALES = "Sales here, how can I help?";
 type Flow = { name: string; current_version: { number: number; config: { steps?: { config: { greeting?: string } }[] } } };
-const current = async (stack: Parameters<typeof api>[0]) => (await api<{ data: Flow[] }>(stack, "/flows")).data.find((f) => f.name === NAME)!.current_version;
+const current = async (stack: Parameters<typeof api>[0]) => (await api<{ data: Flow[] }>(stack, "/agents")).data.find((f) => f.name === NAME)!.current_version;
 
 test("greetings typed in the designer are spoken on a draft test call, opening and handoff", async ({ page, stack }) => {
-  await api(stack, "/flows", {
+  await api(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({
       name: NAME,
@@ -24,7 +24,7 @@ test("greetings typed in the designer are spoken on a draft test call, opening a
           { id: "front", name: "Front", config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "FRONT" }), tts: stage({ voice: "frontvoice" }) } },
           { id: "sales", name: "Sales", config: { llm: stage({ model: "m", system_prompt: "SALESPROMPT" }), tts: stage({ voice: "salesvoice" }) } },
         ],
-        routes: [{ id: "e1", from: "front", to: "sales", condition: "The caller wants to buy." }],
+        handoffs: [{ id: "e1", from: "front", to: "sales", condition: "The caller wants to buy." }],
       },
     }),
   });

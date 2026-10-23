@@ -48,21 +48,21 @@ export GOVOICE_MANAGEMENT_API_KEY="$(openssl rand -hex 32)"
 ADMIN=http://127.0.0.1:9090
 AUTH="Authorization: Bearer $GOVOICE_MANAGEMENT_API_KEY"
 curl -fsS "$ADMIN/api/v1/providers" -H "$AUTH" | jq -c '.data[] | select(.id=="offline") | {id, detected}'
-FLOW_ID=$(curl -fsS -X POST "$ADMIN/api/v1/flows" -H "$AUTH" -H 'Content-Type: application/json' -d '{
+AGENT_ID=$(curl -fsS -X POST "$ADMIN/api/v1/agents" -H "$AUTH" -H 'Content-Type: application/json' -d '{
   "name": "Offline demo",
   "config": {
     "stt": {"provider": "offline"},
     "llm": {"provider": "offline", "model": "govoice-test", "system_prompt": "You are a friendly voice assistant. Keep answers short."},
     "tts": {"provider": "offline"}
   }}' | jq -r .data.id)
-curl -fsS "$ADMIN/api/v1/flows/$FLOW_ID" -H "$AUTH" | jq -r .data.readiness.state     # ready
+curl -fsS "$ADMIN/api/v1/agents/$AGENT_ID" -H "$AUTH" | jq -r .data.readiness.state     # ready
 ```
 
 **6. Make a call.** The CLI streams a recorded clip ("Hi!") as the caller and prints what happened. Real models on a CPU are slow, so raise the timeout:
 
 ```bash
 cd examples/rtvi_client && npm ci
-node cli.js --flow "$FLOW_ID" --timeout 90000
+node cli.js --agent "$AGENT_ID" --timeout 90000
 ```
 
 Expected summary (measured on Apple Silicon, CPU only):

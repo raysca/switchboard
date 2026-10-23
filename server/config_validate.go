@@ -77,7 +77,7 @@ func validateProfileAndStorage(cfg *Config) error {
 	}
 	// Calls run stored flows only: the flow store is mandatory.
 	if cfg.Storage.Dialect == "" {
-		return errors.New("storage.dialect is required: calls run stored flows (set sqlite or postgres)")
+		return errors.New("storage.dialect is required: calls run stored agents (set sqlite or postgres)")
 	}
 	return nil
 }
@@ -140,7 +140,7 @@ func validateLimits(cfg *Config) error {
 		return errors.New("max_sessions_per_principal must be > 0")
 	}
 	if cfg.Limits.MaxSessionsPerAgent < 0 || cfg.Limits.StartRatePerPrincipal < 0 {
-		return errors.New("max_sessions_per_flow and start_rate_per_principal must be >= 0")
+		return errors.New("max_sessions_per_agent and start_rate_per_principal must be >= 0")
 	}
 	if cfg.Limits.StartRatePerPrincipal > 0 && cfg.Limits.StartBurstPerPrincipal < 1 {
 		return errors.New("start_burst_per_principal must be >= 1 when start_rate_per_principal > 0")
@@ -207,7 +207,7 @@ func validateTurn(cfg *Config) error {
 		return errors.New("turn.max_mute must be >= 0")
 	}
 	if !cfg.Turn.Manager && cfg.Turn.Analyzer.ForAgents {
-		return errors.New("turn.analyzer.for_flows needs turn.manager: true")
+		return errors.New("turn.analyzer.for_agents needs turn.manager: true")
 	}
 	if !cfg.Turn.Manager && (len(cfg.Turn.Mute) > 0 || cfg.Turn.MaxMute > 0) {
 		return errors.New("turn.mute and turn.max_mute need turn.manager: true")

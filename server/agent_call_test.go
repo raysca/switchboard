@@ -25,7 +25,7 @@ func twoStepAgent(t *testing.T) agent.Definition {
 	step := `{"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}}`
 	g, err := agent.Decode(json.RawMessage(`{"start":"front","steps":[` +
 		`{"id":"front","name":"Front desk","config":` + flat + `},{"id":"sales","name":"Sales","config":` + step + `}],` +
-		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`))
+		`"handoffs":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestAgentStepActivationRereadsTheEnvironment(t *testing.T) {
 	step := `{"llm":{"provider":"xai","model":"grok"},"tts":{"provider":"google"}}`
 	raw := json.RawMessage(`{"start":"front","steps":[` +
 		`{"id":"front","name":"Front desk","config":` + flat + `},{"id":"sales","name":"Sales","config":` + step + `}],` +
-		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`)
+		`"handoffs":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`)
 	rs := &runtime.Session{Snapshot: agent.Snapshot{Version: agent.Version{Config: raw}}}
 	call, err := s.callSpec(t.Context(), rs)
 	if err != nil {

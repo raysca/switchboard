@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,8 +31,8 @@ type TraceRepository interface {
 // SessionDTO represents a persisted voice session for the management API.
 type SessionDTO struct {
 	ID             string     `json:"id"`
-	AgentID        string     `json:"flow_id"`
-	AgentVersionID string     `json:"flow_version_id"`
+	AgentID        string     `json:"agent_id"`
+	AgentVersionID string     `json:"agent_version_id"`
 	ConfigHash     string     `json:"config_hash"`
 	StartedAt      time.Time  `json:"started_at"`
 	EndedAt        *time.Time `json:"ended_at,omitempty"`
@@ -42,7 +43,7 @@ type SessionDTO struct {
 	// Caller is the label the integration chose for the call (the voice token's principal).
 	Caller string `json:"caller"`
 	// EndReason is why the call ended (empty while it is live): caller_hung_up, silent_caller,
-	// agent_stuck, ended_by_flow, time_limit, connection_lost, server_shutdown, error, setup_failed
+	// agent_stuck, ended_by_agent, time_limit, connection_lost, server_shutdown, error, setup_failed
 	// or server_restart.
 	EndReason string `json:"end_reason"`
 	// MedianReplyMS is the median reply time over the call's measured turns; absent when none was measured.
@@ -175,6 +176,16 @@ func (h tracesHandler) collection(w http.ResponseWriter, r *http.Request, reques
 		return
 	}
 
+	// An unknown query key is refused, never ignored: a stale filter name would otherwise list every call.
+	for key := range r.URL.Query() {
+		switch key {
+		case "limit", "offset", "status", "agent_id":
+		default:
+			WriteError(w, http.StatusBadRequest, "invalid_request", "unknown query parameter "+strconv.Quote(key), requestID)
+			return
+		}
+	}
+
 	page, err := ParsePagination(r)
 	if err != nil {
 		WriteError(w, http.StatusBadRequest, "invalid_request", err.Error(), requestID)
@@ -185,7 +196,7 @@ func (h tracesHandler) collection(w http.ResponseWriter, r *http.Request, reques
 		Limit:   page.Limit,
 		Offset:  page.Offset,
 		Status:  r.URL.Query().Get("status"),
-		AgentID: r.URL.Query().Get("flow_id"),
+		AgentID: r.URL.Query().Get("agent_id"),
 	}
 
 	records, err := h.sessions.List(r.Context(), filter)

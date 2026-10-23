@@ -97,7 +97,7 @@ describe("FlowPage", () => {
         // After publishing, the server's list shows the new version, as a real refetch would.
         getFlow: vi.fn().mockResolvedValueOnce(flow()).mockResolvedValue(updated),
         getSessions: vi.fn().mockResolvedValue([
-          { id: "s1", flow_id: "a1", flow_version_id: "v1", config_hash: "h1", started_at: "", status: "active", turn_count: 0, safe_summary: "" },
+          { id: "s1", agent_id: "a1", agent_version_id: "v1", config_hash: "h1", started_at: "", status: "active", turn_count: 0, safe_summary: "" },
         ]),
       },
       "/flows/a1",
@@ -181,7 +181,7 @@ describe("FlowPage", () => {
   });
 
   it("counts, in the Publish dialog, only the calls on the current version", async () => {
-    const session = (id: string, version: string) => ({ id, flow_id: "a1", flow_version_id: version, config_hash: "h", started_at: "", status: "active", turn_count: 0, safe_summary: "" });
+    const session = (id: string, version: string) => ({ id, agent_id: "a1", agent_version_id: version, config_hash: "h", started_at: "", status: "active", turn_count: 0, safe_summary: "" });
     const getSessions = vi.fn().mockResolvedValue([session("1", "v1"), session("2", "v1"), session("3", "old"), session("4", "old"), session("5", "old")]);
     const { user } = setup({ getSessions }, "/flows/a1");
     await screen.findByRole("heading", { name: "Front desk", level: 1 });

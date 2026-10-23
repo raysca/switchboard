@@ -48,7 +48,7 @@ done
 # 5. the demo flow was installed by the server and is ready (the install runs in the background after start)
 ready=""
 for _ in $(seq 1 30); do
-  ready="$(api /api/v1/flows | jq -r '.data[] | select(.name == "Smile Dental front desk") | .readiness.state' || true)"
+  ready="$(api /api/v1/agents | jq -r '.data[] | select(.name == "Smile Dental front desk") | .readiness.state' || true)"
   [[ "$ready" == "ready" ]] && break
   sleep 2
 done

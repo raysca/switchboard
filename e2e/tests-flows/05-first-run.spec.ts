@@ -8,7 +8,7 @@ test.use({ viewport: { width: 1440, height: 1040 } });
 test.beforeAll(loadProviders);
 
 test("dashboard: a detected provider and no flow is one step from a first call", async ({ page, stack }) => {
-  const flows = (await api(stack, "/flows")).data as unknown[];
+  const flows = (await api(stack, "/agents")).data as unknown[];
   test.skip(flows.length > 0, "needs a stack with no flows yet");
   await connectAdmin(page, stack);
   await expect(page.getByRole("heading", { name: "One step to your first call." })).toBeVisible();
@@ -16,7 +16,7 @@ test("dashboard: a detected provider and no flow is one step from a first call",
 });
 
 test("first run: stack, flow, test call, connect", async ({ page, stack }) => {
-  const flows = (await api(stack, "/flows")).data as unknown[];
+  const flows = (await api(stack, "/agents")).data as unknown[];
   test.skip(flows.length > 0, "needs a stack with no flows yet");
   await connectAdmin(page, stack);
   await page.getByRole("link", { name: "Start first run" }).click();
@@ -43,8 +43,8 @@ test("first run: stack, flow, test call, connect", async ({ page, stack }) => {
   await page.getByRole("button", { name: "Next: connect" }).click();
 
   await expect(page.getByRole("heading", { name: "Put it in front of callers." })).toBeVisible();
-  const created = ((await api(stack, "/flows")).data as { id: string; name: string }[]).find((f) => f.name === "First run flow")!;
-  await expect(page.getByLabel("Token request")).toContainText(`"flow_id": "${created.id}"`);
+  const created = ((await api(stack, "/agents")).data as { id: string; name: string }[]).find((f) => f.name === "First run flow")!;
+  await expect(page.getByLabel("Token request")).toContainText(`"agent_id": "${created.id}"`);
   await step(page, "first run step 4 connect");
 
   // A reload resumes on the same step (the key is in memory only, so connect again).

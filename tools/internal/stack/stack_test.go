@@ -67,7 +67,7 @@ func TestCallErrorDoesNotEchoBody(t *testing.T) {
 	}))
 	defer srv.Close()
 	s := &Server{Admin: srv.URL, Key: "k-123"}
-	_, err := s.Call("POST", "flows", map[string]string{"a": "b"})
+	_, err := s.Call("POST", "agents", map[string]string{"a": "b"})
 	if err == nil || strings.Contains(err.Error(), "SECRET-BODY") || strings.Contains(err.Error(), "k-123") {
 		t.Fatalf("err = %v", err)
 	}

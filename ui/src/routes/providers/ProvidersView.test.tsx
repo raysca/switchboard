@@ -39,7 +39,7 @@ const flow = (id: string, name: string, config: Record<string, unknown>, archive
   updated_at: "",
 });
 const front = flow("f1", "Front desk", { stt: { provider: "google" }, llm: { provider: "google" }, tts: { provider: "google" } });
-const graph = flow("f2", "Support triage", { start: "a", steps: [{ id: "a", config: { llm: { provider: "xai" } } }], routes: [] });
+const graph = flow("f2", "Support triage", { start: "a", steps: [{ id: "a", config: { llm: { provider: "xai" } } }], handoffs: [] });
 
 function Where() {
   const l = useLocation();

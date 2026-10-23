@@ -51,7 +51,7 @@ export async function timelineEvents(stack: Stack): Promise<{ type: string; deta
     const res = await fetch(`${stack.adminUrl}/debug/timeline?session=${id}`);
     if (!res.ok) continue;
     const body = (await res.json()) as { events: { type: string; details?: string }[] };
-    if (body.events.some((e) => e.type === "route")) return body.events;
+    if (body.events.some((e) => e.type === "handoff")) return body.events;
   }
   return [];
 }

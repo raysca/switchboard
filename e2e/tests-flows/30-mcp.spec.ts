@@ -39,7 +39,7 @@ test("mcp tools page: servers, their tools and a changed schema, with the API fa
     const id = r.request().url().split("/").pop()!;
     return r.fulfill({ json: { data: { ...server(id), discovery: { id: "d", discovery_hash: "x", created_at: "", tools: id === "billing" ? tools : [] } } } });
   });
-  await page.route("**/api/v1/flows?*", (r) => r.fulfill({ json: { data: [flow] } }));
+  await page.route("**/api/v1/agents?*", (r) => r.fulfill({ json: { data: [flow] } }));
   await connectAdmin(page, stack);
   await page.getByRole("link", { name: "MCP tools", exact: true }).first().click();
   await expect(page.getByRole("heading", { name: "billing", level: 2 })).toBeVisible();
@@ -167,7 +167,7 @@ test("mcp: editing a failing server's endpoint to a healthy one connects it, and
   const id = servers.data.find((s) => s.name === "Edited Orders")!.id;
   const detail = await api<{ data: { discovery: { tools: { remote_name: string; schema_hash: string }[] } } }>(stack, `/mcp-servers/${id}`);
   const hash = detail.data.discovery.tools.find((t) => t.remote_name === "lookup_order")!.schema_hash;
-  const made = await api<{ data: { readiness: { state: string } } }>(stack, "/flows", {
+  const made = await api<{ data: { readiness: { state: string } } }>(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({
       name: "E2E Edited Orders",

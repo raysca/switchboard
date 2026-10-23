@@ -13,14 +13,14 @@ describe("isTextOnly", () => {
   it("reads a routed flow's speech-to-text from its START step, not the first or the last", () => {
     const silence = { stt: { provider: "silence", model: "text" } };
     const voice = { stt: { provider: "deepgram", model: "nova-3" } };
-    const routed = (start: string) => ({ start, steps: [step("a", voice), step("b", silence), step("c", {})], routes: [] });
+    const routed = (start: string) => ({ start, steps: [step("a", voice), step("b", silence), step("c", {})], handoffs: [] });
     expect(isTextOnly(routed("b"))).toBe(true);
     expect(isTextOnly(routed("a"))).toBe(false);
     expect(isTextOnly(routed("c"))).toBe(false); // the start step names no speech-to-text
   });
 
   it("ignores speech settings on steps that are not the start (only the start step has call-level settings)", () => {
-    const cfg = { start: "front", steps: [step("front", { stt: { provider: "deepgram" } }), step("sales", { stt: { provider: "silence" } })], routes: [] };
+    const cfg = { start: "front", steps: [step("front", { stt: { provider: "deepgram" } }), step("sales", { stt: { provider: "silence" } })], handoffs: [] };
     expect(isTextOnly(cfg)).toBe(false);
   });
 

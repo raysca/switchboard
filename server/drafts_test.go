@@ -70,7 +70,7 @@ func draftRig(t *testing.T) (*agentRigE2E, string) {
 
 // issueDraftToken asks for a token carrying a draft; it returns the response.
 func issueDraftToken(r *agentRigE2E, agentID, config string) (code int, token string, body string) {
-	payload, _ := json.Marshal(map[string]any{"principal": "alice", "flow_id": agentID, "draft": map[string]any{"config": json.RawMessage(config)}})
+	payload, _ := json.Marshal(map[string]any{"principal": "alice", "agent_id": agentID, "draft": map[string]any{"config": json.RawMessage(config)}})
 	w := apiRequest(r.s, http.MethodPost, "/api/v1/voice-tokens", e2eMgmtKey, string(payload))
 	var resp struct {
 		Data struct{ Token string } `json:"data"`
@@ -87,7 +87,7 @@ func TestVoiceTokenWithADraftIsValidatedLikeAPublish(t *testing.T) {
 	}{
 		"not an object": {id, `[1]`, http.StatusBadRequest},
 		"unattached":    {id, `{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo"},"tts":{"provider":"echo","voice":"v"}}`, http.StatusBadRequest},
-		"foreign tool":  {id, `{"start":"a","steps":[{"id":"a","name":"A","tools":["srv/lookup"],"config":` + echoAgentConfig("D") + `}],"routes":[]}`, http.StatusBadRequest},
+		"foreign tool":  {id, `{"start":"a","steps":[{"id":"a","name":"A","tools":["srv/lookup"],"config":` + echoAgentConfig("D") + `}],"handoffs":[]}`, http.StatusBadRequest},
 		"unknown flow":  {"0194c5f8-0000-7000-8000-000000000000", echoAgentConfig("D"), http.StatusNotFound},
 		"a valid draft": {id, echoAgentConfig(draftPrompt), http.StatusCreated},
 	} {

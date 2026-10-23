@@ -288,7 +288,7 @@ func TestScenario1_FreshInstallAndOnboarding(t *testing.T) {
 
 	// 8. Management HTTP API validation for onboarding
 	apiHandler := api.NewAgentsHandler(agentService)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/flows/"+firstAgent.ID, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+firstAgent.ID, nil)
 	w := httptest.NewRecorder()
 	apiHandler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {

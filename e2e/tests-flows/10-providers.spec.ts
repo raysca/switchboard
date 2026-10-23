@@ -64,12 +64,12 @@ test("flows list names the variables a not-ready flow is missing", async ({ page
   // The suite's flow does not exist yet (spec 20 creates it), so this test makes its own; the echo stack
   // is always ready, so only this row's readiness is altered in the response (route-mocked, R7).
   const NAME = "E2E Not Ready";
-  const created = await api<{ data: { id: string } }>(stack, "/flows", {
+  const created = await api<{ data: { id: string } }>(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({ name: NAME, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }) } }),
   });
   try {
-    await page.route("**/api/v1/flows?*", async (route) => {
+    await page.route("**/api/v1/agents?*", async (route) => {
       const res = await route.fetch();
       const body = (await res.json()) as { data: { name: string; readiness: object }[] };
       for (const f of body.data) {
@@ -86,6 +86,6 @@ test("flows list names the variables a not-ready flow is missing", async ({ page
     await step(page, "flows list: missing variables");
   } finally {
     // archived even when an assertion fails, so a failed run leaves no live "E2E Not Ready" for later specs
-    await api(stack, `/flows/${created.data.id}/archive`, { method: "POST" });
+    await api(stack, `/agents/${created.data.id}/archive`, { method: "POST" });
   }
 });

@@ -124,7 +124,7 @@ export function FlowVoiceTest({
     setCallVersion({ number: flow.current_version?.number ?? 0, config: flow.current_version?.config });
     await voiceClient.connect({
       flowId: flow.id,
-      principal: `flow-test-${flow.id}`,
+      principal: `agent-test-${flow.id}`,
       wsBaseUrl,
       pushToTalk: pushToTalk && !textOnly,
       draft,

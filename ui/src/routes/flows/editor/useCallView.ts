@@ -34,8 +34,8 @@ export function useCallView(graph: FlowDraft, call: CallInfo, client: ApiClient,
   }, [userSpeaking, botSpeaking]);
 
   const view = useMemo(
-    () => deriveView(graph.start, traces.data?.spans ?? [], graph.routes, { userSpeaking, botSpeaking, thinking }),
-    [graph.start, graph.routes, traces.data, userSpeaking, botSpeaking, thinking],
+    () => deriveView(graph.start, traces.data?.spans ?? [], graph.handoffs, { userSpeaking, botSpeaking, thinking }),
+    [graph.start, graph.handoffs, traces.data, userSpeaking, botSpeaking, thinking],
   );
   const traversedRoutes = useMemo(() => view.traversed.flatMap((t) => (t.routeId ? [t.routeId] : [])), [view]);
 

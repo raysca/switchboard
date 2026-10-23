@@ -64,7 +64,7 @@ export const serverConfigSchema = z.object({
   mcp_sync_interval_seconds: z.number().optional(),
   client_ip: z.string(),
   secure: z.boolean(),
-  audio: z.object({ backgrounds: z.array(z.string()), cues: z.array(z.string()), allow_flow_background: z.boolean(), background_default: z.string() }),
+  audio: z.object({ backgrounds: z.array(z.string()), cues: z.array(z.string()), allow_agent_background: z.boolean(), background_default: z.string() }),
   idle: z.object({ user_timeout_ms: z.number(), max_prompts: z.number(), prompt_mode: z.string() }),
   // The effective values a call uses when its flow says nothing (never a raw 0 for "default").
   turn: z.object({ manager: z.boolean(), min_words: z.number(), mute: z.array(z.string()), max_mute_ms: z.number(), speech_timeout_ms: z.number(), end_of_turn: z.string(), smart_turn_available: z.boolean(), smart_hold_ms: z.number() }),
@@ -73,15 +73,15 @@ export type ServerConfigDTO = z.infer<typeof serverConfigSchema>;
 const serverConfigEnvelope = z.object({ data: serverConfigSchema });
 
 const demoStatusSchema = z.object({
-  dental: z.object({ available: z.boolean(), installed: z.boolean(), flow_id: z.string().optional() }),
+  dental: z.object({ available: z.boolean(), installed: z.boolean(), agent_id: z.string().optional() }),
 });
 type DemoStatus = z.infer<typeof demoStatusSchema>;
 const demoInstallSchema = z.object({
   mcp_server_id: z.string(),
   mcp_created: z.boolean(),
   tools: z.number(),
-  flow_id: z.string(),
-  flow_created: z.boolean(),
+  agent_id: z.string(),
+  agent_created: z.boolean(),
 });
 type DemoInstall = z.infer<typeof demoInstallSchema>;
 
@@ -326,7 +326,7 @@ export function spanAttrs(span: TraceSpanDTO): Record<string, unknown> {
  * A route span's event ("preparing", "active", "failed") and the steps it joins, or null for other spans.
  */
 export function routeSpan(span: TraceSpanDTO): { event: string; from: string; to: string } | null {
-  const event = /^route\.(\w+)$/.exec(span.name)?.[1];
+  const event = /^handoff\.(\w+)$/.exec(span.name)?.[1];
   const a = spanAttrs(span);
   const from = a.from_step;
   const to = a.to_step;
@@ -398,8 +398,8 @@ type SessionRuntimeToolDTO = z.infer<typeof sessionRuntimeToolSchema>;
 
 export const sessionSchema = z.object({
   id: z.string(),
-  flow_id: z.string(),
-  flow_version_id: z.string(),
+  agent_id: z.string(),
+  agent_version_id: z.string(),
   config_hash: z.string(),
   started_at: z.string(),
   ended_at: z.string().nullish(),
@@ -420,7 +420,7 @@ type SessionFilterParams = {
   limit?: number;
   offset?: number;
   status?: string;
-  flow_id?: string;
+  agent_id?: string;
 };
 
 const sessionsEnvelope = z.object({
@@ -555,7 +555,7 @@ export function createApiClient(
     return parsed.data;
   }
   return {
-    issueVoiceToken: async (input: { principal: string; flow_id: string; draft?: { config: unknown; mcp_tools?: ToolSelection[] } }) =>
+    issueVoiceToken: async (input: { principal: string; agent_id: string; draft?: { config: unknown; mcp_tools?: ToolSelection[] } }) =>
       (await request("/voice-tokens", tokenEnvelope, { method: "POST", body: input })).data,
     testProvider: async (id: string) =>
       (await request(`/providers/${encodeURIComponent(id)}/test`, z.object({ data: providerTestSchema }), { method: "POST" })).data,
@@ -566,27 +566,27 @@ export function createApiClient(
     getFlows: async () => {
       const all: FlowDTO[] = [];
       for (let page = 0; page < FLOW_PAGES_MAX; page++) {
-        const batch = (await request(`/flows?limit=${FLOW_PAGE}&offset=${page * FLOW_PAGE}`, flowsEnvelope)).data;
+        const batch = (await request(`/agents?limit=${FLOW_PAGE}&offset=${page * FLOW_PAGE}`, flowsEnvelope)).data;
         for (const f of batch) if (!all.some((g) => g.id === f.id)) all.push(f); // a flow created between pages shifts offsets
         if (batch.length < FLOW_PAGE) break;
       }
       return all;
     },
     getFlow: async (id: string) =>
-      (await request(`/flows/${encodeURIComponent(id)}`, flowEnvelope)).data,
+      (await request(`/agents/${encodeURIComponent(id)}`, flowEnvelope)).data,
     /** One earlier publish of a flow (config and tools), read-only: a rollback publishes it again. */
     getFlowVersion: async (id: string, number: number) =>
-      (await request(`/flows/${encodeURIComponent(id)}/versions/${number}`, flowVersionEnvelope)).data,
+      (await request(`/agents/${encodeURIComponent(id)}/versions/${number}`, flowVersionEnvelope)).data,
     createFlow: async (input: CreateFlowInput) =>
       (
-        await request("/flows", flowEnvelope, {
+        await request("/agents", flowEnvelope, {
           method: "POST",
           body: input,
         })
       ).data,
     updateFlow: async (id: string, input: UpdateFlowInput) =>
       (
-        await request(`/flows/${encodeURIComponent(id)}`, flowEnvelope, {
+        await request(`/agents/${encodeURIComponent(id)}`, flowEnvelope, {
           method: "PUT",
           body: input,
         })
@@ -594,7 +594,7 @@ export function createApiClient(
     archiveFlow: async (id: string) =>
       (
         await request(
-          `/flows/${encodeURIComponent(id)}/archive`,
+          `/agents/${encodeURIComponent(id)}/archive`,
           archiveEnvelope,
           { method: "POST" },
         )
@@ -602,7 +602,7 @@ export function createApiClient(
     duplicateFlow: async (id: string, input?: { name?: string }) =>
       (
         await request(
-          `/flows/${encodeURIComponent(id)}/duplicate`,
+          `/agents/${encodeURIComponent(id)}/duplicate`,
           flowEnvelope,
           {
             method: "POST",
@@ -693,7 +693,7 @@ export function createApiClient(
       if (params?.offset !== undefined)
         searchParams.set("offset", String(params.offset));
       if (params?.status) searchParams.set("status", params.status);
-      if (params?.flow_id) searchParams.set("flow_id", params.flow_id);
+      if (params?.agent_id) searchParams.set("agent_id", params.agent_id);
       const qs = searchParams.toString();
       return (
         await request(`/sessions${qs ? `?${qs}` : ""}`, sessionsEnvelope)

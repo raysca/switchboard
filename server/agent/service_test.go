@@ -463,7 +463,7 @@ func TestPublishRefusesCallWideSettingsOnANonStartStep(t *testing.T) {
 		front := front[:len(front)-1] + frontExtra + "}"
 		return json.RawMessage(`{"start":"front","steps":[{"id":"front","name":"Front","config":` + front + `},` +
 			`{"id":"sales","name":"Sales","config":{"llm":{"provider":"google","model":"google.llm"},"tts":{"provider":"google","voice":"google.tts"` + salesTTS + `}` + salesExtra + `}}],` +
-			`"routes":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`)
+			`"handoffs":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`)
 	}
 	for name, tc := range map[string]struct {
 		cfg  json.RawMessage
@@ -483,7 +483,7 @@ func TestPublishRefusesCallWideSettingsOnANonStartStep(t *testing.T) {
 	}
 	start := front[:len(front)-1] + `,"failover":{"on":["timeout"]}}`
 	start = strings.Replace(start, `"voice":"google.tts"}`, `"voice":"google.tts","clean_text":false}`, 1)
-	cfg := json.RawMessage(`{"start":"front","steps":[{"id":"front","name":"Front","config":` + start + `},{"id":"sales","name":"Sales","config":{"llm":{"provider":"google","model":"google.llm"},"tts":{"provider":"google","voice":"google.tts"}}}],"routes":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`)
+	cfg := json.RawMessage(`{"start":"front","steps":[{"id":"front","name":"Front","config":` + start + `},{"id":"sales","name":"Sales","config":{"llm":{"provider":"google","model":"google.llm"},"tts":{"provider":"google","voice":"google.tts"}}}],"handoffs":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`)
 	if _, err := svc.Create(context.Background(), CreateRequest{Name: "ok2", Config: cfg}); err != nil {
 		t.Fatalf("start-step both: %v", err)
 	}
@@ -495,7 +495,7 @@ func TestPublishRefusesCallWideSettingsOnANonStartStep(t *testing.T) {
 func TestDuplicateCopiesALegacyStoredVersion(t *testing.T) {
 	svc := testServiceWith(t, &fakePolicy{cues: []string{"chime"}})
 	ctx := context.Background()
-	handoff := json.RawMessage(strings.Replace(twoStepCfg(""), `"routes":`, `"route_cue":{"name":"chime"},"routes":`, 1))
+	handoff := json.RawMessage(strings.Replace(twoStepCfg(""), `"handoffs":`, `"handoff_cue":{"name":"chime"},"handoffs":`, 1))
 	src, err := svc.Create(ctx, CreateRequest{Name: "src", Config: handoff})
 	if err != nil {
 		t.Fatal(err)

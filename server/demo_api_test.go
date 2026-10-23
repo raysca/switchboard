@@ -76,8 +76,8 @@ func TestDemoAPIInstallsTheDentalDemoOnce(t *testing.T) {
 		}
 		var out struct {
 			Data struct {
-				AgentCreated bool   `json:"flow_created"`
-				AgentID      string `json:"flow_id"`
+				AgentCreated bool   `json:"agent_created"`
+				AgentID      string `json:"agent_id"`
 			} `json:"data"`
 		}
 		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {

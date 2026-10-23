@@ -13,11 +13,11 @@ const PROMPT = "Still there for the test?";
 const BYE = "Goodbye for now.";
 type Config = { idle?: { user_timeout_ms?: number; max_prompts?: number; prompt?: string; prompt_mode?: string; goodbye?: string }; audio?: { denoise?: object; output_gain_db?: number; background?: { name: string; gain_db?: number; loop?: boolean } } };
 type Flow = { name: string; current_version: { number: number; config: Config & { steps?: { config: Config }[] } } };
-const current = async (stack: Parameters<typeof api>[0]) => (await api<{ data: Flow[] }>(stack, "/flows")).data.find((f) => f.name === NAME)!.current_version;
+const current = async (stack: Parameters<typeof api>[0]) => (await api<{ data: Flow[] }>(stack, "/agents")).data.find((f) => f.name === NAME)!.current_version;
 const startConfig = (c: Flow["current_version"]["config"]): Config => c.steps?.[0]?.config ?? c;
 
 test("quiet-caller and audio settings are tried on a draft call, published, read back and reopened", async ({ page, stack }) => {
-  await api(stack, "/flows", {
+  await api(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({ name: NAME, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }) } }),
   });

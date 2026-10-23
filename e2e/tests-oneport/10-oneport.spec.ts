@@ -19,7 +19,7 @@ test("the UI, its API calls and the voice socket all work from the one public or
   await expect(page).toHaveURL(/\/flows$/);
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
 
-  await api(stack, "/flows", {
+  await api(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({ name: "E2E One Port", config: { stt: stage({ model: "chirp" }), llm: stage({ model: "fake-llm", system_prompt: "You are ONEPORT. Answer in one short sentence." }), tts: stage() } }),
   });

@@ -20,8 +20,8 @@ const (
 type Definition struct {
 	Start      string      `json:"start"`
 	Steps      []Step      `json:"steps"`
-	Handoffs   []Handoff   `json:"routes"`
-	HandoffCue *HandoffCue `json:"route_cue,omitempty"`
+	Handoffs   []Handoff   `json:"handoffs"`
+	HandoffCue *HandoffCue `json:"handoff_cue,omitempty"`
 }
 
 type Position struct {
@@ -69,8 +69,8 @@ type rawStep struct {
 type rawDefinition struct {
 	Start      string      `json:"start"`
 	Steps      []rawStep   `json:"steps"`
-	Handoffs   []Handoff   `json:"routes"`
-	HandoffCue *HandoffCue `json:"route_cue"`
+	Handoffs   []Handoff   `json:"handoffs"`
+	HandoffCue *HandoffCue `json:"handoff_cue"`
 }
 
 var (
@@ -115,7 +115,7 @@ func Decode(raw json.RawMessage) (Definition, error) {
 		return Definition{}, invalid("%v", err)
 	}
 	if len(rg.Steps) == 0 || len(rg.Steps) > MaxSteps || len(rg.Handoffs) > MaxHandoffs {
-		return Definition{}, invalid("a flow has 1 to %d steps and at most %d routes", MaxSteps, MaxHandoffs)
+		return Definition{}, invalid("an agent has 1 to %d steps and at most %d handoffs", MaxSteps, MaxHandoffs)
 	}
 	g := Definition{Start: rg.Start, Handoffs: rg.Handoffs, HandoffCue: rg.HandoffCue, Steps: make([]Step, 0, len(rg.Steps))}
 	ids, slugs := map[string]bool{}, map[string]bool{}
@@ -138,7 +138,7 @@ func Decode(raw json.RawMessage) (Definition, error) {
 		g.Steps = append(g.Steps, Step{ID: rn.ID, Name: name, Config: cfg, Tools: rn.Tools, EndCall: rn.EndCall, Position: rn.Position})
 	}
 	if c := g.HandoffCue; c != nil && (!cueName.MatchString(c.Name) || c.AfterMS < 0 || c.AfterMS > maxCueAfterMS) {
-		return Definition{}, invalid("route_cue needs a name matching %s and after_ms between 0 and %d", cueName, maxCueAfterMS)
+		return Definition{}, invalid("handoff_cue needs a name matching %s and after_ms between 0 and %d", cueName, maxCueAfterMS)
 	}
 	if !ids[g.Start] {
 		return Definition{}, invalid("start %q is not a step", g.Start)
@@ -148,11 +148,11 @@ func Decode(raw json.RawMessage) (Definition, error) {
 		key := [2]string{e.From, e.To}
 		switch {
 		case e.ID == "" || !ids[e.From] || !ids[e.To] || e.From == e.To:
-			return Definition{}, invalid("route %q must join two different existing steps", e.ID)
+			return Definition{}, invalid("handoff %q must join two different existing steps", e.ID)
 		case strings.TrimSpace(e.Condition) == "" || len(e.Condition) > maxCondition:
-			return Definition{}, invalid("route %q needs a condition of 1 to %d characters", e.ID, maxCondition)
+			return Definition{}, invalid("handoff %q needs a condition of 1 to %d characters", e.ID, maxCondition)
 		case pairs[key]:
-			return Definition{}, invalid("route %q duplicates another route between the same steps", e.ID)
+			return Definition{}, invalid("handoff %q duplicates another handoff between the same steps", e.ID)
 		}
 		pairs[key] = true
 	}
@@ -171,7 +171,7 @@ func (g Definition) validateCallLevel() error {
 		if n.ID != g.Start {
 			if c.STT.Provider != "" || c.VADStopMS != 0 || c.STTP99MS != 0 || c.Recording != (RecordingConfig{}) ||
 				c.Context.MaxMessages != 0 || c.Context.MaxTokens != 0 || len(c.AsyncTools) != 0 || c.Idle != nil || c.Turn != nil || c.MaxCallDurationSeconds != 0 || c.Context.Summarization != (SummarizationConfig{}) {
-				return invalid("step %q sets flow settings (stt, vad_stop_ms, stt_p99_ms, recording, context, async_tools, idle, turn, max_call_duration_seconds); set them on the start step", n.ID)
+				return invalid("step %q sets agent settings (stt, vad_stop_ms, stt_p99_ms, recording, context, async_tools, idle, turn, max_call_duration_seconds); set them on the start step", n.ID)
 			}
 			if a := c.Audio; a != nil && *a != (AudioSettings{Background: a.Background}) {
 				return invalid("step %q: audio may only set background on a step other than the start step", n.ID)
@@ -308,7 +308,7 @@ func checkStepTools(g Definition, selected []ToolSelection) error {
 	for _, n := range g.Steps {
 		for _, t := range n.Tools {
 			if !have[t] {
-				return invalid("step %q lists tool %q that the flow has not selected", n.ID, t)
+				return invalid("step %q lists tool %q that the agent has not selected", n.ID, t)
 			}
 		}
 	}

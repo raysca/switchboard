@@ -14,7 +14,7 @@ func twoStepAgent(salesProvider string) json.RawMessage {
 	return json.RawMessage(`{"start":"front","steps":[` +
 		`{"id":"front","name":"Front desk","config":` + string(validConfig()) + `},` +
 		`{"id":"sales","name":"Sales","config":{"llm":{"provider":"` + salesProvider + `","model":"google.llm"},"tts":{"provider":"google","voice":"google.tts"}}}],` +
-		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`)
+		`"handoffs":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`)
 }
 
 func TestCreateAcceptsAgentAndReportsStepProblems(t *testing.T) {
@@ -35,7 +35,7 @@ func TestCreateAcceptsAgentAndReportsStepProblems(t *testing.T) {
 }
 
 func TestStepToolsMustBeSelected(t *testing.T) {
-	g, err := Decode(json.RawMessage(`{"start":"a","steps":[{"id":"a","name":"A","tools":["srv/lookup"],"config":` + string(validConfig()) + `}],"routes":[]}`))
+	g, err := Decode(json.RawMessage(`{"start":"a","steps":[{"id":"a","name":"A","tools":["srv/lookup"],"config":` + string(validConfig()) + `}],"handoffs":[]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestStepToolsMustBeSelected(t *testing.T) {
 
 func TestCreateRejectsAgentStepToolNotSelected(t *testing.T) {
 	svc := testService(t)
-	raw := json.RawMessage(`{"start":"a","steps":[{"id":"a","name":"A","tools":["srv/lookup"],"config":` + string(validConfig()) + `}],"routes":[]}`)
+	raw := json.RawMessage(`{"start":"a","steps":[{"id":"a","name":"A","tools":["srv/lookup"],"config":` + string(validConfig()) + `}],"handoffs":[]}`)
 	if _, err := svc.Create(context.Background(), CreateRequest{Name: "t", Config: raw}); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("want ErrInvalidConfig, got %v", err)
 	}
@@ -86,7 +86,7 @@ func TestUpdateAgentPublishesNewVersionKeepingOldPinned(t *testing.T) {
 // A config with the pre-rename keys is refused on write like any unknown field.
 func TestCreateRefusesTheOldConfigKeys(t *testing.T) {
 	svc := testService(t)
-	old := strings.NewReplacer(`"start"`, `"entry"`, `"steps"`, `"nodes"`, `"routes"`, `"edges"`).Replace(string(twoStepAgent("google")))
+	old := strings.NewReplacer(`"start"`, `"entry"`, `"steps"`, `"nodes"`, `"handoffs"`, `"edges"`).Replace(string(twoStepAgent("google")))
 	if _, err := svc.Create(context.Background(), CreateRequest{Name: "old keys", Config: json.RawMessage(old)}); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("got %v", err)
 	}

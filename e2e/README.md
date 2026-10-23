@@ -36,7 +36,7 @@ secret the stack is not started and every test is skipped.
 2. Admin debug client: voice call (the fake mic asks "What is two plus two?",
    bot answers "4"), then mute and a typed text turn ("capital of France" ->
    "Paris"), then disconnect.
-3. Custom client (`examples/rtvi_client`): calls the flow by `flow_id`, voice
+3. Custom client (`examples/rtvi_client`): calls the flow by `agent_id`, voice
    and text turns.
 4. Admin UI: delete the flow; it leaves the list and a new voice token for it
    is refused (409).

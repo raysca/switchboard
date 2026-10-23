@@ -56,7 +56,7 @@ func TestResolveDraftRejectsWhatAPublishWouldReject(t *testing.T) {
 		"not json":            json.RawMessage(`{`),
 		"not an object":       json.RawMessage(`[1]`),
 		"empty":               nil,
-		"a tool not attached": json.RawMessage(`{"start":"a","steps":[{"id":"a","name":"A","tools":["srv/lookup"],"config":` + string(draftConfig("D")) + `}],"routes":[]}`),
+		"a tool not attached": json.RawMessage(`{"start":"a","steps":[{"id":"a","name":"A","tools":["srv/lookup"],"config":` + string(draftConfig("D")) + `}],"handoffs":[]}`),
 	} {
 		if _, _, err := svc.ResolveDraft(ctx, f.ID, cfg, nil); err == nil {
 			t.Errorf("%s: accepted", name)

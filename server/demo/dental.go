@@ -41,8 +41,8 @@ type Result struct {
 	MCPServerID  string `json:"mcp_server_id"`
 	MCPCreated   bool   `json:"mcp_created"`
 	Tools        int    `json:"tools"`
-	AgentID      string `json:"flow_id"`
-	AgentCreated bool   `json:"flow_created"`
+	AgentID      string `json:"agent_id"`
+	AgentCreated bool   `json:"agent_created"`
 }
 
 // InstallDental adds the MCP server (endpoint is its /mcp URL) and the flow unless they exist.
@@ -102,8 +102,8 @@ func InstallDental(ctx context.Context, servers Servers, agents Agents, endpoint
 		return res, err
 	}
 	if f.ID != "" && !pointsAt(f, res.MCPServerID) {
-		if err := agents.Archive(ctx, f.ID); err != nil { // a stale flow could never run its tools
-			return res, fmt.Errorf("archive stale flow: %w", err)
+		if err := agents.Archive(ctx, f.ID); err != nil { // a stale agent could never run its tools
+			return res, fmt.Errorf("archive stale agent: %w", err)
 		}
 		f = agent.Agent{}
 	}
@@ -117,7 +117,7 @@ func InstallDental(ctx context.Context, servers Servers, agents Agents, endpoint
 	}
 	created, err := agents.Create(ctx, agent.CreateRequest{Name: AgentName, Description: "Front desk takes the name, then hands new and returning patients to the right agent.", Config: cfg, MCPTools: selections})
 	if err != nil {
-		return res, fmt.Errorf("create flow: %w", err)
+		return res, fmt.Errorf("create agent: %w", err)
 	}
 	res.AgentID, res.AgentCreated = created.ID, true
 	return res, nil
@@ -129,7 +129,7 @@ func FindAgent(ctx context.Context, agents Agents) (agent.Agent, error) {
 	for offset := 0; ; offset += page {
 		batch, err := agents.List(ctx, page, offset)
 		if err != nil {
-			return agent.Agent{}, fmt.Errorf("list flows: %w", err)
+			return agent.Agent{}, fmt.Errorf("list agents: %w", err)
 		}
 		for _, f := range batch {
 			if f.Name == AgentName && !f.Archived {
@@ -206,14 +206,14 @@ func dentalConfig(serverID string) (json.RawMessage, error) {
 			step("new", "New patient", true, refs(serverID, "register_patient", "find_slots", "book_appointment"), newPatient, 320),
 			step("returning", "Returning patient", true, refs(serverID, "find_patient", "list_appointments", "find_slots", "reschedule_appointment", "cancel_appointment"), returning, 320),
 		},
-		"routes": []agent.Handoff{
+		"handoffs": []agent.Handoff{
 			{ID: "to-new", From: "front", To: "new", Condition: "The caller has never been a patient at Smile Dental and wants to register or book their first appointment."},
 			{ID: "to-returning", From: "front", To: "returning", Condition: "The caller is already a patient and wants to change, move or cancel an appointment."},
 		},
 	}
 	raw, err := json.Marshal(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("encode dental flow: %w", err)
+		return nil, fmt.Errorf("encode dental agent: %w", err)
 	}
 	return raw, nil
 }

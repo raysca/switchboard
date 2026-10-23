@@ -87,7 +87,7 @@ const stage = (c: Record<string, unknown>, k: string): Record<string, unknown> =
 
 /** Routes as React Flow routes: a route with no condition yet draws as a labelled draft. */
 export function flowRoutes(graph: FlowDraft, selected?: Selection, traversedRoutes?: string[], justHandedRoute?: string): Edge[] {
-  return graph.routes.map((e) => ({
+  return graph.handoffs.map((e) => ({
     id: e.id,
     source: e.from,
     target: e.to,
@@ -151,7 +151,7 @@ export function Canvas({ graph, selected, onSelect, onMove, onConnect, visual, t
     setNodes(derived);
   }
 
-  const routes = useMemo(() => flowRoutes(graph, selected, traversedRoutes, justHandedRoute), [graph.routes, selected, traversedRoutes, justHandedRoute]);
+  const routes = useMemo(() => flowRoutes(graph, selected, traversedRoutes, justHandedRoute), [graph.handoffs, selected, traversedRoutes, justHandedRoute]);
 
   // Re-fit in place (not by remounting, which would drop focus on a step and the viewport) when a step is added or
   // removed, or the room for the flow changes, so no step is left off-screen or tiny.

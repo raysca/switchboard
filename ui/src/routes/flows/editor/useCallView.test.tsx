@@ -13,13 +13,13 @@ const graph = fromFlowConfig({
     { id: "front", name: "Front", config: { stt: stage, llm: { ...stage, model: "m" }, tts: stage } },
     { id: "sales", name: "Sales", config: { llm: { ...stage, model: "m" }, tts: stage } },
   ],
-  routes: [{ id: "e1", from: "front", to: "sales", condition: "buy" }],
+  handoffs: [{ id: "e1", from: "front", to: "sales", condition: "buy" }],
 });
 const handedOff: SessionTracesDTO = {
   session_id: "s1",
   events: [],
   tool_calls: [],
-  spans: [{ id: "1", name: "route.active", started_at: "2026-10-11T10:00:02Z", attributes: { from_step: "front", to_step: "sales" } }],
+  spans: [{ id: "1", name: "handoff.active", started_at: "2026-10-11T10:00:02Z", attributes: { from_step: "front", to_step: "sales" } }],
 };
 
 describe("useCallView", () => {

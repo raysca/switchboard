@@ -33,7 +33,7 @@ func (s *Server) resolveBed(f *agent.AudioSettings) (bed, bool) {
 		b, ok := s.backgrounds[f.Background.Name]
 		switch {
 		case !s.cfg.Audio.AllowAgentBackground:
-			s.logger.Warn("flow background ignored: audio.allow_flow_background is off", "sound", f.Background.Name)
+			s.logger.Warn("flow background ignored: audio.allow_agent_background is off", "sound", f.Background.Name)
 		case !ok:
 			s.logger.Warn("flow background ignored: not in audio.backgrounds", "sound", f.Background.Name)
 		default:

@@ -162,7 +162,7 @@ func TestCallBehaviorThePublishAPIRefusesASoundTheServerDoesNotOfferOrAllow(t *t
 	sound := constWAV(t, "office", 12000)
 	post := func(r *agentRigE2E, name, extra string) (int, string) {
 		body := `{"name":"` + name + `","config":{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m"},"tts":{"provider":"echo","voice":"v"},` + extra + `}}`
-		w := apiRequest(r.s, http.MethodPost, "/api/v1/flows", e2eMgmtKey, body)
+		w := apiRequest(r.s, http.MethodPost, "/api/v1/agents", e2eMgmtKey, body)
 		return w.Code, w.Body.String()
 	}
 	allowed := newAgentRigE2E(t, newProbe(), func(c *Config) {
@@ -184,7 +184,7 @@ func TestCallBehaviorThePublishAPIRefusesASoundTheServerDoesNotOfferOrAllow(t *t
 		c.Audio.AllowAgentBackground = false
 	})
 	code, body = post(denied, "Denied", `"audio":{"background":{"name":"office"}}`)
-	if code != http.StatusBadRequest || !strings.Contains(body, "audio.allow_flow_background") {
+	if code != http.StatusBadRequest || !strings.Contains(body, "audio.allow_agent_background") {
 		t.Fatalf("the ceiling off: %d %s", code, body)
 	}
 	if code, body := post(denied, "OtherAudio", `"audio":{"denoise":{"strength":0.8},"output_gain_db":-6}`); code != http.StatusCreated {
@@ -212,11 +212,11 @@ func TestCallBehaviorThePublishAPIRefusesAnUnknownHandoffCue(t *testing.T) {
 	}
 	put := func(cue string) (int, string) {
 		body := `{"config":` + string(agentConfigJSON("SALES", "salesvoice", cue)) + `}`
-		w := apiRequest(r.s, http.MethodPut, "/api/v1/flows/"+id, e2eMgmtKey, body)
+		w := apiRequest(r.s, http.MethodPut, "/api/v1/agents/"+id, e2eMgmtKey, body)
 		return w.Code, w.Body.String()
 	}
 	code, body := put(`{"name":"chimes"}`)
-	if code != http.StatusBadRequest || !strings.Contains(body, "invalid_request") || !strings.Contains(body, `route_cue.name \"chimes\" is not a sound on this server (available: chime, ding)`) {
+	if code != http.StatusBadRequest || !strings.Contains(body, "invalid_request") || !strings.Contains(body, `handoff_cue.name \"chimes\" is not a sound on this server (available: chime, ding)`) {
 		t.Fatalf("an unknown route sound: %d %s", code, body)
 	}
 	if code, body := put(`{"name":"ding"}`); code != http.StatusOK {
@@ -231,7 +231,7 @@ func TestCallBehaviorThePublishAPIRefusesCallWideSettingsOnALaterStep(t *testing
 	cfg := string(agentConfigJSON("SALES", "salesvoice"))
 	i := strings.Index(cfg, `"id":"sales"`)
 	cfg = cfg[:i] + strings.Replace(cfg[i:], `"config":{`, `"config":{"failover":{"on":["timeout"]},`, 1)
-	w := apiRequest(r.s, http.MethodPut, "/api/v1/flows/"+id, e2eMgmtKey, `{"config":`+cfg+`}`)
+	w := apiRequest(r.s, http.MethodPut, "/api/v1/agents/"+id, e2eMgmtKey, `{"config":`+cfg+`}`)
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid_request") || !strings.Contains(w.Body.String(), `step \"sales\"`) {
 		t.Fatalf("failover on a later step: %d %s", w.Code, w.Body.String())
 	}
@@ -279,16 +279,16 @@ func TestCallBehaviorPublishRefusesSmartEndOfTurnWithoutTheModel(t *testing.T) {
 	body := func(turn string) string {
 		return `{"name":"smart","config":{"stt":{"provider":"echo","model":"m"},"llm":{"provider":"echo","model":"m"},"tts":{"provider":"echo","voice":"v"},"turn":` + turn + `}}`
 	}
-	w := apiRequest(r.s, http.MethodPost, "/api/v1/flows", e2eMgmtKey, body(`{"end_of_turn":"smart"}`))
-	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "turn.analyzer.for_flows") {
+	w := apiRequest(r.s, http.MethodPost, "/api/v1/agents", e2eMgmtKey, body(`{"end_of_turn":"smart"}`))
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "turn.analyzer.for_agents") {
 		t.Fatalf("smart without the model: %d %s", w.Code, w.Body.String())
 	}
-	if w := apiRequest(r.s, http.MethodPost, "/api/v1/flows", e2eMgmtKey, body(`{"end_of_turn":"eager","speech_timeout_ms":900}`)); w.Code != http.StatusCreated {
+	if w := apiRequest(r.s, http.MethodPost, "/api/v1/agents", e2eMgmtKey, body(`{"end_of_turn":"eager","speech_timeout_ms":900}`)); w.Code != http.StatusCreated {
 		t.Fatalf("eager needs no model: %d %s", w.Code, w.Body.String())
 	}
 }
 
-// With the model loaded (for_flows) a smart flow is ready, and a call on it connects and replies. It does not
+// With the model loaded (for_agents) a smart flow is ready, and a call on it connects and replies. It does not
 // prove the smart chain runs (a typed turn bypasses the detector): TestTurnForCall and the build test do.
 func TestCallBehaviorASmartAgentConnectsAndRepliesWhenTheModelIsLoaded(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe(), func(c *Config) { c.Turn.Analyzer.ForAgents = true })
@@ -308,7 +308,7 @@ func TestCallBehaviorThePublishAPIRefusesALongerCallLimit(t *testing.T) {
 	r := newAgentRigE2E(t, newProbe(), func(c *Config) { c.Limits.MaxCallDuration = 10 * time.Minute })
 	post := func(name string, seconds int) (int, string) {
 		body := fmt.Sprintf(`{"name":%q,"config":{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m"},"tts":{"provider":"echo","voice":"v"},"max_call_duration_seconds":%d}}`, name, seconds)
-		w := apiRequest(r.s, http.MethodPost, "/api/v1/flows", e2eMgmtKey, body)
+		w := apiRequest(r.s, http.MethodPost, "/api/v1/agents", e2eMgmtKey, body)
 		return w.Code, w.Body.String()
 	}
 	code, body := post("TooLong", 601)

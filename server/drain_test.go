@@ -36,7 +36,7 @@ func drainFixture(t *testing.T, drain time.Duration) (*Server, *httptest.Server,
 	ts := httptest.NewServer(s.publicMux)
 	t.Cleanup(ts.Close)
 	dial := func(clientReady bool) (*websocket.Conn, error) {
-		w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+agentID+`"}`)
+		w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+agentID+`"}`)
 		var resp struct {
 			Data struct{ Token string } `json:"data"`
 		}

@@ -22,8 +22,8 @@ const flow = (over: Partial<FlowDTO> = {}): FlowDTO => ({
 const call = (over: Partial<SessionDTO> = {}): SessionDTO => ({
   draft: false,
   id: "0192aaaa-0000-7000-8000-000000000001",
-  flow_id: "a1",
-  flow_version_id: "v7",
+  agent_id: "a1",
+  agent_version_id: "v7",
   config_hash: "h",
   started_at: "2026-10-12T14:00:00Z",
   ended_at: "2026-10-12T14:04:12Z",
@@ -40,8 +40,8 @@ function Where() {
   return <p data-testid="where">{l.pathname + l.search}</p>;
 }
 // The live count asks for status=active with limit 100; the list asks for 26.
-const listOnly = (rows: SessionDTO[] | ((p: { offset?: number; status?: string; flow_id?: string }) => SessionDTO[]), live: SessionDTO[] = []) =>
-  vi.fn().mockImplementation(async (p?: { limit?: number; offset?: number; status?: string; flow_id?: string }) =>
+const listOnly = (rows: SessionDTO[] | ((p: { offset?: number; status?: string; agent_id?: string }) => SessionDTO[]), live: SessionDTO[] = []) =>
+  vi.fn().mockImplementation(async (p?: { limit?: number; offset?: number; status?: string; agent_id?: string }) =>
     p?.limit === 100 ? live : typeof rows === "function" ? rows(p ?? {}) : rows,
   );
 
@@ -81,7 +81,7 @@ describe("CallsView", () => {
     setup({
       getSessions: listOnly([
         call(),
-        call({ id: "0192aaaa-0000-7000-8000-000000000002", status: "active", ended_at: null, flow_version_id: "v6", turn_count: 2 }),
+        call({ id: "0192aaaa-0000-7000-8000-000000000002", status: "active", ended_at: null, agent_version_id: "v6", turn_count: 2 }),
       ]),
     });
     const rows = await screen.findAllByRole("row");
@@ -110,7 +110,7 @@ describe("CallsView", () => {
   it("shows who called, how the call ended and its median reply, and says so plainly when it does not know", async () => {
     setup({
       getSessions: listOnly([
-        call({ caller: "flow-test-0192aaaa", end_reason: "caller_hung_up", median_reply_ms: 612 }),
+        call({ caller: "agent-test-0192aaaa", end_reason: "caller_hung_up", median_reply_ms: 612 }),
         call({ id: "0192aaaa-0000-7000-8000-000000000002", caller: "alice", end_reason: "silent_caller", median_reply_ms: 1500 }),
         call({ id: "0192aaaa-0000-7000-8000-000000000003" }),
         call({ id: "0192aaaa-0000-7000-8000-000000000004", status: "active", caller: "alice" }),
@@ -158,7 +158,7 @@ describe("CallsView", () => {
     const { client, user } = setup({});
     await screen.findByRole("table");
     await user.selectOptions(screen.getByLabelText("Flow"), "a2");
-    await waitFor(() => expect(client.getSessions).toHaveBeenLastCalledWith(expect.objectContaining({ flow_id: "a2", limit: 26, offset: 0 })));
+    await waitFor(() => expect(client.getSessions).toHaveBeenLastCalledWith(expect.objectContaining({ agent_id: "a2", limit: 26, offset: 0 })));
     expect(screen.getByTestId("where")).toHaveTextContent("/sessions?flow=a2");
   });
 
@@ -176,14 +176,14 @@ describe("CallsView", () => {
 
   it("starts from the filters in the URL, and ignores a garbage outcome", async () => {
     const { client } = setup({}, "/sessions?flow=a1&outcome=live");
-    await waitFor(() => expect(client.getSessions).toHaveBeenCalledWith(expect.objectContaining({ flow_id: "a1", status: "active", limit: 26 })));
+    await waitFor(() => expect(client.getSessions).toHaveBeenCalledWith(expect.objectContaining({ agent_id: "a1", status: "active", limit: 26 })));
     expect(screen.getByRole("button", { name: /^Live/ })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("treats an unknown outcome as All", async () => {
     const { client } = setup({}, "/sessions?outcome=bogus");
     await screen.findByRole("table");
-    expect(client.getSessions).toHaveBeenCalledWith({ limit: 26, offset: 0, status: undefined, flow_id: undefined });
+    expect(client.getSessions).toHaveBeenCalledWith({ limit: 26, offset: 0, status: undefined, agent_id: undefined });
     expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
   });
 
@@ -279,7 +279,7 @@ describe("CallsView", () => {
   });
 
   it("counts live calls of the chosen flow only", async () => {
-    setup({ getSessions: listOnly([call()], [call({ status: "active" }), call({ id: "x", status: "active", flow_id: "a2" }), call({ id: "y", status: "active", flow_id: "a2" })]) }, "/sessions?flow=a2");
+    setup({ getSessions: listOnly([call()], [call({ status: "active" }), call({ id: "x", status: "active", agent_id: "a2" }), call({ id: "y", status: "active", agent_id: "a2" })]) }, "/sessions?flow=a2");
     expect(await screen.findByText("2 live now")).toBeVisible();
     expect(screen.getByRole("button", { name: "Live · 2" })).toBeVisible();
   });

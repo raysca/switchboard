@@ -278,7 +278,7 @@ describe("FlowEditor MCP tools", () => {
       current_version: {
         ...flow.current_version!,
         mcp_tools: tools,
-        config: { start: "a", steps: [{ id: "a", name: "Reception", tools: ["crm/echo", "crm/lookup"], config: flat }, { id: "b", name: "Billing", tools: ["crm/lookup"], config: { llm: flat.llm, tts: flat.tts } }], routes: [] },
+        config: { start: "a", steps: [{ id: "a", name: "Reception", tools: ["crm/echo", "crm/lookup"], config: flat }, { id: "b", name: "Billing", tools: ["crm/lookup"], config: { llm: flat.llm, tts: flat.tts } }], handoffs: [] },
       },
     };
     const { user, onSubmit } = setup({ flow: stepsFlow, client: withMCP });
@@ -319,7 +319,7 @@ describe("FlowEditor MCP tools", () => {
         { id: "a", name: "Front", config: { ...flat, tts: { ...flat.tts, clean_text: false }, failover: { on: ["client_error"] } } },
         { id: "b", name: "Sales", config: { llm: flat.llm, tts: { ...flat.tts, clean_text: false }, failover: { on: ["timeout"] } } },
       ],
-      routes: [{ id: "e1", from: "a", to: "b", condition: "buy" }],
+      handoffs: [{ id: "e1", from: "a", to: "b", condition: "buy" }],
     };
     const getFlowVersion = vi.fn().mockResolvedValue({ id: "v1", number: 1, schema_version: 1, config: legacy, config_hash: "h", created_at: "", mcp_tools: [] });
     const twice: FlowDTO = { ...flow, current_version: { ...flow.current_version!, number: 2 } };

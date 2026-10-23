@@ -103,7 +103,7 @@ func TestCallBehaviorIsCallLevelAndWorksInTheStepsForm(t *testing.T) {
 		return json.RawMessage(`{"start":"a","steps":[` +
 			`{"id":"a","name":"A","config":{` + stages + startExtra + `}},` +
 			`{"id":"b","name":"B","config":{"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}` + otherExtra + `}}],` +
-			`"routes":[{"id":"r","from":"a","to":"b","condition":"x"}]}`)
+			`"handoffs":[{"id":"r","from":"a","to":"b","condition":"x"}]}`)
 	}
 	g, err := Decode(steps(`,"idle":{"user_timeout_ms":8000},"audio":{"output_gain_db":-3}`, ``))
 	if err != nil || g.StartStep().Config.Idle == nil || g.StartStep().Config.Audio == nil {
@@ -180,7 +180,7 @@ func TestTurnSettingsAreCallLevelAndKeepExplicitZeroAndEmpty(t *testing.T) {
 		return json.RawMessage(`{"start":"a","steps":[` +
 			`{"id":"a","name":"A","config":{` + stages + startExtra + `}},` +
 			`{"id":"b","name":"B","config":{"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}` + otherExtra + `}}],` +
-			`"routes":[{"id":"r","from":"a","to":"b","condition":"x"}]}`)
+			`"handoffs":[{"id":"r","from":"a","to":"b","condition":"x"}]}`)
 	}
 	g, err := Decode(steps(`,"turn":{"min_words":0,"mute":[]}`, ``))
 	if err != nil {

@@ -10,7 +10,7 @@ import (
 var (
 	ErrSessionLimitExceeded = errors.New("maximum active sessions exceeded")
 	ErrPrincipalLimit       = errors.New("maximum concurrent sessions per principal exceeded")
-	ErrAgentLimit           = errors.New("maximum concurrent sessions per flow exceeded")
+	ErrAgentLimit           = errors.New("maximum concurrent sessions per agent exceeded")
 	ErrStartRateLimit       = errors.New("session start rate limit exceeded")
 	ErrVADUnavailable       = errors.New("VAD executor has zero available capacity")
 )
@@ -89,7 +89,7 @@ func (ac *AdmissionController) AcquireSession(principal, agentID string, vadCapa
 	}
 	if max := ac.cfg.Limits.MaxSessionsPerAgent; max > 0 && agentID != "" && ac.agents[agentID] >= max {
 		ac.metrics.AdmissionRejectsAgent.Add(1)
-		return fmt.Errorf("%w: flow has %d active sessions", ErrAgentLimit, ac.agents[agentID])
+		return fmt.Errorf("%w: agent has %d active sessions", ErrAgentLimit, ac.agents[agentID])
 	}
 	// Last, so a call rejected above never burns a start token.
 	if principal != "" && ac.cfg.Limits.StartRatePerPrincipal > 0 && !ac.takeStart(principal) {
@@ -133,7 +133,7 @@ func admissionReason(err error) string {
 	case errors.Is(err, ErrStartRateLimit):
 		return "rate_limited"
 	case errors.Is(err, ErrAgentLimit):
-		return "flow_limit"
+		return "agent_limit"
 	case errors.Is(err, ErrPrincipalLimit):
 		return "principal_limit"
 	default: // global cap, VAD unavailable

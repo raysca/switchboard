@@ -13,14 +13,14 @@ const flow = (config: Record<string, unknown> = {}): FlowDTO => ({
   created_at: "",
   updated_at: "",
 });
-const graph = { start: "r", steps: [{ id: "r", name: "Reception" }, { id: "b", name: "Billing" }], routes: [] };
+const graph = { start: "r", steps: [{ id: "r", name: "Reception" }, { id: "b", name: "Billing" }], handoffs: [] };
 const session = (over: Partial<SessionDTO> = {}): SessionDTO => ({
   draft: false,
   caller: "",
   end_reason: "",
   id: "s1",
-  flow_id: "a1",
-  flow_version_id: "v7",
+  agent_id: "a1",
+  agent_version_id: "v7",
   config_hash: "abcdef123456",
   started_at: "2026-10-12T14:00:00Z",
   ended_at: "2026-10-12T14:04:12Z",
@@ -41,7 +41,7 @@ const turn = (n: number, started: string, ended: string, said: string, reply: st
   assistant_text: reply,
   interrupted,
 });
-const toBilling = span("route.active", "2026-10-12T14:00:41Z", { from_step: "r", to_step: "b" });
+const toBilling = span("handoff.active", "2026-10-12T14:00:41Z", { from_step: "r", to_step: "b" });
 
 describe("outcome", () => {
   it("says Live only for an active call, and shows an unknown status as it is", () => {
@@ -55,7 +55,7 @@ describe("outcome", () => {
 describe("versionLabel", () => {
   it("names the version only when it is the flow's current one", () => {
     expect(versionLabel(session(), flow())).toBe("v7");
-    expect(versionLabel(session({ flow_version_id: "v6" }), flow())).toBe("earlier version");
+    expect(versionLabel(session({ agent_version_id: "v6" }), flow())).toBe("earlier version");
     expect(versionLabel(session(), undefined)).toBe("earlier version");
   });
 });
@@ -95,14 +95,14 @@ describe("path", () => {
     expect(path(null, steps(undefined), "Front desk")).toEqual(["Front desk"]);
   });
   it("shows a step id that the current version no longer has, never blank", () => {
-    const gone = span("route.active", "2026-10-12T14:00:41Z", { from_step: "r", to_step: "zz-deleted" });
+    const gone = span("handoff.active", "2026-10-12T14:00:41Z", { from_step: "r", to_step: "zz-deleted" });
     expect(path(traces(gone), st, "Front desk")).toEqual(["Reception", "zz-deleted"]);
   });
 });
 
 describe("failedRoutes", () => {
   it("returns the step ids of routes that failed", () => {
-    const failed = span("route.failed", "2026-10-12T14:00:30Z", { from_step: "r", to_step: "b" });
+    const failed = span("handoff.failed", "2026-10-12T14:00:30Z", { from_step: "r", to_step: "b" });
     expect(failedRoutes(traces(failed, toBilling))).toEqual([{ from: "r", to: "b" }]);
     expect(failedRoutes(null)).toEqual([]);
   });
@@ -139,7 +139,7 @@ describe("transcript", () => {
   });
 
   it("keeps a route that happened after the last turn", () => {
-    const late = span("route.active", "2026-10-12T14:03:00Z", { from_step: "b", to_step: "r" });
+    const late = span("handoff.active", "2026-10-12T14:03:00Z", { from_step: "b", to_step: "r" });
     const lines = transcript(session(), turns, traces(toBilling, late), st, "Front desk");
     expect(lines.at(-1)).toEqual({ kind: "route", at: "03:00", from: "Billing", to: "Reception" });
   });
@@ -198,7 +198,7 @@ describe("stepsFor", () => {
   it("does not claim the current start step for a call on an earlier version, but keeps the names", () => {
     const f = flow(graph);
     expect(stepsFor(session(), f).start).toBe("r");
-    const old = stepsFor(session({ flow_version_id: "v6" }), f);
+    const old = stepsFor(session({ agent_version_id: "v6" }), f);
     expect(old.start).toBeUndefined();
     expect(old.names.get("b")).toBe("Billing");
     expect(path(traces(), old, "Front desk")).toEqual(["Front desk"]);
@@ -231,14 +231,14 @@ describe("turnRows", () => {
   });
 
   it("finds the step that ended the call", () => {
-    const t = traces(span("call.end", "2026-10-12T14:04:12Z", { reason: "ended_by_flow", from_step: "b" }));
+    const t = traces(span("call.end", "2026-10-12T14:04:12Z", { reason: "ended_by_agent", from_step: "b" }));
     expect(endedByFlow(t)).toEqual({ step: "b" });
     expect(endedByFlow(traces())).toBeNull();
     expect(endedByFlow(null)).toBeNull();
   });
   it("ignores a hangup ending and a span that is not call.end", () => {
     expect(endedByFlow(traces(span("call.end", "2026-10-12T14:04:12Z", { reason: "hangup", from_step: "b" })))).toBeNull();
-    expect(endedByFlow(traces(span("route.active", "2026-10-12T14:04:12Z", { reason: "ended_by_flow", from_step: "b" })))).toBeNull();
+    expect(endedByFlow(traces(span("handoff.active", "2026-10-12T14:04:12Z", { reason: "ended_by_agent", from_step: "b" })))).toBeNull();
   });
 });
 
@@ -271,7 +271,7 @@ describe("reply time", () => {
 
 describe("callerLabel", () => {
   it("shows the console's own test calls as such, anything else as written, and an unrecorded caller plainly", () => {
-    expect(callerLabel("flow-test-0192aaaa")).toBe("Console test");
+    expect(callerLabel("agent-test-0192aaaa")).toBe("Console test");
     expect(callerLabel("alice")).toBe("alice");
     expect(callerLabel("")).toBe("Not recorded");
   });
@@ -283,7 +283,7 @@ describe("endReasonText", () => {
       caller_hung_up: "Caller hung up",
       silent_caller: "Caller went silent",
       agent_stuck: "Agent stopped responding",
-      ended_by_flow: "Ended by the flow",
+      ended_by_agent: "Ended by the flow",
       time_limit: "Reached the time limit",
       connection_lost: "Connection lost",
       server_shutdown: "Server shutting down",
@@ -292,7 +292,7 @@ describe("endReasonText", () => {
       server_restart: "Ended when the server restarted",
     };
     for (const [reason, text] of Object.entries(words)) expect(endReasonText(reason)).toBe(text);
-    expect(endReasonText("ended_by_flow", "Billing")).toBe("Ended by the flow (Billing)");
+    expect(endReasonText("ended_by_agent", "Billing")).toBe("Ended by the flow (Billing)");
     expect(endReasonText("")).toBe("Ended");
     expect(endReasonText("something_new")).toBe("Ended");
   });

@@ -88,7 +88,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
   }
 
   const s = sessionQuery.data;
-  const flow = (flowsQuery.data ?? []).find((f) => f.id === s.flow_id);
+  const flow = (flowsQuery.data ?? []).find((f) => f.id === s.agent_id);
   const fallback = flow?.name ?? "Assistant";
   const st = stepsFor(s, flow);
   const turns = turnsQuery.data ?? [];
@@ -133,7 +133,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
         {s.status === "ended" && (s.end_reason || ended) && (
           <div>
             <dt>Ended</dt>
-            <dd>{endReasonText(s.end_reason || "ended_by_flow", ended ? label(ended.step) : undefined)}</dd>
+            <dd>{endReasonText(s.end_reason || "ended_by_agent", ended ? label(ended.step) : undefined)}</dd>
           </div>
         )}
         <div>

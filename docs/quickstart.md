@@ -117,7 +117,7 @@ A provider whose variables are not set reports each service with `"reason": "mis
 ### 5b. Create a flow
 
 ```bash
-FLOW_ID=$(curl -fsS -X POST "$ADMIN/api/v1/flows" \
+FLOW_ID=$(curl -fsS -X POST "$ADMIN/api/v1/agents" \
   -H "$AUTH" -H 'Content-Type: application/json' \
   -d '{
     "name": "Quickstart flow",
@@ -128,21 +128,21 @@ FLOW_ID=$(curl -fsS -X POST "$ADMIN/api/v1/flows" \
     }
   }' | jq -r .data.id)
 
-curl -fsS "$ADMIN/api/v1/flows/$FLOW_ID" -H "$AUTH" | jq -r .data.readiness.state
+curl -fsS "$ADMIN/api/v1/agents/$FLOW_ID" -H "$AUTH" | jq -r .data.readiness.state
 # ready
 ```
 
-Each stage names only a provider: creation fails with `400 flow_not_attached` if a stage has no provider, or its provider's variables for that service are not set (`missing_credential_<stage>`). If a variable is removed later, the flow becomes not ready and `readiness.missing_env` names the variable. To use xAI for the LLM, set `XAI_API_KEY`, restart, and use `"llm": {"provider": "xai", "model": "grok-4.20-0309-non-reasoning", ...}`.
+Each stage names only a provider: creation fails with `400 agent_not_attached` if a stage has no provider, or its provider's variables for that service are not set (`missing_credential_<stage>`). If a variable is removed later, the flow becomes not ready and `readiness.missing_env` names the variable. To use xAI for the LLM, set `XAI_API_KEY`, restart, and use `"llm": {"provider": "xai", "model": "grok-4.20-0309-non-reasoning", ...}`.
 
 ### 5c. Issue a voice token
 
 ```bash
 TOKEN=$(curl -fsS -X POST "$ADMIN/api/v1/voice-tokens" \
   -H "$AUTH" -H 'Content-Type: application/json' \
-  -d "{\"principal\": \"user-1234\", \"flow_id\": \"$FLOW_ID\"}" | jq -r .data.token)
+  -d "{\"principal\": \"user-1234\", \"agent_id\": \"$FLOW_ID\"}" | jq -r .data.token)
 ```
 
-The token is single-use and lasts at most 60 seconds, so connect right away. An unknown flow returns 404. A flow that is not ready returns 409 `flow_not_ready`, with the readiness reasons in `error.details`. Each call pins the flow's current version, so later edits do not change a running call.
+The token is single-use and lasts at most 60 seconds, so connect right away. An unknown flow returns 404. A flow that is not ready returns 409 `agent_not_ready`, with the readiness reasons in `error.details`. Each call pins the flow's current version, so later edits do not change a running call.
 
 ---
 

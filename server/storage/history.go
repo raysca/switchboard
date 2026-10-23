@@ -29,7 +29,7 @@ const (
 	EndCallerHungUp   = "caller_hung_up"
 	EndSilentCaller   = "silent_caller"
 	EndAgentStuck     = "agent_stuck"
-	EndedByAgent      = "ended_by_flow"
+	EndedByAgent      = "ended_by_agent"
 	EndTimeLimit      = "time_limit"
 	EndConnectionLost = "connection_lost"
 	EndServerShutdown = "server_shutdown"

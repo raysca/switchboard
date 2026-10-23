@@ -77,7 +77,7 @@ test("admin UI: Google is detected from the server environment and a ready flow 
   await expect(page.getByTestId("flow-readiness")).toHaveText(/^ready/);
   flowId = await flowIdFromApi(stack);
   expect(flowId).not.toBe("");
-  const saved = await api<{ data: { current_version: { config: Record<string, unknown> } } }>(stack, `/flows/${flowId}`);
+  const saved = await api<{ data: { current_version: { config: Record<string, unknown> } } }>(stack, `/agents/${flowId}`);
   // A named step is published as a flow.
   const cfg = (saved.data.current_version.config as unknown as { steps: { config: Record<string, Record<string, unknown>> }[] }).steps[0].config;
   expect([cfg.stt.provider, cfg.stt.model, cfg.llm.model, cfg.tts.voice]).toEqual(["google", "chirp_2", "gemini-2.5-flash", "en-US-Chirp3-HD-Aoede"]);
@@ -110,7 +110,7 @@ test("admin debug client: voice call and text call", async ({ page, stack }) => 
   await step(page, "debug client disconnected");
 });
 
-test("custom client: calls the flow by flow_id", async ({ page, stack }) => {
+test("custom client: calls the flow by agent_id", async ({ page, stack }) => {
   await page.goto(stack.customClientUrl);
   await page.getByLabel("Admin URL").fill(stack.adminUrl);
   await page.getByLabel("Management key").fill(stack.managementKey);
@@ -143,7 +143,7 @@ test("admin UI: archive the flow", async ({ page, request, stack }) => {
   // A deleted flow can no longer take calls.
   const token = await request.post(`${stack.adminUrl}/api/v1/voice-tokens`, {
     headers: { Authorization: `Bearer ${stack.managementKey}` },
-    data: { principal: "e2e", flow_id: flowId },
+    data: { principal: "e2e", agent_id: flowId },
   });
   expect(token.status()).toBe(409);
 });
@@ -165,6 +165,6 @@ async function api<T>(stack: Stack, route: string): Promise<T> {
 }
 
 async function flowIdFromApi(stack: Stack): Promise<string> {
-  const body = await api<{ data: { id: string; name: string }[] }>(stack, "/flows");
+  const body = await api<{ data: { id: string; name: string }[] }>(stack, "/agents");
   return body.data.find((a) => a.name === FLOW)?.id ?? "";
 }

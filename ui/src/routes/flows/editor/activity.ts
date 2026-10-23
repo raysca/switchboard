@@ -22,11 +22,11 @@ function activityOf(v: VoiceActivity): Activity {
 }
 
 /**
- * Replays the server's route trace spans (route.preparing, .active, .failed)
+ * Replays the server's route trace spans (handoff.preparing, .active, .failed)
  * into which step holds the call. Pure: the same spans always give the same
  * view, so a finished session replays the path it took.
  */
-export function deriveView(start: string, allSpans: TraceSpanDTO[], routes: DraftRoute[], voice: VoiceActivity): GraphView {
+export function deriveView(start: string, allSpans: TraceSpanDTO[], handoffs: DraftRoute[], voice: VoiceActivity): GraphView {
   const spans = allSpans
     .filter((s) => routeSpan(s) !== null)
     .sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at));
@@ -49,7 +49,7 @@ export function deriveView(start: string, allSpans: TraceSpanDTO[], routes: Draf
         visited.add(from);
         active = to;
         preparing = null;
-        traversed.push({ routeId: routes.find((e) => e.from === from && e.to === to)?.id ?? null, from, to, at: s.started_at });
+        traversed.push({ routeId: handoffs.find((e) => e.from === from && e.to === to)?.id ?? null, from, to, at: s.started_at });
         trail.push({ step: to, since: s.started_at });
         break;
       case "failed":
@@ -58,7 +58,7 @@ export function deriveView(start: string, allSpans: TraceSpanDTO[], routes: Draf
     }
   }
 
-  const ids = new Set<string>([start, ...visited, active, ...routes.flatMap((e) => [e.from, e.to])]);
+  const ids = new Set<string>([start, ...visited, active, ...handoffs.flatMap((e) => [e.from, e.to])]);
   const steps: GraphView["steps"] = {};
   for (const id of ids) {
     if (id === active) steps[id] = { state: "active", activity: activityOf(voice) };

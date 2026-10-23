@@ -6,12 +6,12 @@ test.skip(LIVE, "echo-provider spec");
 
 type Step = { id: string; config: { tts?: { clean_text?: boolean }; failover?: { on?: string[] } } };
 type Flow = { id: string; name: string; current_version: { config: { steps: Step[] } } };
-const find = async (stack: Parameters<typeof api>[0], name: string) => (await api<{ data: Flow[] }>(stack, "/flows")).data.find((f) => f.name === name)!;
+const find = async (stack: Parameters<typeof api>[0], name: string) => (await api<{ data: Flow[] }>(stack, "/agents")).data.find((f) => f.name === name)!;
 
 test("text cleaning and fallback rules are flow settings that survive a reload", async ({ page, stack }) => {
   const name = "E2E Call-wide Settings";
   const cfg = (extra: object = {}) => ({ llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }), ...extra });
-  await api(stack, "/flows", {
+  await api(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({
       name,
@@ -21,7 +21,7 @@ test("text cleaning and fallback rules are flow settings that survive a reload",
           { id: "front", name: "Front", config: { stt: stage({ model: "chirp" }), ...cfg() } },
           { id: "sales", name: "Sales", config: cfg() },
         ],
-        routes: [{ id: "e1", from: "front", to: "sales", condition: "wants to buy" }],
+        handoffs: [{ id: "e1", from: "front", to: "sales", condition: "wants to buy" }],
       },
     }),
   });
@@ -54,11 +54,11 @@ test("text cleaning and fallback rules are flow settings that survive a reload",
 
 test("interruption settings are published, read back and shown after a reload", async ({ page, stack }) => {
   const name = "E2E Interruptions";
-  await api(stack, "/flows", {
+  await api(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({ name, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }) } }),
   });
-  const turnOf = async () => ((await api<{ data: { name: string; current_version: { config: { turn?: object } } }[] }>(stack, "/flows")).data.find((f) => f.name === name)!).current_version.config.turn;
+  const turnOf = async () => ((await api<{ data: { name: string; current_version: { config: { turn?: object } } }[] }>(stack, "/agents")).data.find((f) => f.name === name)!).current_version.config.turn;
   await connectAdmin(page, stack);
   await openFlow(page, name);
   await openFlowSettings(page);
@@ -86,11 +86,11 @@ test("interruption settings are published, read back and shown after a reload", 
 
 test("end-of-turn settings are published, read back and shown after a reload", async ({ page, stack }) => {
   const name = "E2E End Of Turn";
-  await api(stack, "/flows", {
+  await api(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({ name, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }) } }),
   });
-  const turnOf = async () => ((await api<{ data: { name: string; current_version: { config: { turn?: object } } }[] }>(stack, "/flows")).data.find((f) => f.name === name)!).current_version.config.turn;
+  const turnOf = async () => ((await api<{ data: { name: string; current_version: { config: { turn?: object } } }[] }>(stack, "/agents")).data.find((f) => f.name === name)!).current_version.config.turn;
   await connectAdmin(page, stack);
   await openFlow(page, name);
   await openFlowSettings(page);
@@ -118,7 +118,7 @@ test("end-of-turn settings are published, read back and shown after a reload", a
 test("a step's background sound is published, read back and shown after a reload", async ({ page, stack }) => {
   const name = "E2E Step Background";
   const cfg = (extra: object = {}) => ({ llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }), ...extra });
-  await api(stack, "/flows", {
+  await api(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({
       name,
@@ -128,13 +128,13 @@ test("a step's background sound is published, read back and shown after a reload
           { id: "front", name: "Front", config: { stt: stage({ model: "chirp" }), ...cfg() } },
           { id: "sales", name: "Sales", config: cfg() },
         ],
-        routes: [{ id: "e1", from: "front", to: "sales", condition: "wants to buy" }],
+        handoffs: [{ id: "e1", from: "front", to: "sales", condition: "wants to buy" }],
       },
     }),
   });
   type Listed = { name: string; current_version: { config: { steps: { id: string; config: { audio?: object } }[] } } };
   const salesAudio = async () => {
-    const flows = (await api<{ data: Listed[] }>(stack, "/flows")).data;
+    const flows = (await api<{ data: Listed[] }>(stack, "/agents")).data;
     return flows.find((f) => f.name === name)!.current_version.config.steps.find((s) => s.id === "sales")!.config.audio;
   };
   await connectAdmin(page, stack);
@@ -158,12 +158,12 @@ test("a step's background sound is published, read back and shown after a reload
 
 test("a hold sound is published, read back and shown after a reload", async ({ page, stack }) => {
   const name = "E2E Hold Sound";
-  await api(stack, "/flows", {
+  await api(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({ name, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }) } }),
   });
   type Listed = { name: string; current_version: { config: { audio?: object } } };
-  const audioOf = async () => ((await api<{ data: Listed[] }>(stack, "/flows")).data.find((f) => f.name === name)!).current_version.config.audio;
+  const audioOf = async () => ((await api<{ data: Listed[] }>(stack, "/agents")).data.find((f) => f.name === name)!).current_version.config.audio;
   await connectAdmin(page, stack);
   await openFlow(page, name);
   await openFlowSettings(page);
@@ -187,12 +187,12 @@ test("a hold sound is published, read back and shown after a reload", async ({ p
 
 test("a one-step flow can end the call: published in steps form, read back and shown after a reload", async ({ page, stack }) => {
   const name = "E2E One Step End Call";
-  await api(stack, "/flows", {
+  await api(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({ name, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }) } }),
   });
   type Listed = { name: string; current_version: { config: { steps?: { end_call?: boolean }[] } } };
-  const endCallOf = async () => ((await api<{ data: Listed[] }>(stack, "/flows")).data.find((f) => f.name === name)!).current_version.config.steps?.[0]?.end_call;
+  const endCallOf = async () => ((await api<{ data: Listed[] }>(stack, "/agents")).data.find((f) => f.name === name)!).current_version.config.steps?.[0]?.end_call;
   await connectAdmin(page, stack);
   await openFlow(page, name);
   await page.locator(".react-flow__node").first().click();
@@ -213,12 +213,12 @@ test("a one-step flow can end the call: published in steps form, read back and s
 
 test("a shorter call limit is published in seconds, read back and shown in minutes after a reload", async ({ page, stack }) => {
   const name = "E2E Call Limit";
-  await api(stack, "/flows", {
+  await api(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({ name, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }) } }),
   });
   type Listed = { name: string; current_version: { config: { max_call_duration_seconds?: number } } };
-  const limitOf = async () => ((await api<{ data: Listed[] }>(stack, "/flows")).data.find((f) => f.name === name)!).current_version.config.max_call_duration_seconds;
+  const limitOf = async () => ((await api<{ data: Listed[] }>(stack, "/agents")).data.find((f) => f.name === name)!).current_version.config.max_call_duration_seconds;
   await connectAdmin(page, stack);
   await openFlow(page, name);
   await openFlowSettings(page);

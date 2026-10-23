@@ -238,7 +238,7 @@ describe("OnboardingView steps 3 and 4", () => {
     expect(await screen.findByRole("heading", { name: "Put it in front of callers." })).toBeVisible();
     const token = screen.getByLabelText("Token request");
     expect(token).toHaveTextContent("POST /api/v1/voice-tokens");
-    expect(token).toHaveTextContent('"flow_id": "flow-1"');
+    expect(token).toHaveTextContent('"agent_id": "flow-1"');
     expect(token).toHaveTextContent('"principal": "[YOUR USER ID]"');
     const client = screen.getByLabelText("Web client");
     expect(client).toHaveTextContent("WebSocketTransport");
@@ -257,7 +257,7 @@ describe("OnboardingView steps 3 and 4", () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     await user.click((await screen.findAllByRole("button", { name: "Copy" }))[0]);
-    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"flow_id": "flow-1"'));
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"agent_id": "flow-1"'));
     expect(await screen.findByText("Copied")).toBeVisible();
   });
 

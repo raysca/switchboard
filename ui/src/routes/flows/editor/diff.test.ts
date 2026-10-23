@@ -9,7 +9,7 @@ const base = fromFlowConfig({
     { id: "a", name: "Reception", config: { stt: { provider: "google" }, ...ready } },
     { id: "b", name: "Billing", config: ready },
   ],
-  routes: [{ id: "e1", from: "a", to: "b", condition: "invoice" }],
+  handoffs: [{ id: "e1", from: "a", to: "b", condition: "invoice" }],
 });
 
 describe("describeChanges", () => {
@@ -34,7 +34,7 @@ describe("describeChanges", () => {
     g = updateRoute(g, "e1", "asks about a bill");
     g = insertStep(g, "Support");
     g = addDraftRoute(g, "a", g.steps[2].id);
-    g = updateRoute(g, g.routes[1].id, "has a fault");
+    g = updateRoute(g, g.handoffs[1].id, "has a fault");
     expect(describeChanges(base, g)).toEqual([
       "Added step Support",
       "Renamed Billing to Accounts",
@@ -47,7 +47,7 @@ describe("describeChanges", () => {
   });
 
   it("reports removed steps and routes, a new start step and flow settings", () => {
-    let g: FlowDraft = { ...base, routes: [] };
+    let g: FlowDraft = { ...base, handoffs: [] };
     g = updateStep(g, "a", { config: { ...g.steps[0].config, vad_stop_ms: 480 } });
     g = setStart(g, "b");
     expect(describeChanges(base, g)).toEqual(["Removed route Reception → Billing", "Start step is now Billing", "Flow settings: turn-taking changed"]);

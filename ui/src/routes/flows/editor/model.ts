@@ -35,8 +35,8 @@ export type RouteCue = { name: string; after_ms?: number };
 export type FlowDraft = {
   start: string;
   steps: DraftStep[];
-  routes: DraftRoute[];
-  route_cue?: RouteCue;
+  handoffs: DraftRoute[];
+  handoff_cue?: RouteCue;
 };
 
 // Settings that belong to the call, not to one step: only the start step has them.
@@ -73,12 +73,12 @@ function newId(): string {
 const asRecord = (v: unknown): Record<string, unknown> =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 
-export type StepTab = "basics" | "routes" | "tools" | "advanced";
+export type StepTab = "basics" | "handoffs" | "tools" | "advanced";
 type StepIssue = { tab: StepTab; message: string };
 
 /** A flow with no steps yet: the editor shows "Start with one step." */
 export function emptyFlow(): FlowDraft {
-  return { start: "", steps: [], routes: [] };
+  return { start: "", steps: [], handoffs: [] };
 }
 
 /** "New step", then "New step 2", "New step 3"… so step names stay unique. */
@@ -102,8 +102,8 @@ export function stepIssues(g: FlowDraft, id: string): StepIssue[] {
   if (blank(llm.provider) || blank(llm.model)) issues.push({ tab: "basics", message: "Choose a model." });
   if (blank(asRecord(n.config.tts).provider)) issues.push({ tab: "basics", message: "Choose a voice." });
   if (byteLength(String(n.config.greeting ?? "").trim()) > MAX_GREETING_BYTES) issues.push({ tab: "basics", message: `Greeting is over ${MAX_GREETING_BYTES} bytes.` });
-  for (const e of g.routes)
-    if (e.from === id && blank(e.condition)) issues.push({ tab: "routes", message: `Give the route to ${nameIn(g, e.to)} a condition.` });
+  for (const e of g.handoffs)
+    if (e.from === id && blank(e.condition)) issues.push({ tab: "handoffs", message: `Give the route to ${nameIn(g, e.to)} a condition.` });
   for (const [cap, what] of [["llm", "model"], ["tts", "voice"], ["stt", "listening"]] as const) {
     const stage = asRecord(n.config[cap]);
     const fallbacks = Array.isArray(stage.fallbacks) ? stage.fallbacks.map(asRecord) : [];
@@ -204,7 +204,7 @@ function callBehaviorIssues(config: StepConfig, limits?: ServerLimits): string[]
 
 /** A step no route leads to; callers can never reach it. The start step is always reachable. */
 export function isUnreachable(g: FlowDraft, id: string): boolean {
-  return id !== g.start && !g.routes.some((e) => e.to === id);
+  return id !== g.start && !g.handoffs.some((e) => e.to === id);
 }
 
 /** Names of the steps no path from the start step reaches (a step reached only from an unreachable step counts). */
@@ -213,7 +213,7 @@ export function unreachableSteps(g: FlowDraft): string[] {
   const queue = [...seen];
   while (queue.length > 0) {
     const id = queue.shift()!;
-    for (const e of g.routes) if (e.from === id && !seen.has(e.to)) (seen.add(e.to), queue.push(e.to));
+    for (const e of g.handoffs) if (e.from === id && !seen.has(e.to)) (seen.add(e.to), queue.push(e.to));
   }
   return g.steps.filter((n) => !seen.has(n.id)).map((n) => n.name || "Untitled step");
 }
@@ -221,9 +221,9 @@ export function unreachableSteps(g: FlowDraft): string[] {
 /** A route drawn on the flow: no condition yet, the step panel asks for one. */
 export function addDraftRoute(g: FlowDraft, from: string, to: string): FlowDraft {
   const known = (id: string) => g.steps.some((n) => n.id === id);
-  if (from === to || !known(from) || !known(to) || g.routes.length >= MAX_ROUTES) return g;
-  if (g.routes.some((e) => e.from === from && e.to === to)) return g;
-  return { ...g, routes: [...g.routes, { id: newId(), from, to, condition: "" }] };
+  if (from === to || !known(from) || !known(to) || g.handoffs.length >= MAX_ROUTES) return g;
+  if (g.handoffs.some((e) => e.from === from && e.to === to)) return g;
+  return { ...g, handoffs: [...g.handoffs, { id: newId(), from, to, condition: "" }] };
 }
 
 /**
@@ -238,7 +238,7 @@ export function fromFlowConfig(raw: unknown, selectedTools: string[] = []): Flow
     return {
       start: "main",
       steps: [{ id: "main", name: "main", config: cfg, tools: [...selectedTools], position: { x: 0, y: 0 } }],
-      routes: [],
+      handoffs: [],
     };
   }
   const steps = cfg.steps.map((n, i): DraftStep => {
@@ -253,16 +253,16 @@ export function fromFlowConfig(raw: unknown, selectedTools: string[] = []): Flow
       position: { x: Number(pos.x ?? i * 280), y: Number(pos.y ?? 0) },
     };
   });
-  const routes = (Array.isArray(cfg.routes) ? cfg.routes : []).map((e): DraftRoute => {
+  const routes = (Array.isArray(cfg.handoffs) ? cfg.handoffs : []).map((e): DraftRoute => {
     const r = asRecord(e);
     return { id: String(r.id), from: String(r.from), to: String(r.to), condition: String(r.condition ?? "") };
   });
-  const cue = asRecord(cfg.route_cue);
+  const cue = asRecord(cfg.handoff_cue);
   return {
     start: String(cfg.start ?? ""),
     steps,
-    routes,
-    ...(cue.name ? { route_cue: { name: String(cue.name), ...(cue.after_ms ? { after_ms: Number(cue.after_ms) } : {}) } } : {}),
+    handoffs: routes,
+    ...(cue.name ? { handoff_cue: { name: String(cue.name), ...(cue.after_ms ? { after_ms: Number(cue.after_ms) } : {}) } } : {}),
   };
 }
 
@@ -277,7 +277,7 @@ function withoutBlankGreeting(config: StepConfig): StepConfig {
 /** A stored flat flow opens as one step named "main" and goes back flat; a step the user has named needs the flow form. */
 function isFlat(g: FlowDraft): boolean {
   const only = g.steps[0];
-  return g.steps.length === 1 && g.routes.length === 0 && !g.route_cue && only.id === "main" && only.name === "main" && !only.end_call;
+  return g.steps.length === 1 && g.handoffs.length === 0 && !g.handoff_cue && only.id === "main" && only.name === "main" && !only.end_call;
 }
 
 /** The config to send: the flat form for a plain one-step flow, else the flow. */
@@ -294,8 +294,8 @@ export function toPayload(g: FlowDraft): unknown {
       }
       return { id: n.id, name: n.name, config, ...(n.tools.length ? { tools: n.tools } : {}), ...(n.end_call ? { end_call: true } : {}), position: n.position };
     }),
-    routes: g.routes,
-    ...(g.route_cue ? { route_cue: g.route_cue } : {}),
+    handoffs: g.handoffs,
+    ...(g.handoff_cue ? { handoff_cue: g.handoff_cue } : {}),
   };
 }
 
@@ -343,7 +343,7 @@ export function removeStep(g: FlowDraft, id: string): FlowDraft {
   return {
     ...g,
     steps: g.steps.filter((n) => n.id !== id),
-    routes: g.routes.filter((e) => e.from !== id && e.to !== id),
+    handoffs: g.handoffs.filter((e) => e.from !== id && e.to !== id),
   };
 }
 
@@ -352,11 +352,11 @@ export function updateStep(g: FlowDraft, id: string, patch: Partial<Omit<DraftSt
 }
 
 export function updateRoute(g: FlowDraft, id: string, condition: string): FlowDraft {
-  return { ...g, routes: g.routes.map((e) => (e.id === id ? { ...e, condition } : e)) };
+  return { ...g, handoffs: g.handoffs.map((e) => (e.id === id ? { ...e, condition } : e)) };
 }
 
 export function removeRoute(g: FlowDraft, id: string): FlowDraft {
-  return { ...g, routes: g.routes.filter((e) => e.id !== id) };
+  return { ...g, handoffs: g.handoffs.filter((e) => e.id !== id) };
 }
 
 /** Makes a step the entry, moving the call-level settings with it. */
@@ -394,7 +394,7 @@ export function validate(g: FlowDraft, limits?: ServerLimits): string[] {
   const errors: string[] = [];
   if (g.steps.length === 0 || g.steps.length > MAX_STEPS) errors.push(`A flow has 1 to ${MAX_STEPS} steps.`);
   if (!g.steps.some((n) => n.id === g.start)) errors.push("Choose a start step.");
-  const cue = g.route_cue;
+  const cue = g.handoff_cue;
   if (cue && !/^[a-z0-9_-]{1,32}$/.test(cue.name)) errors.push("The route sound name uses lower-case letters, digits, _ and - (up to 32).");
   if (cue?.after_ms !== undefined && (cue.after_ms < 0 || cue.after_ms > 10000)) errors.push("The route sound starts after 0 to 10000 ms.");
   const slugs = new Set<string>();
@@ -419,7 +419,7 @@ export function validate(g: FlowDraft, limits?: ServerLimits): string[] {
   }
   for (const n of g.steps)
     for (const i of stepIssues(g, n.id)) if (i.tab === "advanced") errors.push(`${nameIn(g, n.id)}: ${i.message}`);
-  for (const e of g.routes) {
+  for (const e of g.handoffs) {
     if (blank(e.condition)) errors.push(`The route from ${nameIn(g, e.from)} to ${nameIn(g, e.to)} needs a condition.`);
     // The server counts bytes (server/agent/definition.go), not characters.
     else if (new TextEncoder().encode(e.condition).length > MAX_CONDITION)

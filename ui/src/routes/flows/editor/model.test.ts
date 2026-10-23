@@ -38,7 +38,7 @@ describe("unreachableSteps", () => {
         { id: "c", name: "Support", config: {} },
         { id: "d", name: "Escalation", config: {} },
       ],
-      routes: [
+      handoffs: [
         { id: "e1", from: "a", to: "b", condition: "x" },
         { id: "e2", from: "d", to: "c", condition: "y" },
       ],
@@ -46,7 +46,7 @@ describe("unreachableSteps", () => {
     expect(unreachableSteps(g)).toEqual(["Support", "Escalation"]);
   });
   it("is empty when every step can be reached", () => {
-    const g = fromFlowConfig({ start: "a", steps: [{ id: "a", name: "A", config: {} }, { id: "b", name: "B", config: {} }], routes: [{ id: "e", from: "a", to: "b", condition: "x" }] });
+    const g = fromFlowConfig({ start: "a", steps: [{ id: "a", name: "A", config: {} }, { id: "b", name: "B", config: {} }], handoffs: [{ id: "e", from: "a", to: "b", condition: "x" }] });
     expect(unreachableSteps(g)).toEqual([]);
   });
 });
@@ -71,14 +71,14 @@ describe("graph model", () => {
         { id: "front", name: "Front", config: flat, position: { x: 1, y: 2 } },
         { id: "sales", name: "Sales", config: { llm: flat.llm, tts: flat.tts }, tools: ["srv/lookup"] },
       ],
-      routes: [{ id: "e1", from: "front", to: "sales", condition: "wants to buy" }],
-      route_cue: { name: "chime", after_ms: 200 },
+      handoffs: [{ id: "e1", from: "front", to: "sales", condition: "wants to buy" }],
+      handoff_cue: { name: "chime", after_ms: 200 },
     };
     const g = fromFlowConfig(stored);
     expect(g.steps[0].position).toEqual({ x: 1, y: 2 });
     expect(g.steps[1].tools).toEqual(["srv/lookup"]);
-    expect(g.route_cue).toEqual({ name: "chime", after_ms: 200 });
-    expect(toPayload(g)).toMatchObject({ start: "front", routes: stored.routes, route_cue: stored.route_cue });
+    expect(g.handoff_cue).toEqual({ name: "chime", after_ms: 200 });
+    expect(toPayload(g)).toMatchObject({ start: "front", handoffs: stored.handoffs, handoff_cue: stored.handoff_cue });
   });
 
   it("addNode copies the entry's llm and tts and stops at the maximum", () => {
@@ -96,11 +96,11 @@ describe("graph model", () => {
     let g = insertStep(fromFlowConfig(flat), "Sales");
     const sales = g.steps[1].id;
     g = addDraftRoute(g, g.start, sales);
-    expect(g.routes).toHaveLength(1);
+    expect(g.handoffs).toHaveLength(1);
     expect(removeStep(g, g.start)).toBe(g);
     const after = removeStep(g, sales);
     expect(after.steps).toHaveLength(1);
-    expect(after.routes).toHaveLength(0);
+    expect(after.handoffs).toHaveLength(0);
   });
 
   it("validate reports duplicate slugs and missing stage fields", () => {
@@ -154,9 +154,9 @@ describe("graph model", () => {
 
   it("validate rejects a route sound name the server would reject", () => {
     const base = insertStep(fromFlowConfig(flat), "Sales");
-    expect(validate({ ...base, route_cue: { name: "Bad Name" } }).join(" ")).toMatch(/sound name/);
-    expect(validate({ ...base, route_cue: { name: "chime", after_ms: 20000 } }).join(" ")).toMatch(/after/);
-    expect(validate({ ...base, route_cue: { name: "chime", after_ms: 300 } })).toEqual([]);
+    expect(validate({ ...base, handoff_cue: { name: "Bad Name" } }).join(" ")).toMatch(/sound name/);
+    expect(validate({ ...base, handoff_cue: { name: "chime", after_ms: 20000 } }).join(" ")).toMatch(/after/);
+    expect(validate({ ...base, handoff_cue: { name: "chime", after_ms: 300 } })).toEqual([]);
   });
 });
 
@@ -169,7 +169,7 @@ describe("flow authoring", () => {
         { id: "a", name: "Reception", config: { stt: { provider: "google" }, ...ready } },
         { id: "b", name: "Billing", config: ready },
       ],
-      routes: [],
+      handoffs: [],
     });
 
   it("starts a blank flow with no steps, and the first step added becomes the start step", () => {
@@ -187,7 +187,7 @@ describe("flow authoring", () => {
 
   it("adds a draft route with an empty condition and refuses self, duplicate and unknown routes", () => {
     const g = addDraftRoute(two(), "a", "b");
-    expect(g.routes).toEqual([expect.objectContaining({ from: "a", to: "b", condition: "" })]);
+    expect(g.handoffs).toEqual([expect.objectContaining({ from: "a", to: "b", condition: "" })]);
     expect(addDraftRoute(g, "a", "b")).toBe(g);
     expect(addDraftRoute(g, "a", "a")).toBe(g);
     expect(addDraftRoute(g, "a", "zzz")).toBe(g);
@@ -200,7 +200,7 @@ describe("flow authoring", () => {
       { tab: "basics", message: "Choose a voice." },
     ]);
     const routed = addDraftRoute(two(), "a", "b");
-    expect(stepIssues(routed, "a")).toEqual([{ tab: "routes", message: "Give the route to Billing a condition." }]);
+    expect(stepIssues(routed, "a")).toEqual([{ tab: "handoffs", message: "Give the route to Billing a condition." }]);
     expect(stepIssues(two(), "b")).toEqual([]);
   });
 
@@ -241,7 +241,7 @@ describe("server limits", () => {
         { id: "a", name: "Reception", config: { stt: { provider: "google" }, ...ready } },
         { id: "b", name: "Billing", config: ready },
       ],
-      routes: [{ id: "e1", from: "a", to: "b", condition: "é".repeat(300) }],
+      handoffs: [{ id: "e1", from: "a", to: "b", condition: "é".repeat(300) }],
     });
     expect("é".repeat(300).length).toBeLessThan(512);
     expect(validate(g)).toContain("The route from Reception to Billing has a condition longer than 512 bytes.");
@@ -257,7 +257,7 @@ describe("what the server will accept", () => {
         { id: "a", name: "Reception", config: { stt: { provider: "google" }, ...ready, ...start } },
         { id: "b", name: "Billing", config: { ...ready, ...step } },
       ],
-      routes: [{ id: "e1", from: "a", to: "b", condition: "invoice" }],
+      handoffs: [{ id: "e1", from: "a", to: "b", condition: "invoice" }],
     });
 
   it("keeps a named single step as a graph so its name survives publishing", () => {
@@ -434,7 +434,7 @@ describe("what the server will accept", () => {
         { id: "a", name: "A", end_call: true, config: { llm: {}, tts: {} } },
         { id: "b", name: "B", config: { llm: {}, tts: {} } },
       ],
-      routes: [{ id: "r", from: "a", to: "b", condition: "x" }],
+      handoffs: [{ id: "r", from: "a", to: "b", condition: "x" }],
     };
     const g = fromFlowConfig(cfg);
     expect(g.steps[0].end_call).toBe(true);
@@ -451,7 +451,7 @@ describe("what the server will accept", () => {
         { id: "a", name: "A", end_call: true, config: { llm: {}, tts: {} } },
         { id: "b", name: "B", config: { llm: {}, tts: {} } },
       ],
-      routes: [{ id: "r", from: "a", to: "b", condition: "x" }],
+      handoffs: [{ id: "r", from: "a", to: "b", condition: "x" }],
     };
     const out = toPayload(removeStep(fromFlowConfig(cfg), "b")) as { steps: { end_call?: boolean }[] };
     expect(out.steps).toHaveLength(1);
@@ -477,7 +477,7 @@ describe("applySelection", () => {
         { id: "a", name: "A", tools: ["crm/echo", "crm/lookup"], config: {} },
         { id: "b", name: "B", tools: ["crm/lookup"], config: {} },
       ],
-      routes: [],
+      handoffs: [],
     });
   it("takes a dropped tool off every step and leaves the others", () => {
     const g = applySelection(two(), [sel("lookup")]);
@@ -488,7 +488,7 @@ describe("applySelection", () => {
     expect(g.steps.map((s) => s.tools)).toEqual([["crm/echo", "crm/lookup"], ["crm/lookup"]]);
   });
   it("leaves a lone named step's own choice alone: only a flat flow can call everything", () => {
-    const g = fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Greeter", tools: ["crm/lookup"], config: {} }], routes: [] });
+    const g = fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Greeter", tools: ["crm/lookup"], config: {} }], handoffs: [] });
     expect(applySelection(g, [sel("echo"), sel("lookup")]).steps[0].tools).toEqual(["crm/lookup"]);
     expect(applySelection(g, [sel("echo")]).steps[0].tools).toEqual([]);
   });
@@ -508,7 +508,7 @@ describe("greeting", () => {
         { id: "a", name: "Reception", config: { stt: { provider: "google" }, llm: { provider: "google", model: "g" }, tts: { provider: "google", voice: "v" }, greeting: a } },
         { id: "b", name: "Billing", config: { llm: { provider: "google", model: "g" }, tts: { provider: "google", voice: "v" }, greeting: b } },
       ],
-      routes: [],
+      handoffs: [],
     });
   it("stays on the start step and on other steps in the payload (it is not a call-level setting)", () => {
     const p = toPayload(stepsWith("Hello.", "Billing here.")) as { steps: { config: { greeting?: string } }[] };
@@ -540,7 +540,7 @@ describe("call-wide tts.clean_text and failover", () => {
         { id: "a", name: "A", config: cfg({ failover: { on: ["client_error"] } }, { clean_text: false }) },
         { id: "b", name: "B", config: cfg({ failover: { on: ["timeout"] } }, { clean_text: false }) },
       ],
-      routes: [{ id: "e", from: "a", to: "b", condition: "x" }],
+      handoffs: [{ id: "e", from: "a", to: "b", condition: "x" }],
     });
   type Out = { steps: { id: string; config: { tts: Record<string, unknown>; failover?: unknown } }[] };
 

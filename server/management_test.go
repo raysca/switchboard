@@ -19,7 +19,7 @@ func TestEnableManagementWiresAPIsAndRetention(t *testing.T) {
 	s.cfg.Storage.Dialect = "sqlite"
 	s.cfg.Retention.Enabled = true
 
-	for _, path := range []string{"/api/v1/flows", "/api/v1/providers", "/api/v1/mcp-servers", "/api/v1/sessions"} {
+	for _, path := range []string{"/api/v1/agents", "/api/v1/providers", "/api/v1/mcp-servers", "/api/v1/sessions"} {
 		if code := apiRequest(s, http.MethodGet, path, key, "").Code; code != http.StatusServiceUnavailable {
 			t.Fatalf("precondition: %s status=%d before wiring", path, code)
 		}
@@ -28,7 +28,7 @@ func TestEnableManagementWiresAPIsAndRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.closeManagement)
-	for _, path := range []string{"/api/v1/flows", "/api/v1/providers", "/api/v1/mcp-servers", "/api/v1/sessions"} {
+	for _, path := range []string{"/api/v1/agents", "/api/v1/providers", "/api/v1/mcp-servers", "/api/v1/sessions"} {
 		if w := apiRequest(s, http.MethodGet, path, key, ""); w.Code != http.StatusOK {
 			t.Fatalf("%s status=%d body=%s", path, w.Code, w.Body)
 		}
@@ -161,8 +161,8 @@ func TestRefusedManagementStartLeavesNoClosedStoreBehind(t *testing.T) {
 				t.Fatalf("a refused start left store=%v flows=%v mcp=%v mgmt=%v recSink=%v",
 					s.store != nil, s.agents != nil, s.mcpService != nil, s.mgmt.Load() != nil, s.recSink != nil)
 			}
-			if code := apiRequest(s, http.MethodGet, "/api/v1/flows", "management-test-key-32-bytes-long-and-separate", "").Code; code != http.StatusServiceUnavailable {
-				t.Fatalf("/api/v1/flows = %d after a refused start, want 503", code)
+			if code := apiRequest(s, http.MethodGet, "/api/v1/agents", "management-test-key-32-bytes-long-and-separate", "").Code; code != http.StatusServiceUnavailable {
+				t.Fatalf("/api/v1/agents = %d after a refused start, want 503", code)
 			}
 		})
 	}

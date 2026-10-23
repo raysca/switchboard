@@ -9,7 +9,7 @@ const routes: DraftRoute[] = [
 ];
 const span = (name: string, from: string, to: string, at: string, id = `${name}-${at}`): TraceSpanDTO => ({
   id,
-  name: `route.${name}`,
+  name: `handoff.${name}`,
   started_at: at,
   attributes: { from_step: from, to_step: to },
 });
@@ -80,7 +80,7 @@ describe("deriveView", () => {
   it("ignores spans it does not understand", () => {
     const spans: TraceSpanDTO[] = [
       { id: "x", name: "turn", started_at: "2026-10-11T10:00:01Z" },
-      { id: "y", name: "route.active", started_at: "2026-10-11T10:00:02Z", attributes: "nonsense" },
+      { id: "y", name: "handoff.active", started_at: "2026-10-11T10:00:02Z", attributes: "nonsense" },
     ];
     expect(deriveView("front", spans, routes, idleVoice).steps.front.state).toBe("active");
   });

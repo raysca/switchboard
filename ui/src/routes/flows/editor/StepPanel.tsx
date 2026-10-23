@@ -22,7 +22,7 @@ import {
 
 const TABS: { id: StepTab; label: string }[] = [
   { id: "basics", label: "Basics" },
-  { id: "routes", label: "Routes" },
+  { id: "handoffs", label: "Routes" },
   { id: "tools", label: "Tools" },
   { id: "advanced", label: "Advanced" },
 ];
@@ -64,7 +64,7 @@ export function StepPanel(props: StepPanelProps) {
 
   const isStart = step.id === graph.start;
   const issues = stepIssues(graph, step.id);
-  const routes = graph.routes.filter((e) => e.from === step.id);
+  const routes = graph.handoffs.filter((e) => e.from === step.id);
   const targets = graph.steps.filter((n) => n.id !== step.id && !routes.some((r) => r.to === n.id));
   const nameOf = (id: string) => graph.steps.find((n) => n.id === id)?.name.trim() || "Untitled step";
   const llm = rec(step.config.llm);
@@ -74,12 +74,12 @@ export function StepPanel(props: StepPanelProps) {
   const patchStage = (cap: "llm" | "tts" | "stt", patch: Record<string, unknown>) =>
     onChange(updateStep(graph, step.id, { config: { ...step.config, [cap]: { ...rec(step.config[cap]), ...patch } } }));
   const warn = (t: StepTab) => issues.some((i) => i.tab === t);
-  const count = (t: StepTab) => (t === "routes" ? routes.length : t === "tools" ? step.tools.length + (step.end_call && graph.steps.length > 1 ? 1 : 0) : null);
+  const count = (t: StepTab) => (t === "handoffs" ? routes.length : t === "tools" ? step.tools.length + (step.end_call && graph.steps.length > 1 ? 1 : 0) : null);
   const basicsIssues = issues.filter((i) => i.tab === "basics");
 
   const focusLastRoute = (next: FlowDraft) => {
     onChange(next);
-    onFocusRoute(next.routes[next.routes.length - 1].id);
+    onFocusRoute(next.handoffs[next.handoffs.length - 1].id);
   };
   const addRoute = () => {
     const next = addDraftRoute(graph, step.id, routeTarget);
@@ -252,7 +252,7 @@ export function StepPanel(props: StepPanelProps) {
           </>
         )}
 
-        {tab === "routes" && (
+        {tab === "handoffs" && (
           <>
             <p className="subtext">
               When the model decides a condition is true, the caller moves to that step. You can also drag from a step’s right route on the graph.

@@ -117,7 +117,7 @@ func TestLoadsSmartTurn(t *testing.T) {
 	}
 	c.Turn.Stop, c.Turn.Analyzer.ForAgents = nil, true
 	if !c.LoadsSmartTurn() {
-		t.Fatal("for_flows must load the model")
+		t.Fatal("for_agents must load the model")
 	}
 	if !policyFrom(&c).SmartTurn() {
 		t.Fatal("the policy must say smart is available when the model is loaded")
@@ -134,13 +134,13 @@ func TestForAgentsIsValidatedLikeASmartDefault(t *testing.T) {
 		cfg.Turn.Analyzer.ForAgents = true
 		mut(cfg)
 		if err := validateTurn(cfg); err == nil {
-			t.Errorf("%s: for_flows accepted", name)
+			t.Errorf("%s: for_agents accepted", name)
 		}
 	}
 	cfg := DefaultConfig(ProfileDevelopment)
 	cfg.Turn.Analyzer.ForAgents = true
 	if err := validateTurn(cfg); err != nil {
-		t.Fatalf("a valid for_flows config: %v", err)
+		t.Fatalf("a valid for_agents config: %v", err)
 	}
 }
 
@@ -250,7 +250,7 @@ func TestServerConfigSaysWhetherSmartTurnIsAvailable(t *testing.T) {
 		} `json:"data"`
 	}
 	if json.Unmarshal(w.Body.Bytes(), &env) != nil || !env.Data.Turn.SmartAvailable || env.Data.Turn.EndOfTurn != "default" {
-		t.Fatalf("for_flows keeps the default chain but offers smart: %s", w.Body.String())
+		t.Fatalf("for_agents keeps the default chain but offers smart: %s", w.Body.String())
 	}
 }
 

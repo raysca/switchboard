@@ -32,8 +32,8 @@ type agentsHandler struct{ service AgentService }
 
 func (h agentsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestID := RequestID(w, r)
-	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/flows"), "/")
-	if r.URL.Path != "/api/v1/flows" && !strings.HasPrefix(r.URL.Path, "/api/v1/flows/") {
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/agents"), "/")
+	if r.URL.Path != "/api/v1/agents" && !strings.HasPrefix(r.URL.Path, "/api/v1/agents/") {
 		WriteError(w, http.StatusNotFound, "not_found", "route not found", requestID)
 		return
 	}
@@ -101,7 +101,7 @@ func (h agentsHandler) collection(w http.ResponseWriter, r *http.Request, reques
 	}
 }
 
-// version serves GET /flows/{id}/versions/{number}: one earlier publish, read-only.
+// version serves GET /api/v1/agents/{id}/versions/{number}: one earlier publish, read-only.
 func (h agentsHandler) version(w http.ResponseWriter, r *http.Request, id, number, requestID string) {
 	if r.Method != http.MethodGet {
 		agentMethodNotAllowed(w, requestID, "GET")
@@ -179,16 +179,16 @@ func (h agentsHandler) writeServiceError(w http.ResponseWriter, err error, reque
 		return
 	}
 	if errors.Is(err, sql.ErrNoRows) {
-		WriteError(w, http.StatusNotFound, "not_found", "flow not found", requestID)
+		WriteError(w, http.StatusNotFound, "not_found", "agent not found", requestID)
 		return
 	}
 	if errors.Is(err, agent.ErrNotAttached) {
-		WriteError(w, http.StatusBadRequest, "flow_not_attached", err.Error(), requestID)
+		WriteError(w, http.StatusBadRequest, "agent_not_attached", err.Error(), requestID)
 		return
 	}
 	if errors.Is(err, agent.ErrInvalidConfig) || strings.Contains(err.Error(), "invalid") || strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "unavailable") || strings.Contains(err.Error(), "must be") {
 		WriteError(w, http.StatusBadRequest, "invalid_request", err.Error(), requestID)
 		return
 	}
-	WriteError(w, http.StatusInternalServerError, "internal_error", "flow operation failed", requestID)
+	WriteError(w, http.StatusInternalServerError, "internal_error", "agent operation failed", requestID)
 }

@@ -20,7 +20,7 @@ func stepsWithGreetings(start, other string) json.RawMessage {
 	return json.RawMessage(`{"start":"a","steps":[` +
 		`{"id":"a","name":"A","config":{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"},"greeting":` + string(a) + `}},` +
 		`{"id":"b","name":"B","config":{"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"},"greeting":` + string(b) + `}}],` +
-		`"routes":[{"id":"r","from":"a","to":"b","condition":"x"}]}`)
+		`"handoffs":[{"id":"r","from":"a","to":"b","condition":"x"}]}`)
 }
 
 func TestAGreetingIsAcceptedOnAnyStepAndTheFlatForm(t *testing.T) {

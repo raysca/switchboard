@@ -332,9 +332,13 @@ func (r MCPRepository) SetValidation(ctx context.Context, id, state string, conn
 
 var ErrMCPReferenced = errors.New("MCP server is referenced by a current agent or active session")
 
+// MCPAgentReference is the 409 mcp_server_in_use detail: its JSON keys are a wire contract the console reads.
 type MCPAgentReference struct {
-	AgentID, AgentName, AgentVersionID, RemoteName string
-	Required                                       bool
+	AgentID        string `json:"agent_id"`
+	AgentName      string `json:"agent_name"`
+	AgentVersionID string `json:"agent_version_id"`
+	RemoteName     string `json:"remote_name"`
+	Required       bool   `json:"required"`
 }
 
 func (r MCPRepository) CurrentReferences(ctx context.Context, id string) ([]MCPAgentReference, error) {

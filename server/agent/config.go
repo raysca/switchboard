@@ -211,7 +211,7 @@ func (l ContextLimits) Limits() (maxMessages, maxTokens int) {
 
 const maxSystemPromptBytes = 32 << 10
 
-var ErrInvalidConfig = errors.New("invalid flow config")
+var ErrInvalidConfig = errors.New("invalid agent config")
 
 // maxGreetingBytes bounds a step's greeting (bytes, as for route conditions).
 const maxGreetingBytes = 500

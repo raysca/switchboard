@@ -57,7 +57,7 @@ type CallAgent struct {
 const (
 	// EndReasonFlow is the hang-up reason, trace attribute and RTVI error code when
 	// a step's end_call tool ends the call.
-	EndReasonAgent = "ended_by_flow"
+	EndReasonAgent = "ended_by_agent"
 	endCallName    = "end_call"
 	// endCallWait caps the wait for the goodbye to finish before the call ends anyway.
 	endCallWait = 15 * time.Second

@@ -12,11 +12,11 @@ test("flow lists reach flow 101, not just the first page", async ({ page, stack 
   const config = { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }) };
   for (let from = 1; from <= 101; from += 10) {
     await Promise.all(
-      Array.from({ length: Math.min(10, 102 - from) }, (_, i) => api(stack, "/flows", { method: "POST", body: JSON.stringify({ name: name(from + i), config }) })),
+      Array.from({ length: Math.min(10, 102 - from) }, (_, i) => api(stack, "/agents", { method: "POST", body: JSON.stringify({ name: name(from + i), config }) })),
     );
   }
   await expect
-    .poll(async () => (await api<{ data: unknown[] }>(stack, "/flows?limit=100&offset=100")).data.length)
+    .poll(async () => (await api<{ data: unknown[] }>(stack, "/agents?limit=100&offset=100")).data.length)
     .toBeGreaterThan(0);
 
   await connectAdmin(page, stack);

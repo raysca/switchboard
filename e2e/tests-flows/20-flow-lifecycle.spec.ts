@@ -56,7 +56,7 @@ test("designer: draw a two-step flow with a route and publish it", async ({ page
   await step(page, "routed flow published and ready");
 
   // The stored version is the flow the designer drew.
-  const flows = await api<{ data: { name: string; current_version: { config: any } }[] }>(stack, "/flows");
+  const flows = await api<{ data: { name: string; current_version: { config: any } }[] }>(stack, "/agents");
   const cfg = flows.data.find((a) => a.name === FLOW)!.current_version.config;
   expect(cfg.steps.map((n: any) => n.name)).toEqual(["Main agent", "Sales"]);
   expect(cfg.steps[0].config.stt).toBeTruthy();
@@ -65,9 +65,9 @@ test("designer: draw a two-step flow with a route and publish it", async ({ page
   // The dropdowns stored the catalog default, or the "Other…" value typed for the fake.
   expect(cfg.steps[0].config.llm.model).toBe(LLM_MODEL());
   expect(cfg.steps.map((n: any) => n.config.tts.voice)).toEqual([catalogDefault("tts"), catalogDefault("tts")]);
-  expect(cfg.routes).toHaveLength(1);
+  expect(cfg.handoffs).toHaveLength(1);
   expect(cfg.start).toBe(cfg.steps[0].id);
-  expect(cfg.route_cue).toEqual({ name: "chime", after_ms: 50 });
+  expect(cfg.handoff_cue).toEqual({ name: "chime", after_ms: 50 });
 });
 
 test("call: the front step routes the call to sales and the live flow follows", async ({ page, stack }) => {
@@ -98,8 +98,8 @@ test("call: the front step routes the call to sales and the live flow follows", 
   await expect
     .poll(async () => {
       const t = await api<{ data: { spans: { name: string; attributes?: { from_step?: string; to_step?: string } }[] } }>(stack, `/sessions/${sessionId}/traces`);
-      const active = t.data.spans.find((s) => s.name === "route.active");
-      return [t.data.spans.some((s) => s.name === "route.preparing"), !!active?.attributes?.from_step, !!active?.attributes?.to_step];
+      const active = t.data.spans.find((s) => s.name === "handoff.active");
+      return [t.data.spans.some((s) => s.name === "handoff.preparing"), !!active?.attributes?.from_step, !!active?.attributes?.to_step];
     })
     .toEqual([true, true, true]);
 
@@ -163,11 +163,11 @@ test("designer: reopen the graph, edit it, republish; a new call gets the new ve
   await expect(page.getByRole("heading", { name: FLOW, level: 1 })).toBeVisible();
   await expect(page.getByText(/This call runs v/)).toHaveCount(0);
 
-  const flows = await api<{ data: { name: string; current_version: { number: number; config: any } }[] }>(stack, "/flows");
+  const flows = await api<{ data: { name: string; current_version: { number: number; config: any } }[] }>(stack, "/agents");
   const v = flows.data.find((a) => a.name === FLOW)!.current_version;
   expect(v.number).toBe(2);
   expect(v.config.steps).toHaveLength(2);
-  expect(v.config.routes[0].condition).toBe("The caller wants to buy a car, asks about prices, or wants a quote.");
+  expect(v.config.handoffs[0].condition).toBe("The caller wants to buy a car, asks about prices, or wants a quote.");
 
   // Call from inside the editor: the editor's own flow shows the call moving to Sales.
   await startCall(page);
@@ -189,10 +189,10 @@ test("failure: a sales step that cannot be built leaves the caller with the fron
         { id: "front", name: "Front", config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: FRONT_PROMPT }), tts: stage({ voice: "frontvoice" }) } },
         { id: "sales", name: "Sales", config: { llm: stage({ model: "m", system_prompt: SALES_PROMPT }), tts: stage({ voice: "brokenvoice" }) } },
       ],
-      routes: [{ id: "e1", from: "front", to: "sales", condition: "The caller wants to buy." }],
+      handoffs: [{ id: "e1", from: "front", to: "sales", condition: "The caller wants to buy." }],
     },
   };
-  await api(stack, "/flows", { method: "POST", body: JSON.stringify(body) });
+  await api(stack, "/agents", { method: "POST", body: JSON.stringify(body) });
 
   await connectAdmin(page, stack);
   await openFlowTest(page, "E2E Broken Sales");
@@ -212,12 +212,12 @@ test("failure: a sales step that cannot be built leaves the caller with the fron
       const t = await api<{ data: { spans: { name: string }[] } }>(stack, `/sessions/${sessionId}/traces`);
       return t.data.spans.map((s) => s.name);
     })
-    .toContain("route.failed");
+    .toContain("handoff.failed");
   await page.getByTestId("disconnect-btn").click();
 });
 
 test("a plain flow still works unchanged", async ({ page, stack }) => {
-  await api(stack, "/flows", {
+  await api(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({ name: "E2E Plain", config: { stt: stage(LIVE ? {} : { model: "chirp" }), llm: stage({ model: LLM_MODEL(), system_prompt: "You are PLAIN. Answer in one short sentence." }), tts: stage() } }),
   });
@@ -237,7 +237,7 @@ test("flows list: status, enable toggle without a new version, copy and archive"
   await expect(row).toContainText("Ready");
   await expect(row).toContainText("2 steps · 1 route");
 
-  const current = async () => (await api<{ data: { name: string; current_version: { number: number } }[] }>(stack, "/flows")).data.find((a) => a.name === FLOW)!.current_version.number;
+  const current = async () => (await api<{ data: { name: string; current_version: { number: number } }[] }>(stack, "/agents")).data.find((a) => a.name === FLOW)!.current_version.number;
   const before = await current();
   // The box follows the server, not the click, so click and wait instead of uncheck()/check().
   await row.getByRole("checkbox", { name: `${FLOW} enabled` }).click();

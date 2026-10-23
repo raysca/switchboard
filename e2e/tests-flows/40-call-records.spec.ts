@@ -10,7 +10,7 @@ test.describe.configure({ mode: "serial" });
 const PLAIN = "E2E Call Records";
 const QUIET = "E2E Quiet Records";
 const create = (stack: Parameters<typeof api>[0], name: string, extra: object = {}) =>
-  api(stack, "/flows", {
+  api(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({ name, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }), ...extra } }),
   });

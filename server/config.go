@@ -97,7 +97,7 @@ type Config struct {
 		MaxSessions             int           `yaml:"max_sessions"`
 		MaxSessionsPerPrincipal int           `yaml:"max_sessions_per_principal"`
 		MaxSessionsPerIP        int           `yaml:"max_sessions_per_ip"`
-		MaxSessionsPerAgent     int           `yaml:"max_sessions_per_flow"`     // 0 = unlimited
+		MaxSessionsPerAgent     int           `yaml:"max_sessions_per_agent"`    // 0 = unlimited
 		StartRatePerPrincipal   float64       `yaml:"start_rate_per_principal"`  // session starts/sec per principal; 0 = unlimited
 		StartBurstPerPrincipal  int           `yaml:"start_burst_per_principal"` // bucket size; required >= 1 when rate > 0
 		HandshakeRatePerIP      float64       `yaml:"handshake_rate_per_ip"`     // WebSocket upgrades/sec per source IP (burst = max(5, 2x)); default 20
@@ -188,9 +188,9 @@ type Config struct {
 		// the development profile). See docs/audio-filters.md.
 		Backgrounds          map[string]CueConfig `yaml:"backgrounds"`
 		BackgroundDefault    string               `yaml:"background_default"`
-		AllowAgentBackground bool                 `yaml:"allow_flow_background"`
+		AllowAgentBackground bool                 `yaml:"allow_agent_background"`
 		// Cues are named sounds a routed flow plays while the call is between
-		// steps (route_cue). See docs/audio-filters.md.
+		// steps (handoff_cue). See docs/audio-filters.md.
 		Cues map[string]CueConfig `yaml:"cues"`
 	} `yaml:"audio"`
 
@@ -395,12 +395,12 @@ type TurnConfig struct {
 		Budget    time.Duration `yaml:"budget"`    // per-verdict latency budget, default 150ms
 		// ForFlows loads the model although turn.stop does not list turn-analyzer, so a flow can choose
 		// end_of_turn "smart" without making every call smart. Off by default: no worker, no model memory.
-		ForAgents bool `yaml:"for_flows"`
+		ForAgents bool `yaml:"for_agents"`
 	} `yaml:"analyzer"`
 }
 
 // LoadsSmartTurn reports whether the server loads the Smart Turn model at start-up: its own default
-// chain uses it, or flows may choose it (turn.analyzer.for_flows).
+// chain uses it, or flows may choose it (turn.analyzer.for_agents).
 func (c *Config) LoadsSmartTurn() bool {
 	return slices.Contains(c.Turn.Stop, "turn-analyzer") || c.Turn.Analyzer.ForAgents
 }

@@ -14,7 +14,7 @@ const body = {
 };
 
 test("an unpublished change is heard on a test call and stays unpublished", async ({ page, stack }) => {
-  await api(stack, "/flows", { method: "POST", body: JSON.stringify(body) });
+  await api(stack, "/agents", { method: "POST", body: JSON.stringify(body) });
   await connectAdmin(page, stack);
   await openFlow(page, NAME);
   await page.locator(".react-flow__node").first().click();
@@ -30,7 +30,7 @@ test("an unpublished change is heard on a test call and stays unpublished", asyn
   await page.getByTestId("disconnect-btn").click();
 
   // Nothing was published.
-  const flows = (await api<{ data: { name: string; current_version: { number: number; config: any } }[] }>(stack, "/flows")).data;
+  const flows = (await api<{ data: { name: string; current_version: { number: number; config: any } }[] }>(stack, "/agents")).data;
   const flow = flows.find((f) => f.name === NAME)!;
   expect(flow.current_version.number).toBe(1);
   expect(JSON.stringify(flow.current_version.config)).toContain("PUBLISHED PROMPT");

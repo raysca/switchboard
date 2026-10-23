@@ -58,7 +58,7 @@ func silenceHandoffAgent(t *testing.T, r *agentRigE2E, frontTTS, salesTTS, front
 	cfg := `{"start":"front","steps":[` +
 		`{"id":"front","name":"Front desk","config":{"stt":{"provider":"silence","model":"text","language":"en-US"},"llm":{"provider":"echo","model":"m","system_prompt":"FRONT"},"tts":` + frontTTS + frontExtra + `}},` +
 		`{"id":"sales","name":"Sales","config":{"llm":{"provider":"echo","model":"m","system_prompt":"SALES"},"tts":` + salesTTS + `}}],` +
-		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."}]}`
+		`"handoffs":[{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."}]}`
 	f, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Text dealership", Config: json.RawMessage(cfg)})
 	if err != nil || f.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("routed silence flow: %+v err %v", f.Readiness, err)

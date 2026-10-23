@@ -86,7 +86,7 @@ func TestTheCeilingOffIgnoresAnAgentsBackgroundAtCallTime(t *testing.T) {
 	s := backgroundServer(t, false, "quiet")
 	u := s.backgroundFor(&agent.AudioSettings{Background: &agent.BackgroundSettings{Name: "loud"}})
 	if u == nil || !near(level(t, u), 2000) {
-		t.Fatal("with allow_flow_background off the flow's choice is ignored and the server default plays")
+		t.Fatal("with allow_agent_background off the flow's choice is ignored and the server default plays")
 	}
 	if none := backgroundServer(t, false, ""); none.backgroundFor(&agent.AudioSettings{Background: &agent.BackgroundSettings{Name: "loud"}}) != nil {
 		t.Fatal("ceiling off and no default: silence")

@@ -18,7 +18,7 @@ const start = () =>
       { id: "a", name: "Reception", config: { stt: { provider: "google" }, ...ready } },
       { id: "b", name: "Billing", config: {} },
     ],
-    routes: [],
+    handoffs: [],
   });
 
 function Harness({
@@ -150,7 +150,7 @@ describe("StepPanel", () => {
 
   it("adds a route from the keyboard, focuses its condition, and flags it until filled", async () => {
     const user = userEvent.setup();
-    render(<Harness stepId="a" initialTab="routes" />);
+    render(<Harness stepId="a" initialTab="handoffs" />);
     await user.selectOptions(screen.getByLabelText("Route to"), "b");
     await user.click(screen.getByRole("button", { name: "Add route" }));
     const condition = screen.getByLabelText("Condition for the route to Billing");
@@ -165,11 +165,11 @@ describe("StepPanel", () => {
   it("routes to a brand-new step in one go", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(<Harness stepId="a" initialTab="routes" onChange={onChange} />);
+    render(<Harness stepId="a" initialTab="handoffs" onChange={onChange} />);
     await user.click(screen.getByRole("button", { name: "Route to a new step" }));
     const g = lastGraph(onChange);
     expect(g.steps.map((n) => n.name)).toEqual(["Reception", "Billing", "New step"]);
-    expect(g.routes).toEqual([expect.objectContaining({ from: "a", condition: "" })]);
+    expect(g.handoffs).toEqual([expect.objectContaining({ from: "a", condition: "" })]);
     expect(screen.getByLabelText("Condition for the route to New step")).toHaveFocus();
   });
 
@@ -203,7 +203,7 @@ describe("StepPanel", () => {
   it("lets a one-step flow's only step end the call", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    const one = fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Reception", config: {} }], routes: [] });
+    const one = fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Reception", config: {} }], handoffs: [] });
     render(<Harness initial={one} stepId="a" initialTab="tools" onChange={onChange} />);
     const box = screen.getByRole("checkbox", { name: /can end the call/i });
     expect(box).toBeEnabled();
@@ -213,14 +213,14 @@ describe("StepPanel", () => {
   });
 
   it("does not offer a per-step tool list on a one-step flow: it can call every flow tool", () => {
-    const one = fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Reception", config: {} }], routes: [] });
+    const one = fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Reception", config: {} }], handoffs: [] });
     render(<Harness initial={one} stepId="a" initialTab="tools" flowTools={["crm/lookup"]} />);
     expect(screen.queryByText("Tools this step can call")).toBeNull();
     expect(screen.getByText(/can call every tool of the flow/i)).toBeVisible();
   });
 
   it("shows end_call checked on a one-step flow that carries the flag", () => {
-    const one = fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Reception", end_call: true, config: {} }], routes: [] });
+    const one = fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Reception", end_call: true, config: {} }], handoffs: [] });
     render(<Harness initial={one} stepId="a" initialTab="tools" />);
     expect(screen.getByRole("checkbox", { name: /can end the call/i })).toBeChecked();
   });
@@ -252,7 +252,7 @@ describe("StepPanel", () => {
       const [graph, setGraph] = useState(g);
       return (
         <div style={{ position: "relative" }}>
-          <StepPanel graph={graph} stepId="a" providers={providers} flowTools={[]} tab="routes" onTab={vi.fn()} focusRoute={graph.routes[0].id} onFocusRoute={vi.fn()} wide={false} onToggleWide={vi.fn()} onClose={vi.fn()} onChange={setGraph} />
+          <StepPanel graph={graph} stepId="a" providers={providers} flowTools={[]} tab="handoffs" onTab={vi.fn()} focusRoute={graph.handoffs[0].id} onFocusRoute={vi.fn()} wide={false} onToggleWide={vi.fn()} onClose={vi.fn()} onChange={setGraph} />
         </div>
       );
     }

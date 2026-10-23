@@ -12,7 +12,7 @@ const graph = fromFlowConfig({
     { id: "b", name: "Billing", config: {} },
     { id: "c", name: "Support", config: ready },
   ],
-  routes: [{ id: "e1", from: "a", to: "b", condition: "asks about an invoice" }],
+  handoffs: [{ id: "e1", from: "a", to: "b", condition: "asks about an invoice" }],
 });
 
 const card = (name: string) => screen.getByText(name).closest(".step-node") as HTMLElement;

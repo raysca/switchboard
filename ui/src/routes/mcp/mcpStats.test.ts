@@ -150,9 +150,9 @@ describe("repin", () => {
 describe("referencedFlows", () => {
   it("reads the flows the server names when it refuses a delete, once each", () => {
     const details = [
-      { FlowID: "a1", FlowName: "Front desk", RemoteName: "lookup", Required: true },
-      { FlowID: "a1", FlowName: "Front desk", RemoteName: "notes", Required: false },
-      { FlowID: "a2", FlowName: "Old line", RemoteName: "lookup", Required: false },
+      { agent_id: "a1", agent_name: "Front desk", remote_name: "lookup", required: true },
+      { agent_id: "a1", agent_name: "Front desk", remote_name: "notes", required: false },
+      { agent_id: "a2", agent_name: "Old line", remote_name: "lookup", required: false },
     ];
     expect(referencedFlows(details)).toEqual([{ id: "a1", name: "Front desk" }, { id: "a2", name: "Old line" }]);
   });
@@ -160,6 +160,8 @@ describe("referencedFlows", () => {
     expect(referencedFlows(null)).toEqual([]);
     expect(referencedFlows("x")).toEqual([]);
     expect(referencedFlows([{ nope: 1 }, null])).toEqual([]);
+    // the Go-field-name keys the server used to send are not read any more
+    expect(referencedFlows([{ ["Flow" + "ID"]: "a1", ["Flow" + "Name"]: "Front desk" }, { AgentID: "a1", AgentName: "Front desk" }])).toEqual([]);
   });
 });
 

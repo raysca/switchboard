@@ -63,7 +63,7 @@ func TestACeilingOffRefusesAnyAgentBackgroundButNotOtherAudioSettings(t *testing
 	p := &fakePolicy{sounds: []string{"office"}, allow: false}
 	svc := testServiceWith(t, p)
 	_, err := svc.Create(context.Background(), CreateRequest{Name: "bg", Config: withExtra(`"audio":{"background":{"name":"office"}}`)})
-	if !errors.Is(err, ErrInvalidConfig) || !strings.Contains(err.Error(), "audio.allow_flow_background") {
+	if !errors.Is(err, ErrInvalidConfig) || !strings.Contains(err.Error(), "audio.allow_agent_background") {
 		t.Fatalf("got %v", err)
 	}
 	if _, err := svc.Create(context.Background(), CreateRequest{Name: "gain", Config: withExtra(`"audio":{"output_gain_db":-3,"denoise":{}}`)}); err != nil {
@@ -135,7 +135,7 @@ func contains(list []string, s string) bool {
 
 func TestPublishRefusesAHandoffSoundTheServerDoesNotHave(t *testing.T) {
 	handoff := func(cue string) json.RawMessage {
-		return json.RawMessage(strings.Replace(twoStepCfg(""), `"routes":`, `"route_cue":`+cue+`,"routes":`, 1))
+		return json.RawMessage(strings.Replace(twoStepCfg(""), `"handoffs":`, `"handoff_cue":`+cue+`,"handoffs":`, 1))
 	}
 	for _, c := range []struct {
 		name string
@@ -143,8 +143,8 @@ func TestPublishRefusesAHandoffSoundTheServerDoesNotHave(t *testing.T) {
 		cue  string
 		want string // "" = accepted
 	}{
-		{"unknown lists the available ones", []string{"chime"}, `{"name":"chimes"}`, `route_cue.name "chimes" is not a sound on this server (available: chime)`},
-		{"no cues at all", nil, `{"name":"chime","after_ms":50}`, `route_cue.name "chime" is not a sound on this server (this server has no cues)`},
+		{"unknown lists the available ones", []string{"chime"}, `{"name":"chimes"}`, `handoff_cue.name "chimes" is not a sound on this server (available: chime)`},
+		{"no cues at all", nil, `{"name":"chime","after_ms":50}`, `handoff_cue.name "chime" is not a sound on this server (this server has no cues)`},
 		{"known", []string{"chime"}, `{"name":"chime"}`, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -216,11 +216,11 @@ func TestPublishRefusesTurnSettingsTheServerCannotHonour(t *testing.T) {
 }
 
 func TestSmartEndOfTurnNeedsTheModel(t *testing.T) {
-	const want = "Smart end-of-turn needs the Smart Turn model on this server (turn.analyzer.for_flows)"
+	const want = "Smart end-of-turn needs the Smart Turn model on this server (turn.analyzer.for_agents)"
 	smart := withExtra(`"turn":{"end_of_turn":"smart","smart_hold_ms":1500}`)
 	svc := testServiceWith(t, &fakePolicy{manager: true, maxMute: 30 * time.Second})
 	if _, err := svc.Create(context.Background(), CreateRequest{Name: "no model", Config: smart}); !errors.Is(err, ErrInvalidConfig) || !strings.Contains(err.Error(), want) {
-		t.Fatalf("want a refusal naming for_flows, got %v", err)
+		t.Fatalf("want a refusal naming for_agents, got %v", err)
 	}
 	for _, extra := range []string{`"turn":{"end_of_turn":"eager"}`, `"turn":{"end_of_turn":"default","speech_timeout_ms":900}`} {
 		if _, err := svc.Create(context.Background(), CreateRequest{Name: extra, Config: withExtra(extra)}); err != nil {
@@ -256,7 +256,7 @@ func TestPublishChecksEveryStepsBackgroundSound(t *testing.T) {
 		want  string // "" = accepted
 	}{
 		{"unknown sound on a step", &fakePolicy{sounds: []string{"office"}, allow: true}, `{"background":{"name":"nope"}}`, `step "sales": audio.background.name "nope" is not a sound on this server (available: office)`},
-		{"ceiling off", &fakePolicy{sounds: []string{"office"}}, `{"background":{"name":"office"}}`, `step "sales": audio.background: this server does not let flows choose a background sound (audio.allow_flow_background)`},
+		{"ceiling off", &fakePolicy{sounds: []string{"office"}}, `{"background":{"name":"office"}}`, `step "sales": audio.background: this server does not let agents choose a background sound (audio.allow_agent_background)`},
 		{"known sound", &fakePolicy{sounds: []string{"office"}, allow: true}, `{"background":{"name":"office"}}`, ""},
 		{"none needs no ceiling", &fakePolicy{}, `{"background":{"name":""}}`, ""},
 	}

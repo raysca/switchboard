@@ -168,7 +168,7 @@ describe("VoiceClient connect cancelled by disconnect", () => {
     await client.connect({ flowId: "f", draft: { config: { a: 1 } } });
     await client.disconnect();
     await client.connect({ flowId: "f" });
-    expect(issue.mock.calls[0][0]).toMatchObject({ flow_id: "f", draft: { config: { a: 1 } } });
+    expect(issue.mock.calls[0][0]).toMatchObject({ agent_id: "f", draft: { config: { a: 1 } } });
     expect(issue.mock.calls[1][0]).not.toHaveProperty("draft");
   });
 });

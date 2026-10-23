@@ -23,7 +23,7 @@ async function api(method, route, body) {
 }
 
 // Archived (deleted in the UI) flows are still listed; never reuse one.
-const flows = (await api("GET", "/flows?limit=100")).filter((a) => !a.archived);
+const flows = (await api("GET", "/agents?limit=100")).filter((a) => !a.archived);
 const find = (name) => flows.find((a) => a.name === name);
 
 // The first detected provider for each stage, on its catalog defaults; null (logged) when a stage has none.
@@ -58,7 +58,7 @@ if (assistant) {
   const base = await defaults();
   if (!base) process.exit(0);
   const config = { ...base, llm: { ...base.llm, system_prompt: "You are a concise, friendly voice assistant. Answer in one or two short sentences." } };
-  assistant = await api("POST", "/flows", { name: FLOW_NAME, description: "Created by make dev", config });
+  assistant = await api("POST", "/agents", { name: FLOW_NAME, description: "Created by make dev", config });
   log(`created flow "${FLOW_NAME}" (${["stt", "llm", "tts"].map((k) => config[k].provider).join(" / ")})`);
 }
 
@@ -79,7 +79,7 @@ if (find(DESK)) {
     };
     // A desk that cannot be created must not cost the examples their Dev Assistant id.
     try {
-      await api("POST", "/flows", {
+      await api("POST", "/agents", {
         name: DESK,
         description: "Front desk hands buyers to sales",
         config: {
@@ -88,7 +88,7 @@ if (find(DESK)) {
             { id: "front", name: "Front desk", config: front, position: { x: 0, y: 80 } },
             { id: "sales", name: "Sales", config: sales, position: { x: 420, y: 80 } },
           ],
-          routes: [{ id: "front-sales", from: "front", to: "sales", condition: "The caller wants to buy a car or asks about prices." }],
+          handoffs: [{ id: "front-sales", from: "front", to: "sales", condition: "The caller wants to buy a car or asks about prices." }],
         },
       });
       log(`created flow "${DESK}"`);

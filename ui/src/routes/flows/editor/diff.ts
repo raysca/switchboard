@@ -43,20 +43,20 @@ export function describeChanges(before: FlowDraft | null, after: FlowDraft): str
   }
 
   const key = (e: DraftRoute) => `${e.from}>${e.to}`;
-  const oldRoutes = new Map(before.routes.map((e) => [key(e), e]));
-  const newRoutes = new Map(after.routes.map((e) => [key(e), e]));
-  for (const e of after.routes) {
+  const oldRoutes = new Map(before.handoffs.map((e) => [key(e), e]));
+  const newRoutes = new Map(after.handoffs.map((e) => [key(e), e]));
+  for (const e of after.handoffs) {
     const o = oldRoutes.get(key(e));
     if (!o) out.push(`New route ${nameIn(after, e.from)} → ${nameIn(after, e.to)}`);
     else if (o.condition !== e.condition) out.push(`Route ${nameIn(after, e.from)} → ${nameIn(after, e.to)}: condition changed`);
   }
-  for (const e of before.routes) if (!newRoutes.has(key(e))) out.push(`Removed route ${nameIn(before, e.from)} → ${nameIn(before, e.to)}`);
+  for (const e of before.handoffs) if (!newRoutes.has(key(e))) out.push(`Removed route ${nameIn(before, e.from)} → ${nameIn(before, e.to)}`);
 
   if (before.start !== after.start) out.push(`Start step is now ${nameIn(after, after.start)}`);
   const oldStart = rec(old.get(before.start)?.config);
   const newStart = rec(now.get(after.start)?.config);
   for (const [k, label] of FLOW_SETTINGS) if (!same(oldStart[k], newStart[k])) out.push(`Flow settings: ${label} changed`);
-  if (!same(before.route_cue, after.route_cue)) out.push("Flow settings: route sound changed");
+  if (!same(before.handoff_cue, after.handoff_cue)) out.push("Flow settings: route sound changed");
   return out;
 }
 

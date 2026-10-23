@@ -41,7 +41,7 @@ type Meta struct {
 type Sidecar struct {
 	ID        string    `json:"id"`
 	SessionID string    `json:"session_id"`
-	AgentID   string    `json:"flow_id"`
+	AgentID   string    `json:"agent_id"`
 	CallID    string    `json:"call_id"`
 	StartedAt time.Time `json:"started_at"`
 	EndedAt   time.Time `json:"ended_at"`

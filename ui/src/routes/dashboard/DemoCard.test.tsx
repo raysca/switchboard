@@ -27,8 +27,8 @@ describe("DemoCard", () => {
     const getDemo = vi
       .fn()
       .mockResolvedValueOnce({ dental: { available: true, installed: false } })
-      .mockResolvedValue({ dental: { available: true, installed: true, flow_id: "f1" } });
-    const installDentalDemo = vi.fn().mockResolvedValue({ mcp_server_id: "m", mcp_created: true, tools: 7, flow_id: "f1", flow_created: true });
+      .mockResolvedValue({ dental: { available: true, installed: true, agent_id: "f1" } });
+    const installDentalDemo = vi.fn().mockResolvedValue({ mcp_server_id: "m", mcp_created: true, tools: 7, agent_id: "f1", agent_created: true });
     renderWithProviders(<DemoCard client={{ getDemo, installDentalDemo } as unknown as ApiClient} />);
     await userEvent.click(await screen.findByRole("button", { name: /load demo/i }));
     expect(installDentalDemo).toHaveBeenCalledTimes(1);

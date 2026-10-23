@@ -164,13 +164,13 @@ type agentRigE2E struct {
 func agentConfigJSON(salesPrompt, salesVoice string, cue ...string) json.RawMessage {
 	tail := ""
 	if len(cue) > 0 {
-		tail = `,"route_cue":` + cue[0]
+		tail = `,"handoff_cue":` + cue[0]
 	}
 	stage := func(extra string) string { return `"provider":"echo"` + extra }
 	return json.RawMessage(`{"start":"front","steps":[` +
 		`{"id":"front","name":"Front desk","config":{"stt":{` + stage(`,"model":"s"`) + `},"llm":{` + stage(`,"model":"m","system_prompt":"FRONT"`) + `},"tts":{` + stage(`,"voice":"frontvoice"`) + `}}},` +
 		`{"id":"sales","name":"Sales","config":{"llm":{` + stage(`,"model":"m","system_prompt":"`+salesPrompt+`"`) + `},"tts":{` + stage(`,"voice":"`+salesVoice+`"`) + `}}}],` +
-		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."}]` + tail + `}`)
+		`"handoffs":[{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."}]` + tail + `}`)
 }
 
 func newAgentRigE2E(t *testing.T, probe *stageProbe, mods ...func(*Config)) *agentRigE2E {
@@ -256,7 +256,7 @@ func (r *agentRigE2E) dial(agentID string) *e2eCall {
 // voiceToken issues a voice token for flowID, as an integration's backend does.
 func (r *agentRigE2E) voiceToken(agentID string) string {
 	r.t.Helper()
-	w := apiRequest(r.s, http.MethodPost, "/api/v1/voice-tokens", e2eMgmtKey, `{"principal":"alice","flow_id":"`+agentID+`"}`)
+	w := apiRequest(r.s, http.MethodPost, "/api/v1/voice-tokens", e2eMgmtKey, `{"principal":"alice","agent_id":"`+agentID+`"}`)
 	var resp struct {
 		Data struct{ Token string } `json:"data"`
 	}
@@ -417,8 +417,8 @@ func (r *agentRigE2E) spanNames(sessionID string) map[string]bool {
 		names[sp.Name] = true
 		// The designer replays the path from these attributes; the trace allowlists
 		// drop unknown keys, so they must really be persisted.
-		if sp.Name == "route.active" && (!strings.Contains(sp.AttributesJSON, `"from_step":"front"`) || !strings.Contains(sp.AttributesJSON, `"to_step":"sales"`)) {
-			r.t.Fatalf("route.active attributes = %s", sp.AttributesJSON)
+		if sp.Name == "handoff.active" && (!strings.Contains(sp.AttributesJSON, `"from_step":"front"`) || !strings.Contains(sp.AttributesJSON, `"to_step":"sales"`)) {
+			r.t.Fatalf("handoff.active attributes = %s", sp.AttributesJSON)
 		}
 	}
 	return names
@@ -485,7 +485,7 @@ func TestAgentE2EHandoffMovesTheCallAndClosesTheLeftStep(t *testing.T) {
 	}
 	eventually(t, "route trace spans", func() bool {
 		n := r.spanNames(c.sessionID)
-		return n["route.preparing"] && n["route.active"]
+		return n["handoff.preparing"] && n["handoff.active"]
 	})
 
 	_ = c.conn.Close(websocket.StatusNormalClosure, "bye")
@@ -502,7 +502,7 @@ func TestAgentE2EFailedStepBuildKeepsTheCallGoing(t *testing.T) {
 
 	c.say("transfer to sales")
 	c.waitReplies("Connecting you.", 1)
-	eventually(t, "route_failed", func() bool { return r.has(EventHandoffFailed, "sales") })
+	eventually(t, "handoff_failed", func() bool { return r.has(EventHandoffFailed, "sales") })
 	if r.s.metrics.handoff.failures.Load() != 1 || r.s.metrics.handoff.total.Load() != 0 {
 		t.Fatalf("metrics: routes=%d failures=%d", r.s.metrics.handoff.total.Load(), r.s.metrics.handoff.failures.Load())
 	}
@@ -630,7 +630,7 @@ func TestAgentE2EFlatAgentHasNoHandoffs(t *testing.T) {
 }
 
 // ---- Router cue, end to end -------------------------------------------------
-// A real server with audio.cues configured, a routed flow with a route_cue and a
+// A real server with audio.cues configured, a routed flow with a handoff_cue and a
 // WebSocket client that decodes the bot's audio frames: the cue is a tone on the
 // wire (the fake TTS sends silence), so its start, its length and its stop are
 // observable bytes, not just timeline events.
@@ -818,7 +818,7 @@ func endCallAgentJSON(frontEnds, salesEnds bool) json.RawMessage {
 	return json.RawMessage(`{"start":"front","steps":[` +
 		`{"id":"front","name":"Front desk","end_call":` + strconv.FormatBool(frontEnds) + `,"config":{` + stt + `,"llm":{"provider":"echo","model":"m","system_prompt":"FRONT"},"tts":{"provider":"echo","voice":"frontvoice"}}},` +
 		`{"id":"sales","name":"Sales","end_call":` + strconv.FormatBool(salesEnds) + `,"config":{"llm":{"provider":"echo","model":"m","system_prompt":"SALES"},"tts":{"provider":"echo","voice":"salesvoice"}}}],` +
-		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."}]}`)
+		`"handoffs":[{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."}]}`)
 }
 
 func TestAgentE2EEndCallEndsTheCallAfterTheGoodbye(t *testing.T) {
@@ -852,7 +852,7 @@ func TestAgentE2EEndCallEndsTheCallAfterTheGoodbye(t *testing.T) {
 // oneStepEndCallJSON is a single-step flow (no routes); ends gives the step the end_call tool.
 func oneStepEndCallJSON(ends bool) json.RawMessage {
 	return json.RawMessage(`{"start":"main","steps":[{"id":"main","name":"Main","end_call":` + strconv.FormatBool(ends) + `,"config":{` +
-		`"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"MAIN"},"tts":{"provider":"echo","voice":"v"}}}],"routes":[]}`)
+		`"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"MAIN"},"tts":{"provider":"echo","voice":"v"}}}],"handoffs":[]}`)
 }
 
 func TestAgentE2EAOneStepAgentCanEndTheCall(t *testing.T) {
@@ -976,7 +976,7 @@ func (r *agentRigE2E) handoffBackgroundAgent(audio map[string]string, back bool)
 		handoffs += `,{"id":"e3","from":"sales","to":"front","condition":"The caller is done buying."}`
 	}
 	cfg := `{"start":"front","steps":[` + step("front", "Front desk", "FRONT", true) + `,` + step("sales", "Sales", "SALES", false) + `,` +
-		step("support", "Support", "SUPPORT", false) + `],"routes":[` + handoffs + `]}`
+		step("support", "Support", "SUPPORT", false) + `],"handoffs":[` + handoffs + `]}`
 	a, err := r.s.agents.Create(r.t.Context(), agent.CreateRequest{Name: "Beds", Config: json.RawMessage(cfg)})
 	if err != nil || a.Readiness.State != agent.ReadinessReady {
 		r.t.Fatalf("background flow: %+v err=%v", a.Readiness, err)

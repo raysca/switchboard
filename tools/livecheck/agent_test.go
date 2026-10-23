@@ -91,7 +91,7 @@ func TestAgentConfigHasEntryWithSTTAndASalesStepWithout(t *testing.T) {
 	if front["llm"].(map[string]any)["system_prompt"] == sales["llm"].(map[string]any)["system_prompt"] {
 		t.Fatal("each node needs its own prompt")
 	}
-	e := cfg["routes"].([]map[string]any)
+	e := cfg["handoffs"].([]map[string]any)
 	if len(e) != 1 || e[0]["from"] != "front" || e[0]["to"] != "sales" {
 		t.Fatalf("edges = %v", e)
 	}

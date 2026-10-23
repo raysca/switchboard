@@ -74,7 +74,7 @@ for want in voice_build_info voice_active_sessions voice_llm_circuit_state; do
 done
 curl -fsS "$base/health" >/dev/null || fail "/health unreachable"
 
-for path in /debug/timeline /api/v1/flows; do
+for path in /debug/timeline /api/v1/agents; do
   code="$(curl -s -o /dev/null -w '%{http_code}' "$base$path")"
   [[ "$code" == 404 ]] || fail "probe listener serves $path ($code); it must only serve /health /ready /metrics"
 done

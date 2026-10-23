@@ -19,14 +19,14 @@ const flow = (over: Partial<FlowDTO> = {}, config: Record<string, unknown> = {})
   updated_at: "",
   ...over,
 });
-const graph = { start: "a", steps: [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }], routes: [{ id: "e1" }, { id: "e2" }, { id: "e3" }] };
+const graph = { start: "a", steps: [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }], handoffs: [{ id: "e1" }, { id: "e2" }, { id: "e3" }] };
 const session = (over: Partial<SessionDTO>): SessionDTO => ({
   draft: false,
   caller: "",
   end_reason: "",
   id: "s",
-  flow_id: "a1",
-  flow_version_id: "v2",
+  agent_id: "a1",
+  agent_version_id: "v2",
   config_hash: "h",
   started_at: "",
   status: "active",
@@ -63,7 +63,7 @@ describe("FlowsView", () => {
 
   it("lists flows with status, version, figures and live calls", async () => {
     setup({
-      getSessions: vi.fn().mockResolvedValue([session({ id: "1" }), session({ id: "2", flow_version_id: "v1" })]),
+      getSessions: vi.fn().mockResolvedValue([session({ id: "1" }), session({ id: "2", agent_version_id: "v1" })]),
       getFlows: vi.fn().mockResolvedValue([
         flow({}, graph),
         flow({ id: "a2", name: "Appointments", enabled: false, readiness: { state: "not_ready", reasons: ["no_provider"] } }),
@@ -108,7 +108,7 @@ describe("FlowsView", () => {
 
   it("words a known readiness reason", async () => {
     setup({ getFlows: vi.fn().mockResolvedValue([flow({ readiness: { state: "not_ready", reasons: ["smart_turn_unavailable"] } })]) });
-    expect(await screen.findByText("Smart end-of-turn needs turn.analyzer.for_flows on this server")).toBeVisible();
+    expect(await screen.findByText("Smart end-of-turn needs turn.analyzer.for_agents on this server")).toBeVisible();
   });
 
   it("toggles Enabled by sending only enabled, never a config", async () => {

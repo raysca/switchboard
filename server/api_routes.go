@@ -78,24 +78,24 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if input.Principal == "" || len(input.Principal) > 128 || input.AgentID == "" || len(input.AgentID) > 128 {
-			api.WriteError(w, http.StatusBadRequest, "invalid_request", "principal and flow_id must be 1 to 128 characters", requestID)
+			api.WriteError(w, http.StatusBadRequest, "invalid_request", "principal and agent_id must be 1 to 128 characters", requestID)
 			return
 		}
 		if s.agents == nil {
-			api.WriteError(w, http.StatusServiceUnavailable, "flow_management_unavailable", "flow storage is unavailable", requestID)
+			api.WriteError(w, http.StatusServiceUnavailable, "agent_management_unavailable", "agent storage is unavailable", requestID)
 			return
 		}
 		target, err := s.agents.Get(r.Context(), input.AgentID)
 		if errors.Is(err, sql.ErrNoRows) {
-			api.WriteError(w, http.StatusNotFound, "not_found", "flow not found", requestID)
+			api.WriteError(w, http.StatusNotFound, "not_found", "agent not found", requestID)
 			return
 		}
 		if err != nil {
-			api.WriteError(w, http.StatusInternalServerError, "internal_error", "flow could not be loaded", requestID)
+			api.WriteError(w, http.StatusInternalServerError, "internal_error", "agent could not be loaded", requestID)
 			return
 		}
 		if !agentCallable(target.Readiness.State) {
-			api.WriteJSON(w, http.StatusConflict, api.ErrorResponse{Error: api.Error{Code: "flow_not_ready", Message: "flow is not ready to take calls", RequestID: requestID, Details: target.Readiness}})
+			api.WriteJSON(w, http.StatusConflict, api.ErrorResponse{Error: api.Error{Code: "agent_not_ready", Message: "agent is not ready to take calls", RequestID: requestID, Details: target.Readiness}})
 			return
 		}
 		now := time.Now()
@@ -108,7 +108,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if !agentCallable(readiness.State) {
-				api.WriteJSON(w, http.StatusConflict, api.ErrorResponse{Error: api.Error{Code: "flow_not_ready", Message: "the draft is not ready to take calls", RequestID: requestID, Details: readiness}})
+				api.WriteJSON(w, http.StatusConflict, api.ErrorResponse{Error: api.Error{Code: "agent_not_ready", Message: "the draft is not ready to take calls", RequestID: requestID, Details: readiness}})
 				return
 			}
 			if err := s.drafts.put(tokenID, draftCall{snapshot: snapshot, expires: now.Add(lifetime)}, now); err != nil {
@@ -148,7 +148,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			prefix, code, message string
 			handler               http.Handler
 		}{
-			{"/api/v1/flows", "flow_management_unavailable", "flow management storage is unavailable", s.agentManagementAPI},
+			{"/api/v1/agents", "agent_management_unavailable", "agent management storage is unavailable", s.agentManagementAPI},
 			{"/api/v1/providers", "provider_management_unavailable", "provider management storage is unavailable", s.providerManagementAPI},
 			{"/api/v1/mcp-servers", "mcp_management_unavailable", "MCP management storage is unavailable", s.mcpManagementAPI},
 			{"/api/v1/sessions", "session_management_unavailable", "session management storage is unavailable", s.sessionManagementAPI},
@@ -193,9 +193,9 @@ func agentCallable(state string) bool {
 func (s *Server) writeDraftError(w http.ResponseWriter, err error, requestID string) {
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		api.WriteError(w, http.StatusNotFound, "not_found", "flow not found", requestID)
+		api.WriteError(w, http.StatusNotFound, "not_found", "agent not found", requestID)
 	case errors.Is(err, agent.ErrNotAttached):
-		api.WriteError(w, http.StatusBadRequest, "flow_not_attached", err.Error(), requestID)
+		api.WriteError(w, http.StatusBadRequest, "agent_not_attached", err.Error(), requestID)
 	case errors.Is(err, agent.ErrInvalidConfig), errors.Is(err, storage.ErrInvalidToolSelection):
 		api.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error(), requestID)
 	default:

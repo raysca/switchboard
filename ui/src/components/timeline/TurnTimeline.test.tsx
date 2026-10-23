@@ -188,7 +188,7 @@ describe("TurnTimeline", () => {
       events: [],
       tool_calls: [],
       spans: [
-        { id: "h1", session_id: "s", turn_id: "t1", name: "route.active", started_at: "2026-10-05T12:00:01Z", ended_at: "2026-10-05T12:00:02Z", attributes: { from_step: "front", to_step: "sales" } },
+        { id: "h1", session_id: "s", turn_id: "t1", name: "handoff.active", started_at: "2026-10-05T12:00:01Z", ended_at: "2026-10-05T12:00:02Z", attributes: { from_step: "front", to_step: "sales" } },
         { id: "o1", session_id: "s", turn_id: "t1", name: "llm.generate", started_at: "2026-10-05T12:00:01Z", ended_at: "2026-10-05T12:00:02Z", attributes: {} },
       ],
     };

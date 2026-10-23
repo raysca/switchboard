@@ -16,10 +16,10 @@ type Policy interface {
 	Cues() []string        // sorted names of audio.cues (route sounds)
 	AllowAgentBackground() bool
 	MinUserTimeout() time.Duration  // 0: no floor
-	TurnManager() bool              // flows' turn settings need the turn manager
-	MaxMute() time.Duration         // the server's effective turn.max_mute: a flow can only shorten it
-	MaxCallDuration() time.Duration // the server's limits.max_call_duration: a flow can only shorten it
-	SmartTurn() bool                // the Smart Turn model is loaded: a flow may ask for end_of_turn "smart"
+	TurnManager() bool              // agents' turn settings need the turn manager
+	MaxMute() time.Duration         // the server's effective turn.max_mute: an agent can only shorten it
+	MaxCallDuration() time.Duration // the server's limits.max_call_duration: an agent can only shorten it
+	SmartTurn() bool                // the Smart Turn model is loaded: an agent may ask for end_of_turn "smart"
 }
 
 // reasonIdleTooShort is the one policy problem that also takes a stored flow offline: a call could not even
@@ -55,7 +55,7 @@ func (g Definition) policyProblems(p Policy) []policyProblem {
 		}
 	}
 	if rc := g.HandoffCue; rc != nil && rc.Name != "" && !slices.Contains(p.Cues(), rc.Name) {
-		out = append(out, policyProblem{message: unknownCue("route_cue.name", rc.Name, p), storedOK: true})
+		out = append(out, policyProblem{message: unknownCue("handoff_cue.name", rc.Name, p), storedOK: true})
 	}
 	if tc := c.Audio; tc != nil && tc.ToolCue != nil && !slices.Contains(p.Cues(), tc.ToolCue.Name) {
 		out = append(out, policyProblem{message: unknownCue("audio.tool_cue.name", tc.ToolCue.Name, p), storedOK: true})
@@ -65,14 +65,14 @@ func (g Definition) policyProblems(p Policy) []policyProblem {
 			out = append(out, policyProblem{message: "turn settings need turn.manager: true on this server"})
 		}
 		if m := t.MaxMuteMS; m != nil && time.Duration(*m)*time.Millisecond > p.MaxMute() {
-			out = append(out, policyProblem{message: fmt.Sprintf("turn.max_mute_ms %d is above this server's limit of %d (turn.max_mute): a flow can only shorten it", *m, p.MaxMute().Milliseconds()), storedOK: true})
+			out = append(out, policyProblem{message: fmt.Sprintf("turn.max_mute_ms %d is above this server's limit of %d (turn.max_mute): an agent can only shorten it", *m, p.MaxMute().Milliseconds()), storedOK: true})
 		}
 		if t.EndOfTurn == EndOfTurnSmart && !p.SmartTurn() {
-			out = append(out, policyProblem{reason: reasonSmartTurnUnavailable, message: "Smart end-of-turn needs the Smart Turn model on this server (turn.analyzer.for_flows)"})
+			out = append(out, policyProblem{reason: reasonSmartTurnUnavailable, message: "Smart end-of-turn needs the Smart Turn model on this server (turn.analyzer.for_agents)"})
 		}
 	}
 	if s := c.MaxCallDurationSeconds; s != 0 && time.Duration(s)*time.Second > p.MaxCallDuration() {
-		out = append(out, policyProblem{message: fmt.Sprintf("max_call_duration_seconds %d is above this server's limit of %d (limits.max_call_duration): a flow can only shorten it", s, int(p.MaxCallDuration().Seconds())), storedOK: true})
+		out = append(out, policyProblem{message: fmt.Sprintf("max_call_duration_seconds %d is above this server's limit of %d (limits.max_call_duration): an agent can only shorten it", s, int(p.MaxCallDuration().Seconds())), storedOK: true})
 	}
 	if i := c.Idle; i != nil && i.UserTimeoutMS != nil && *i.UserTimeoutMS > 0 {
 		if floor := p.MinUserTimeout(); time.Duration(*i.UserTimeoutMS)*time.Millisecond <= floor {
@@ -97,7 +97,7 @@ func backgroundProblem(b *BackgroundSettings, p Policy) string {
 		return ""
 	}
 	if !p.AllowAgentBackground() {
-		return "audio.background: this server does not let flows choose a background sound (audio.allow_flow_background)"
+		return "audio.background: this server does not let agents choose a background sound (audio.allow_agent_background)"
 	}
 	if names := p.Backgrounds(); !slices.Contains(names, b.Name) {
 		avail := "this server has no sounds"

@@ -17,7 +17,7 @@ const openAdvanced = async (page: import("@playwright/test").Page) => {
 };
 
 test("sampling reaches the model on a test call, is published, read back and shown after a reload", async ({ page, stack }) => {
-  await api(stack, "/flows", {
+  await api(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({ name: NAME, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }) } }),
   });
@@ -41,7 +41,7 @@ test("sampling reaches the model on a test call, is published, read back and sho
   await page.getByRole("button", { name: "Publish", exact: true }).click();
   await page.getByRole("button", { name: "Publish v2" }).click();
   const read = async () => {
-    const v = (await api<{ data: Flow[] }>(stack, "/flows")).data.find((x) => x.name === NAME)!.current_version;
+    const v = (await api<{ data: Flow[] }>(stack, "/agents")).data.find((x) => x.name === NAME)!.current_version;
     return v.number === 2 ? v.config.llm : undefined;
   };
   await expect.poll(read).toMatchObject({ temperature: 0.3, top_p: 0.9, max_output_tokens: 200 });

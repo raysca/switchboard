@@ -307,7 +307,7 @@ func (h *holdCue) onHandoff(e core.HandoffEvent) {
 		h.handingOff.Store(true)
 		h.mu.Lock()
 		h.disarmLocked()
-		h.pauseLocked("route")
+		h.pauseLocked("handoff")
 		h.mu.Unlock()
 	case core.HandoffActive, core.HandoffFailed:
 		h.handingOff.Store(false)

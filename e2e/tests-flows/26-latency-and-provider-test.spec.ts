@@ -9,7 +9,7 @@ test.describe.configure({ mode: "serial" });
 const NAME = "E2E Latency";
 
 test("a finished call shows how long the reply took", async ({ page, stack }) => {
-  await api(stack, "/flows", {
+  await api(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({ name: NAME, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "LATENCY PROMPT" }), tts: stage({ voice: "frontvoice" }) } }),
   });

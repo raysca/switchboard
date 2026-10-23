@@ -16,7 +16,7 @@ const two = fromFlowConfig({
     { id: "a", name: "Reception", config: { llm: { provider: "g", model: "m" }, tts: { provider: "g" } } },
     { id: "b", name: "Billing", config: { llm: { provider: "g", model: "m" }, tts: { provider: "g" } } },
   ],
-  routes: [{ id: "e1", from: "a", to: "b", condition: "invoice" }],
+  handoffs: [{ id: "e1", from: "a", to: "b", condition: "invoice" }],
 });
 
 function Harness({ initial = two, onChange = vi.fn(), onClose = vi.fn(), serverConfig }: { initial?: FlowDraft; onChange?: (g: FlowDraft) => void; onClose?: () => void; serverConfig?: ServerConfigDTO }) {
@@ -53,7 +53,7 @@ const limitServer: ServerConfigDTO = {
   voice_token_max_lifetime_seconds: 60,
   client_ip: "",
   secure: false,
-  audio: { backgrounds: [], cues: [], allow_flow_background: true, background_default: "" },
+  audio: { backgrounds: [], cues: [], allow_agent_background: true, background_default: "" },
   idle: { user_timeout_ms: 0, max_prompts: 2, prompt_mode: "llm" },
   turn: { manager: true, min_words: 0, mute: [], max_mute_ms: 30000, speech_timeout_ms: 600, end_of_turn: "default", smart_turn_available: false, smart_hold_ms: 3000 },
 };
@@ -158,7 +158,7 @@ describe("FlowSettingsPanel", () => {
       voice_token_max_lifetime_seconds: 60,
       client_ip: "",
       secure: false,
-      audio: { backgrounds: [], cues: ["chime", "ding"], allow_flow_background: true, background_default: "" },
+      audio: { backgrounds: [], cues: ["chime", "ding"], allow_agent_background: true, background_default: "" },
       idle: { user_timeout_ms: 0, max_prompts: 2, prompt_mode: "llm" },
       turn: { manager: true, min_words: 0, mute: [], max_mute_ms: 30000, speech_timeout_ms: 600, end_of_turn: "default", smart_turn_available: false, smart_hold_ms: 3000 },
     };
@@ -171,18 +171,18 @@ describe("FlowSettingsPanel", () => {
       expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["None", "chime", "ding"]);
       await user.selectOptions(select, "chime");
       await user.type(screen.getByLabelText("Start after (ms)"), "50");
-      expect((onChange.mock.calls.at(-1)![0] as FlowDraft).route_cue).toEqual({ name: "chime", after_ms: 50 });
+      expect((onChange.mock.calls.at(-1)![0] as FlowDraft).handoff_cue).toEqual({ name: "chime", after_ms: 50 });
       await user.selectOptions(select, "");
-      expect((onChange.mock.calls.at(-1)![0] as FlowDraft).route_cue).toBeUndefined();
+      expect((onChange.mock.calls.at(-1)![0] as FlowDraft).handoff_cue).toBeUndefined();
     });
 
     it("keeps a stored name selected while the server's list has not loaded", () => {
-      render(<Harness initial={{ ...two, route_cue: { name: "chime" } }} />);
+      render(<Harness initial={{ ...two, handoff_cue: { name: "chime" } }} />);
       expect(screen.getByRole("combobox", { name: "Route sound" })).toHaveValue("chime");
     });
 
     it("shows a stored name the server lacks as selected and not on this server", () => {
-      render(<Harness initial={{ ...two, route_cue: { name: "chimes" } }} serverConfig={cueServer} />);
+      render(<Harness initial={{ ...two, handoff_cue: { name: "chimes" } }} serverConfig={cueServer} />);
       expect(screen.getByRole("combobox", { name: "Route sound" })).toHaveValue("chimes");
       expect(screen.getByRole("option", { name: "chimes (not on this server)" })).toBeInTheDocument();
     });
@@ -252,7 +252,7 @@ describe("FlowSettingsPanel footer", () => {
       fromFlowConfig({
         start: "a",
         steps: [{ id: "a", name: "Reception", config: { llm: { provider: "g", model: "m" }, tts: { provider: "g" }, stt: { provider: "deepgram" }, ...extra } }],
-        routes: [],
+        handoffs: [],
       });
     const advanced = () => screen.getByText(/^Advanced/).closest("details")!;
 
@@ -323,7 +323,7 @@ describe("FlowSettingsPanel footer", () => {
           },
         },
       ],
-      routes: [],
+      handoffs: [],
     });
 
     it("shows the three fields only while summarising is on, and writes them", async () => {
@@ -373,8 +373,8 @@ describe("FlowSettingsPanel footer", () => {
     });
 
     it("does not count a route sound the flow has no routes to show", () => {
-      const g = fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Reception", config: { stt: { provider: "deepgram" } } }], routes: [] });
-      render(<Harness initial={{ ...g, route_cue: { name: "chime" } }} />);
+      const g = fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Reception", config: { stt: { provider: "deepgram" } } }], handoffs: [] });
+      render(<Harness initial={{ ...g, handoff_cue: { name: "chime" } }} />);
       expect(screen.getByText(/^Advanced/)).toHaveTextContent(/^Advanced$/);
     });
   });
@@ -387,12 +387,12 @@ describe("FlowSettingsPanel footer", () => {
       voice_token_max_lifetime_seconds: 60,
       client_ip: "",
       secure: false,
-      audio: { backgrounds: ["cafe", "office"], cues: ["chime"], allow_flow_background: true, background_default: "" },
+      audio: { backgrounds: ["cafe", "office"], cues: ["chime"], allow_agent_background: true, background_default: "" },
       idle: { user_timeout_ms: 15000, max_prompts: 2, prompt_mode: "llm" },
       turn: { manager: true, min_words: 0, mute: [], max_mute_ms: 30000, speech_timeout_ms: 600, end_of_turn: "default", smart_turn_available: false, smart_hold_ms: 3000 },
     };
     const withStart = (extra: Record<string, unknown>) =>
-      fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Reception", config: { llm: { provider: "g", model: "m" }, tts: { provider: "g" }, stt: { provider: "deepgram" }, ...extra } }], routes: [] });
+      fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Reception", config: { llm: { provider: "g", model: "m" }, tts: { provider: "g" }, stt: { provider: "deepgram" }, ...extra } }], handoffs: [] });
     const openAdvanced = (user: ReturnType<typeof userEvent.setup>) => user.click(screen.getByText(/^Advanced/));
 
     it("shows the checkbox and the wait up front, with the server's default as the placeholder", () => {
@@ -554,7 +554,7 @@ describe("FlowSettingsPanel footer", () => {
 
     it("disables the sound with the reason when the server does not let flows choose one", async () => {
       const user = userEvent.setup();
-      render(<Harness serverConfig={{ ...server, audio: { backgrounds: ["office"], cues: [], allow_flow_background: false, background_default: "" } }} />);
+      render(<Harness serverConfig={{ ...server, audio: { backgrounds: ["office"], cues: [], allow_agent_background: false, background_default: "" } }} />);
       await openAdvanced(user);
       expect(screen.getByLabelText("Background sound")).toBeDisabled();
       expect(screen.getByText("This server does not allow flow background sounds.")).toBeVisible();

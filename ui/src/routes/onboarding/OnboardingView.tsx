@@ -316,7 +316,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
               <Snippet
                 label="Token request"
                 title="1 · your backend mints a short-lived voice token"
-                text={`POST /api/v1/voice-tokens\n{ "flow_id": "${flow.id}", "principal": "[YOUR USER ID]" }`}
+                text={`POST /api/v1/voice-tokens\n{ "agent_id": "${flow.id}", "principal": "[YOUR USER ID]" }`}
               />
               <Snippet
                 label="Web client"

@@ -245,7 +245,7 @@ func TestHoldStopsWhenAHandoffStartsPreparingAndNeverStartsWhileTheHandoffCueWai
 	defer h.toolDone()
 	waitCue(t, "hold start", func() bool { s, _ := p.counts(); return s == 1 })
 	h.onHandoff(prep())
-	if ev := r.events(); ev[len(ev)-1] != "cue_stop:route" {
+	if ev := r.events(); ev[len(ev)-1] != "cue_stop:handoff" {
 		t.Fatalf("a route preparing must finish the hold first: %v", r.events())
 	}
 	time.Sleep(80 * time.Millisecond)

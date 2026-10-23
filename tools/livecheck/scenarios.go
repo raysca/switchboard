@@ -805,14 +805,14 @@ func s14(x *sctx, r *Result) {
 	r.check("route reached the sales agent", reached, "")
 	r.m("reply", truncate(c.texts(mark, "bot-llm-text", false), 90))
 	if reached {
-		r.m("route_ms", msv(time.Since(mark)))
+		r.m("handoff_ms", msv(time.Since(mark)))
 	}
 	c.wait(25*time.Second, func() bool { return c.has(mark, "bot-stopped-speaking") })
 	handoffs := 0
 	for _, e := range x.srv.timelineEvents(c.n) {
-		if e.Type == "route" {
+		if e.Type == "handoff" {
 			handoffs++
-			r.m("route", e.Details)
+			r.m("handoff", e.Details)
 		}
 	}
 	r.check("server recorded the route", handoffs == 1, fmt.Sprint(handoffs))

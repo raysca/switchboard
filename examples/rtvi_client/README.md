@@ -1,6 +1,6 @@
 # Standalone Pipecat RTVI Client
 
-A CLI test driver and an interactive web client that call a **stored flow** on a
+A CLI test driver and an interactive web client that call a **stored agent** on a
 Go Voice server over the RTVI WebSocket protocol.
 
 Calls are authorised by a single-use voice token issued by the management API:
@@ -8,16 +8,16 @@ Calls are authorised by a single-use voice token issued by the management API:
 ```
 POST {admin}/api/v1/voice-tokens
 Authorization: Bearer <management key>
-{"principal": "...", "flow_id": "..."}
+{"principal": "...", "agent_id": "..."}
 → {"data": {"token": "...", "expires_at": "...", "scope": "voice:connect"}}
 ```
 
-`404` means the flow is unknown, `409 flow_not_ready` means it is not ready to
+`404` means the agent is unknown, `409 agent_not_ready` means it is not ready to
 take calls. The call then connects to `{public}/ws?token=<token>`. Tokens are
 single-use, so every call fetches a new one.
 
 With `make dev` running, `make example-web` and `make example-cli [TEXT="..."]`
-in the repository root run both clients against the dev flow with nothing to
+in the repository root run both clients against the dev agent with nothing to
 type. To run them by hand:
 
 ```bash
@@ -32,16 +32,16 @@ npm install
 export GOVOICE_MANAGEMENT_API_KEY=<management key>
 
 # Voice turn: streams a 16kHz mono PCM16 WAV (default ../../assets/speech/clip1.wav)
-node cli.js --flow <flow-id>
-node cli.js --flow <flow-id> --audio path/to/utterance.wav
+node cli.js --agent <agent-id>
+node cli.js --agent <agent-id> --audio path/to/utterance.wav
 
 # Text turn (RTVI send-text, no STT)
-node cli.js --flow <flow-id> --text "Hello, who am I talking to?"
+node cli.js --agent <agent-id> --text "Hello, who am I talking to?"
 ```
 
 | Option | Default | |
 |---|---|---|
-| `--flow <flow-id>` | (required) | stored flow to call |
+| `--agent <agent-id>` | (required) | stored agent to call |
 | `--admin <url>` | `http://127.0.0.1:9090` | management API base URL |
 | `--ws <url>` | `ws://127.0.0.1:8080/ws` | public WebSocket URL |
 | `--principal <p>` | `rtvi-cli-tester` | token principal |
@@ -55,7 +55,7 @@ bot reply completes (the bot stops speaking, or 3s pass without new LLM text for
 flows that do not speak). It exits non-zero on a token refusal, a server error
 or a timeout.
 
-npm shortcuts: `npm run call -- --flow <flow-id>`, `npm run call:text -- --flow <flow-id>`.
+npm shortcuts: `npm run call -- --agent <agent-id>`, `npm run call:text -- --agent <agent-id>`.
 
 ---
 
@@ -68,7 +68,7 @@ HOST=0.0.0.0 npm start         # listen on all interfaces
 ```
 
 Open the page in Chrome or Edge, fill in **Admin URL**, **Management key**,
-**Flow ID** (and **Server WebSocket URL** if it is not the default), then click
+**Agent ID** (and **Server WebSocket URL** if it is not the default), then click
 **Connect**. The page asks `server.js` for a token (`POST /api/voice-token`), which
 relays the request to the management API so the browser needs no CORS access to
 it. The relay accepts only same-origin JSON requests.
@@ -78,7 +78,7 @@ sees it (this is what `make example-web` does):
 
 | Variable | Effect |
 |---|---|
-| `GOVOICE_ADMIN_URL`, `GOVOICE_WS_URL`, `GOVOICE_FLOW_ID` | prefill the fields |
+| `GOVOICE_ADMIN_URL`, `GOVOICE_WS_URL`, `GOVOICE_AGENT_ID` | prefill the fields |
 | `GOVOICE_MANAGEMENT_API_KEY` | used when the page's key field is empty; then only `GOVOICE_ADMIN_URL` is called |
 
 Once connected, speak into the microphone (16kHz mono PCM16 up, 24kHz playback

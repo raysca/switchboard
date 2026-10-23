@@ -29,7 +29,7 @@ async function explainAll(page: Page, atLeast: number) {
 }
 type Config = { context?: { max_tokens?: number; summarization?: { trigger_tokens?: number; keep_turns?: number; prompt?: string } }; stt_p99_ms?: number; failover?: { on: string[] }; async_tools?: string[] };
 type Flow = { name: string; current_version: { number: number; config: Config & { steps?: { config: Config }[] } } };
-const current = async (stack: Parameters<typeof api>[0]) => (await api<{ data: Flow[] }>(stack, "/flows")).data.find((f) => f.name === NAME)!.current_version;
+const current = async (stack: Parameters<typeof api>[0]) => (await api<{ data: Flow[] }>(stack, "/agents")).data.find((f) => f.name === NAME)!.current_version;
 const startConfig = (c: Flow["current_version"]["config"]): Config => c.steps?.[0]?.config ?? c;
 
 test("settings set in the editor are published, read back, reopened and run on a call", async ({ page, stack }) => {
@@ -38,7 +38,7 @@ test("settings set in the editor are published, read back, reopened and run on a
     body: JSON.stringify({ name: "Settings ok", endpoint: `${stack.mcpUrl}/ok`, auth_env: "MCP_TOKEN_TEST", enabled: true }),
   });
   await api(stack, `/mcp-servers/${server.data.id}/validate`, { method: "POST" });
-  await api(stack, "/flows", {
+  await api(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({ name: NAME, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }) } }),
   });
@@ -117,7 +117,7 @@ test("settings set in the editor are published, read back, reopened and run on a
 // No call: the echo stack has a placeholder ElevenLabs key only (server tests pin the call path).
 const EL_NAME = "E2E Voice Settings";
 test("ElevenLabs voice settings are saved, published and shown again after a reload", async ({ page, stack }) => {
-  await api(stack, "/flows", {
+  await api(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({ name: EL_NAME, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You help." }), tts: { provider: "elevenlabs", voice: "v" } } }),
   });
@@ -131,7 +131,7 @@ test("ElevenLabs voice settings are saved, published and shown again after a rel
   await page.getByRole("button", { name: "Publish", exact: true }).click();
   await page.getByRole("button", { name: "Publish v2" }).click();
   const read = async () => {
-    const f = (await api<{ data: Flow[] }>(stack, "/flows")).data.find((x) => x.name === EL_NAME)!.current_version;
+    const f = (await api<{ data: Flow[] }>(stack, "/agents")).data.find((x) => x.name === EL_NAME)!.current_version;
     return f.number === 2 ? (f.config as unknown as { tts?: { voice_settings?: object } }).tts?.voice_settings : undefined;
   };
   await expect.poll(read).toEqual({ stability: 0.4, similarity_boost: 0.8, style: 0.2, speed: 1.1 });

@@ -40,7 +40,7 @@ func agentConfig(p Profile) map[string]any {
 // provision creates the standard flow and, with mcpURL set, attaches the get_time tool.
 // It returns the flow id.
 func (s *server) provision(p Profile, mcpURL string) (string, error) {
-	fl, err := s.id("flows", map[string]any{"name": "Live Check", "description": "livecheck " + p.Name, "config": agentConfig(p)})
+	fl, err := s.id("agents", map[string]any{"name": "Live Check", "description": "livecheck " + p.Name, "config": agentConfig(p)})
 	if err != nil {
 		return "", err
 	}
@@ -116,13 +116,13 @@ func handoffAgentConfig(p Profile) map[string]any {
 			{"id": "front", "name": "Front desk", "config": front},
 			{"id": "sales", "name": "Sales", "config": sales},
 		},
-		"routes": []map[string]any{{"id": "e1", "from": "front", "to": "sales", "condition": "The caller wants to buy a car or asks about prices."}},
+		"handoffs": []map[string]any{{"id": "e1", "from": "front", "to": "sales", "condition": "The caller wants to buy a car or asks about prices."}},
 	}
 }
 
 // provisionFlow creates the two-step flow for S14 and returns its id.
 func (s *server) provisionAgent(p Profile) (string, error) {
-	return s.id("flows", map[string]any{"name": "Live Check Graph", "description": "livecheck graph " + p.Name, "config": handoffAgentConfig(p)})
+	return s.id("agents", map[string]any{"name": "Live Check Graph", "description": "livecheck graph " + p.Name, "config": handoffAgentConfig(p)})
 }
 
 // brokenSecret keeps a key's length and prefix but changes its last characters, so the provider
@@ -140,7 +140,7 @@ func (s *server) provisionFailover(p Profile) (string, error) {
 	if na != "" {
 		return "", errors.New(na)
 	}
-	return s.id("flows", map[string]any{"name": "Live Check Failover", "description": "livecheck failover " + p.Name, "config": failoverConfig(p, prov, model)})
+	return s.id("agents", map[string]any{"name": "Live Check Failover", "description": "livecheck failover " + p.Name, "config": failoverConfig(p, prov, model)})
 }
 
 // attachTool registers the MCP server, discovers its tools and selects get_time for the flow.
@@ -169,7 +169,7 @@ func (s *server) attachTool(fl, url string) error {
 	}
 	for _, t := range detail.Discovery.Tools {
 		if t.RemoteName == toolName {
-			cur, err := s.st.Call("GET", "flows/"+fl, nil)
+			cur, err := s.st.Call("GET", "agents/"+fl, nil)
 			if err != nil {
 				return err
 			}
@@ -179,7 +179,7 @@ func (s *server) attachTool(fl, url string) error {
 			if err := json.Unmarshal(cur, &agent); err != nil {
 				return err
 			}
-			_, err = s.st.Call("PUT", "flows/"+fl, map[string]any{"config": agent.CurrentVersion.Config, "mcp_tools": []map[string]any{
+			_, err = s.st.Call("PUT", "agents/"+fl, map[string]any{"config": agent.CurrentVersion.Config, "mcp_tools": []map[string]any{
 				{"mcp_server_id": srv, "remote_name": toolName, "schema_hash": t.SchemaHash, "required": true}}})
 			return err
 		}

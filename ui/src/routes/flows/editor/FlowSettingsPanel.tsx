@@ -51,7 +51,7 @@ export function FlowSettingsPanel({ graph, providers, serverConfig, name, descri
   const advancedSet = (["vad_stop_ms", "stt_p99_ms", "context", "audio", "turn", "failover", "max_call_duration_seconds"] as const).filter((k) => k in cfg).length +
     (tts.clean_text === false ? 1 : 0) +
     (Object.keys(rec(cfg.idle)).some((k) => k !== "user_timeout_ms") ? 1 : 0) +
-    (graph.route_cue && graph.routes.length > 0 ? 1 : 0);
+    (graph.handoff_cue && graph.handoffs.length > 0 ? 1 : 0);
   const [open, setOpen] = useState(advancedSet > 0);
   // Everything but the essentials' own messages belongs to a field inside Advanced.
   const advancedProblem = problems.some((p) => !/^(Choose |Confirm that callers)/.test(p));
@@ -62,7 +62,7 @@ export function FlowSettingsPanel({ graph, providers, serverConfig, name, descri
   const summary = rec(context.summarization);
   const setSummary = (key: string, value: unknown) => setContext({ ...context, summarization: value === null ? without(summary, key) : { ...summary, [key]: value } });
   const setContext = (next: Rec) => setKey("context", Object.keys(next).length ? next : null);
-  const cue = graph.route_cue;
+  const cue = graph.handoff_cue;
   const cueNames = serverConfig?.audio.cues ?? [];
   const cueUnknown = cue !== undefined && cue.name !== "" && !cueNames.includes(cue.name);
   const limitMaxS = serverConfig ? Math.min(CALL_LIMIT_RANGE_S[1], serverConfig.max_call_duration_seconds) : CALL_LIMIT_RANGE_S[1];
@@ -350,7 +350,7 @@ export function FlowSettingsPanel({ graph, providers, serverConfig, name, descri
               </>
             )}
           </fieldset>
-      {graph.routes.length > 0 && (
+      {graph.handoffs.length > 0 && (
         <fieldset className="stage-box">
           <legend>Route sound</legend>
           <p className="subtext">Plays while the caller moves between steps. The sounds are the ones set up on the server (audio.cues).</p>
@@ -362,8 +362,8 @@ export function FlowSettingsPanel({ graph, providers, serverConfig, name, descri
                 value={cue?.name ?? ""}
                 onChange={(e) => {
                   const v = e.target.value;
-                  const { route_cue: _drop, ...rest } = graph;
-                  onChange(v ? { ...rest, route_cue: { ...(cue ?? {}), name: v } } : rest);
+                  const { handoff_cue: _drop, ...rest } = graph;
+                  onChange(v ? { ...rest, handoff_cue: { ...(cue ?? {}), name: v } } : rest);
                 }}
               >
                 <option value="">None</option>
@@ -387,12 +387,12 @@ export function FlowSettingsPanel({ graph, providers, serverConfig, name, descri
                 onChange={(e) => {
                   if (!cue) return;
                   const n = numberOrNothing(e.target.value);
-                  onChange({ ...graph, route_cue: { name: cue.name, ...(n && n > 0 ? { after_ms: n } : {}) } });
+                  onChange({ ...graph, handoff_cue: { name: cue.name, ...(n && n > 0 ? { after_ms: n } : {}) } });
                 }}
               />
             </label>
           </div>
-          <SettingHelp id="route_cue" />
+          <SettingHelp id="handoff_cue" />
         </fieldset>
       )}
         </details>

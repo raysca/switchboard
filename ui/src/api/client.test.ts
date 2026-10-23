@@ -83,7 +83,7 @@ describe("management client", () => {
         "Content-Type": "application/json",
       });
       expect(init?.body).toBe(
-        JSON.stringify({ principal: "operator-1", flow_id: "agent-1" }),
+        JSON.stringify({ principal: "operator-1", agent_id: "agent-1" }),
       );
       return new Response(
         JSON.stringify({
@@ -99,7 +99,7 @@ describe("management client", () => {
     const token = await createApiClient(
       () => ({ key: "management-key", generation: 1 }),
       fetcher,
-    ).issueVoiceToken({ principal: "operator-1", flow_id: "agent-1" });
+    ).issueVoiceToken({ principal: "operator-1", agent_id: "agent-1" });
     expect(token.scope).toBe("voice:connect");
     expect(fetcher).toHaveBeenCalledWith(
       "/api/v1/voice-tokens",
@@ -117,9 +117,9 @@ describe("management client", () => {
       );
     });
     const api = createApiClient(() => ({ key: "k", generation: 1 }), fetcher);
-    await api.issueVoiceToken({ principal: "p", flow_id: "f", draft: { config: { a: 1 } } });
-    await api.issueVoiceToken({ principal: "p", flow_id: "f" });
-    expect(JSON.parse(bodies[0])).toEqual({ principal: "p", flow_id: "f", draft: { config: { a: 1 } } });
+    await api.issueVoiceToken({ principal: "p", agent_id: "f", draft: { config: { a: 1 } } });
+    await api.issueVoiceToken({ principal: "p", agent_id: "f" });
+    expect(JSON.parse(bodies[0])).toEqual({ principal: "p", agent_id: "f", draft: { config: { a: 1 } } });
     expect(JSON.parse(bodies[1])).not.toHaveProperty("draft");
   });
 
@@ -152,7 +152,7 @@ describe("management client", () => {
     const tools = [{ mcp_server_id: "crm", remote_name: "echo", schema_hash: "h", required: false }];
     await api.updateFlow("f", { config: { a: 1 }, mcp_tools: tools });
     await api.createFlow({ name: "n", description: "", config: { a: 1 }, mcp_tools: tools });
-    await api.issueVoiceToken({ principal: "p", flow_id: "f", draft: { config: { a: 1 }, mcp_tools: tools } });
+    await api.issueVoiceToken({ principal: "p", agent_id: "f", draft: { config: { a: 1 }, mcp_tools: tools } });
     expect(bodies.map((b) => b.mcp_tools ?? (b.draft as { mcp_tools?: unknown }).mcp_tools)).toEqual([tools, tools, tools]);
   });
 
@@ -298,7 +298,7 @@ describe("management client", () => {
 
       const flows = await client.getFlows();
       expect(flows).toHaveLength(1);
-      expect(fetcher).toHaveBeenLastCalledWith("/api/v1/flows?limit=100&offset=0", expect.any(Object));
+      expect(fetcher).toHaveBeenLastCalledWith("/api/v1/agents?limit=100&offset=0", expect.any(Object));
 
       const created = await client.createFlow({
         name: "Customer Support",
@@ -408,8 +408,8 @@ describe("management client", () => {
     it("handles sessions and traces query operations", async () => {
       const mockSession = {
         id: "sess-1",
-        flow_id: "agent-1",
-        flow_version_id: "ver-1",
+        agent_id: "agent-1",
+        agent_version_id: "ver-1",
         config_hash: "chash123",
         started_at: "2026-10-05T12:00:00Z",
         status: "completed",
@@ -467,9 +467,9 @@ describe("management client", () => {
         fetcher,
       );
 
-      const sessions = await client.getSessions({ limit: 10, offset: 0, status: "completed", flow_id: "agent-1" });
+      const sessions = await client.getSessions({ limit: 10, offset: 0, status: "completed", agent_id: "agent-1" });
       expect(sessions).toHaveLength(1);
-      expect(fetcher).toHaveBeenCalledWith("/api/v1/sessions?limit=10&offset=0&status=completed&flow_id=agent-1", expect.any(Object));
+      expect(fetcher).toHaveBeenCalledWith("/api/v1/sessions?limit=10&offset=0&status=completed&agent_id=agent-1", expect.any(Object));
 
       const single = await client.getSession("sess-1");
       expect(single.id).toBe("sess-1");
@@ -542,18 +542,18 @@ describe("demo", () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { dental: { available: true, installed: false } } }), { status: 200 }))
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ data: { mcp_server_id: "m", mcp_created: true, tools: 7, flow_id: "f", flow_created: true } }), { status: 200 }),
+        new Response(JSON.stringify({ data: { mcp_server_id: "m", mcp_created: true, tools: 7, agent_id: "f", agent_created: true } }), { status: 200 }),
       );
     const client = createApiClient(() => ({ key: "test-key", generation: 1 }), fetcher);
     expect((await client.getDemo()).dental.available).toBe(true);
-    expect((await client.installDentalDemo()).flow_id).toBe("f");
+    expect((await client.installDentalDemo()).agent_id).toBe("f");
     expect(fetcher.mock.calls[1][0]).toBe("/api/v1/demo/dental");
     expect((fetcher.mock.calls[1][1] as RequestInit).method).toBe("POST");
   });
 });
 
 describe("session draft flag", () => {
-  const base = { id: "s1", flow_id: "f1", flow_version_id: "v1", config_hash: "h", started_at: "2026-10-14T10:00:00Z", status: "ended", turn_count: 0 };
+  const base = { id: "s1", agent_id: "f1", agent_version_id: "v1", config_hash: "h", started_at: "2026-10-14T10:00:00Z", status: "ended", turn_count: 0 };
   it("is false when an older server leaves it out, and true when set", () => {
     expect(sessionSchema.parse(base).draft).toBe(false);
     expect(sessionSchema.parse({ ...base, draft: true }).draft).toBe(true);
@@ -633,7 +633,7 @@ describe("getFlows follows the server's pages", () => {
   it("reads a second page when the first is full", async () => {
     const { fetcher, client } = clientFor((o) => ok(o === 0 ? ids(0, 100) : ids(100, 1)));
     await expect(client.getFlows()).resolves.toHaveLength(101);
-    expect(urls(fetcher)).toEqual(["/api/v1/flows?limit=100&offset=0", "/api/v1/flows?limit=100&offset=100"]);
+    expect(urls(fetcher)).toEqual(["/api/v1/agents?limit=100&offset=0", "/api/v1/agents?limit=100&offset=100"]);
   });
 
   it("asks once more after exactly 100 flows, and gets an empty page", async () => {

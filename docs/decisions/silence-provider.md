@@ -6,7 +6,7 @@ no speech stages works end to end.
 ## Problem
 
 A flow must name a speech-to-text provider, a model and a text-to-speech voice before it can take calls
-(`missing_stt`, `missing_tts`, `flow_not_attached`). A client that listens and speaks in the browser (the
+(`missing_stt`, `missing_tts`, `agent_not_attached`). A client that listens and speaks in the browser (the
 Web Speech API, a screen reader, a chat widget) sends typed turns (RTVI `send-text`) and renders the reply
 text (`bot-llm-text`); it has no use for server-side speech, but the flow cannot be ready without it.
 

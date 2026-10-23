@@ -11,7 +11,7 @@ const INDEX = path.join(__dirname, 'index.html');
 // and the browser never sees the key.
 const ADMIN_URL = process.env.GOVOICE_ADMIN_URL || 'http://127.0.0.1:9090';
 const WS_URL = process.env.GOVOICE_WS_URL || 'ws://127.0.0.1:8080/ws';
-const FLOW_ID = process.env.GOVOICE_FLOW_ID || '';
+const AGENT_ID = process.env.GOVOICE_AGENT_ID || '';
 const SERVER_KEY = process.env.GOVOICE_MANAGEMENT_API_KEY || '';
 // DNS rebinding guard: a hostile name resolving to 127.0.0.1 is same-origin with
 // itself, so the Origin check alone cannot stop it; the Host header can.
@@ -23,7 +23,7 @@ function sendJson(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
-// POST /api/voice-token {adminUrl, managementKey, flowId, principal?}
+// POST /api/voice-token {adminUrl, managementKey, agentId, principal?}
 // Relays to {adminUrl}/api/v1/voice-tokens so the browser needs no CORS on the
 // admin API. The management key comes from the page and is never stored here.
 async function proxyVoiceToken(req, res) {
@@ -47,7 +47,7 @@ async function proxyVoiceToken(req, res) {
   } catch {
     return sendJson(res, 400, { error: { code: 'invalid_json', message: 'request body must be JSON' } });
   }
-  let { adminUrl, managementKey, flowId } = input || {};
+  let { adminUrl, managementKey, agentId } = input || {};
   if (!managementKey && SERVER_KEY) {
     managementKey = SERVER_KEY;
     adminUrl = ADMIN_URL; // the server's key goes to the configured admin API only
@@ -60,14 +60,14 @@ async function proxyVoiceToken(req, res) {
   } catch {
     return sendJson(res, 400, { error: { code: 'invalid_admin_url', message: 'Admin URL must be an http(s) URL' } });
   }
-  if (!managementKey || !flowId) {
-    return sendJson(res, 400, { error: { code: 'missing_fields', message: 'Management key and Flow ID are required' } });
+  if (!managementKey || !agentId) {
+    return sendJson(res, 400, { error: { code: 'missing_fields', message: 'Management key and Agent ID are required' } });
   }
   try {
     const upstream = await fetch(target, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${managementKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ principal, flow_id: flowId })
+      body: JSON.stringify({ principal, agent_id: agentId })
     });
     const text = await upstream.text();
     res.writeHead(upstream.status, { 'Content-Type': 'application/json' });
@@ -84,7 +84,7 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
   if (url.pathname === '/api/defaults') {
-    return sendJson(res, 200, { adminUrl: ADMIN_URL, wsUrl: WS_URL, flowId: FLOW_ID, serverKey: Boolean(SERVER_KEY) });
+    return sendJson(res, 200, { adminUrl: ADMIN_URL, wsUrl: WS_URL, agentId: AGENT_ID, serverKey: Boolean(SERVER_KEY) });
   }
 
   if (url.pathname === '/api/voice-token') {

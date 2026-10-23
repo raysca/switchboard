@@ -19,8 +19,8 @@ const session = (over: Partial<SessionDTO>): SessionDTO => ({
   caller: "",
   end_reason: "",
   id: "s",
-  flow_id: "a1",
-  flow_version_id: "v2",
+  agent_id: "a1",
+  agent_version_id: "v2",
   config_hash: "h",
   started_at: "",
   status: "active",
@@ -32,7 +32,7 @@ const session = (over: Partial<SessionDTO>): SessionDTO => ({
 describe("flow figures", () => {
   it("counts steps, routes and tools; a flat config is one step", () => {
     expect(stepCount(flow())).toBe(1);
-    const graph = flow({}, { start: "a", steps: [{ id: "a" }, { id: "b" }, { id: "c" }], routes: [{ id: "e1" }, { id: "e2" }] });
+    const graph = flow({}, { start: "a", steps: [{ id: "a" }, { id: "b" }, { id: "c" }], handoffs: [{ id: "e1" }, { id: "e2" }] });
     expect([stepCount(graph), routeCount(graph)]).toEqual([3, 2]);
     expect(routeCount(flow())).toBe(0);
     const withTools = flow();
@@ -59,10 +59,10 @@ describe("flow figures", () => {
   it("counts a flow's active calls and the ones still on an earlier version", () => {
     const sessions = [
       session({ id: "1" }),
-      session({ id: "2", flow_version_id: "v1" }),
-      session({ id: "3", flow_version_id: "v1" }),
-      session({ id: "4", flow_id: "other", flow_version_id: "v1" }),
-      session({ id: "5", status: "completed", flow_version_id: "v1" }),
+      session({ id: "2", agent_version_id: "v1" }),
+      session({ id: "3", agent_version_id: "v1" }),
+      session({ id: "4", agent_id: "other", agent_version_id: "v1" }),
+      session({ id: "5", status: "completed", agent_version_id: "v1" }),
     ];
     expect(liveCalls(sessions, flow())).toEqual({ live: 3, onOlderVersion: 2 });
     expect(liveCalls([], flow())).toEqual({ live: 0, onOlderVersion: 0 });
@@ -71,7 +71,7 @@ describe("flow figures", () => {
 
 describe("reasonText", () => {
   it("words the codes it knows and keeps any other raw", () => {
-    expect(reasonText("smart_turn_unavailable")).toBe("Smart end-of-turn needs turn.analyzer.for_flows on this server");
+    expect(reasonText("smart_turn_unavailable")).toBe("Smart end-of-turn needs turn.analyzer.for_agents on this server");
     expect(reasonText("missing_credential_llm")).toBe("missing_credential_llm");
   });
 });

@@ -276,8 +276,8 @@ describe("FlowVoiceTest", () => {
 
     expect(client.issueVoiceToken).toHaveBeenCalledWith(
       expect.objectContaining({
-        principal: "flow-test-agent-alpha",
-        flow_id: "agent-alpha",
+        principal: "agent-test-agent-alpha",
+        agent_id: "agent-alpha",
       }),
     );
 
@@ -673,7 +673,7 @@ describe("FlowVoiceTest", () => {
     expect(screen.getByText("Testing draft (based on v1)")).toBeVisible();
     await userEvent.setup().click(screen.getByTestId("start-voice-test-btn"));
     await waitFor(() => expect(MockWebSocket.instances.length).toBe(1));
-    expect(client.issueVoiceToken).toHaveBeenCalledWith(expect.objectContaining({ flow_id: v1.id, draft }));
+    expect(client.issueVoiceToken).toHaveBeenCalledWith(expect.objectContaining({ agent_id: v1.id, draft }));
     rerender(ui(v2));
     expect(screen.queryByText(/this call is on v/i)).toBeNull();
   });
@@ -711,7 +711,7 @@ describe("FlowVoiceTest", () => {
           { id: "front", name: "Front desk", config: { stt: { provider: "silence", model: "text" }, llm: { provider: "echo", model: "m" }, tts: { provider: "silence", voice: "none" } } },
           { id: "sales", name: "Sales", config: { llm: { provider: "echo", model: "m" }, tts: { provider: "echo", voice: "v" } } },
         ],
-        routes: [{ id: "e1", from: "front", to: "sales", condition: "buy" }],
+        handoffs: [{ id: "e1", from: "front", to: "sales", condition: "buy" }],
       },
     };
     const audio = new BrowserAudioController();

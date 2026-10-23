@@ -27,7 +27,7 @@ export async function mcpFlow(stack: Stack, flow: string, path: string, tools: s
   await api(stack, `/mcp-servers/${id}/validate`, { method: "POST" });
   const detail = await api<{ data: { discovery: { tools: { remote_name: string; schema_hash: string }[] } } }>(stack, `/mcp-servers/${id}`);
   const hash = (name: string) => detail.data.discovery.tools.find((t) => t.remote_name === name)!.schema_hash;
-  await api(stack, "/flows", {
+  await api(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({
       name: flow,

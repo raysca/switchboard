@@ -8,7 +8,7 @@ export function stepCount(a: FlowDTO): number {
 }
 
 export function routeCount(a: FlowDTO): number {
-  const routes = a.current_version?.config?.routes;
+  const routes = a.current_version?.config?.handoffs;
   return Array.isArray(routes) ? routes.length : 0;
 }
 
@@ -42,13 +42,13 @@ type LiveCalls = { live: number; onOlderVersion: number };
 
 /** A flow's calls in progress, and how many started on a version that is no longer current. */
 export function liveCalls(sessions: SessionDTO[], a: FlowDTO): LiveCalls {
-  const mine = sessions.filter((s) => s.status === "active" && s.flow_id === a.id);
+  const mine = sessions.filter((s) => s.status === "active" && s.agent_id === a.id);
   const current = a.current_version?.id;
-  return { live: mine.length, onOlderVersion: mine.filter((s) => s.flow_version_id !== current).length };
+  return { live: mine.length, onOlderVersion: mine.filter((s) => s.agent_version_id !== current).length };
 }
 
 const REASON_TEXT: Record<string, string> = {
-  smart_turn_unavailable: "Smart end-of-turn needs turn.analyzer.for_flows on this server",
+  smart_turn_unavailable: "Smart end-of-turn needs turn.analyzer.for_agents on this server",
   idle_timeout_too_short: "The silence wait is shorter than the DTMF window",
 };
 
