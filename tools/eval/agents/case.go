@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 
@@ -58,15 +59,19 @@ const (
 
 var toolStatuses = []string{"succeeded", "failed", "cancelled"}
 
-// LoadCases reads every *.yaml in dir (sorted by file name), refusing unknown keys and
+// LoadCases reads every *.yaml and *.yml in dir (sorted by file name), refusing unknown keys and
 // duplicate case names. only, when non-empty, keeps the named cases and refuses an unknown name.
 func LoadCases(dir string, only []string) ([]Case, error) {
-	files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
-	if err != nil {
-		return nil, err
+	var files []string
+	for _, pat := range []string{"*.yaml", "*.yml"} {
+		fs, err := filepath.Glob(filepath.Join(dir, pat))
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, fs...)
 	}
 	if len(files) == 0 {
-		return nil, fmt.Errorf("no *.yaml case files in %s", dir)
+		return nil, fmt.Errorf("no *.yaml or *.yml case files in %s", dir)
 	}
 	slices.Sort(files)
 	var cases []Case
@@ -108,6 +113,9 @@ func loadCase(path string) (Case, error) {
 		}
 		return Case{}, fmt.Errorf("%s: %w", path, err)
 	}
+	if err := dec.Decode(&yaml.Node{}); !errors.Is(err, io.EOF) {
+		return Case{}, fmt.Errorf("%s: one case per file", path)
+	}
 	c.File = path
 	if err := c.validate(); err != nil {
 		return Case{}, fmt.Errorf("%s: %w", path, err)
@@ -122,8 +130,11 @@ func (c *Case) validate() error {
 	if strings.TrimSpace(c.Agent) == "" {
 		return errors.New("agent: required")
 	}
+	if strings.ContainsAny(c.Agent, `/\`) || strings.Contains(c.Agent, "..") {
+		return fmt.Errorf("agent: %q must be an agent name or id (no path separators or \"..\")", c.Agent)
+	}
 	switch s, p := c.Caller.Script, c.Caller.Persona; {
-	case len(s) > 0 && p != nil:
+	case s != nil && p != nil:
 		return errors.New("caller: set exactly one of script or persona, not both")
 	case len(s) == 0 && p == nil:
 		return errors.New("caller: set exactly one of script or persona")
@@ -141,8 +152,8 @@ func (c *Case) validate() error {
 		}
 	}
 	for i, l := range c.Caller.Script {
-		if n := len(l); n < 1 || n > maxLineLen {
-			return fmt.Errorf("caller.script[%d]: %d chars, want 1..%d", i, n, maxLineLen)
+		if n := utf8.RuneCountInString(l); strings.TrimSpace(l) == "" || n > maxLineLen {
+			return fmt.Errorf("caller.script[%d]: %d chars, want 1..%d and not blank", i, n, maxLineLen)
 		}
 	}
 	e := c.Expect
@@ -151,6 +162,9 @@ func (c *Case) validate() error {
 		pats  []string
 	}{{"expect.say", e.Say}, {"expect.never_say", e.NeverSay}} {
 		for i, p := range k.pats {
+			if p == "" {
+				return fmt.Errorf("%s[%d]: empty pattern", k.field, i)
+			}
 			if _, err := regexp.Compile(p); err != nil {
 				return fmt.Errorf("%s[%d]: %w", k.field, i, err)
 			}
@@ -159,10 +173,20 @@ func (c *Case) validate() error {
 	if e.EndReason != "" && !slices.Contains(storage.EndReasons, e.EndReason) {
 		return fmt.Errorf("expect.end_reason: %q, want one of %s", e.EndReason, strings.Join(storage.EndReasons, ", "))
 	}
-	for i, t := range e.ToolsCalled {
-		name, status, has := strings.Cut(t, ":")
-		if name == "" || (has && !slices.Contains(toolStatuses, status)) {
-			return fmt.Errorf("expect.tools_called[%d]: %q, want name or name:%s", i, t, strings.Join(toolStatuses, "|"))
+	for _, k := range []struct {
+		field string
+		tools []string
+	}{{"expect.tools_called", e.ToolsCalled}, {"expect.tools_not_called", e.ToolsNotCalled}} {
+		for i, t := range k.tools {
+			name, status, has := strings.Cut(t, ":")
+			if name == "" || (has && !slices.Contains(toolStatuses, status)) {
+				return fmt.Errorf("%s[%d]: %q, want name or name:%s", k.field, i, t, strings.Join(toolStatuses, "|"))
+			}
+		}
+	}
+	for i, p := range e.Path {
+		if strings.TrimSpace(p) == "" {
+			return fmt.Errorf("expect.path[%d]: empty step", i)
 		}
 	}
 	if e.MaxTurns < 0 || e.MedianReplyMSMax < 0 {
