@@ -1,0 +1,30 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "switchboard-voice-demo",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-23",
+  "observability": { "enabled": true },
+  "containers": [
+    {
+      "class_name": "SwitchboardContainer",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "base": {
+          "dockerfile": "../../deploy/Dockerfile",
+          "build_context": "../.."
+        }
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "SWITCHBOARD", "class_name": "SwitchboardContainer" }
+    ]
+  },
+  "exports": {
+    "SwitchboardContainer": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  }
+}

@@ -1,0 +1,93 @@
+# Cloudflare Containers demo: one Worker-routed container, one SQLite store, short test calls.
+# The Worker is the only ingress and overwrites forwarding headers from Cloudflare request metadata.
+profile: production
+
+public_listen_addr: "0.0.0.0:8080"
+admin_listen_addr: "127.0.0.1:9090"
+probe_listen_addr: ""
+
+public_admin:
+  enabled: true
+
+tls:
+  cert_file: ""
+  key_file: ""
+  trusted_proxy_mode: true
+  # Container ingress is only reachable through the bound Durable Object. The Worker canonicalizes
+  # X-Forwarded-For and X-Forwarded-Proto before forwarding, so trust applies to that internal hop.
+  trusted_proxies:
+    - "0.0.0.0/0"
+    - "::/0"
+
+# The Worker enforces same-origin browser requests before proxying. The internal container request
+# uses a platform host, so server-side same-host checks cannot compare against the browser hostname.
+origin_allow_same_host: false
+origin_allowlist:
+  - "*"
+
+token:
+  secret_env: "TOKEN_SECRET"
+  issuer: "govoice-v1"
+  audience: "govoice-v1-client"
+  max_lifetime: 1m
+  clock_skew: 30s
+  replay_cache_limit: 5000
+  key_id: "v1"
+
+limits:
+  max_pending_handshakes: 5
+  max_sessions: 2
+  max_sessions_per_principal: 2
+  max_sessions_per_ip: 2
+  upgrade_timeout: 5s
+  ready_timeout: 10s
+  max_call_duration: 10m
+  idle_timeout: 30s
+  ping_interval: 15s
+  ping_timeout: 10s
+  drain_timeout: 30s
+  immediate_cancel: false
+
+vad:
+  mode: "process"
+  workers: 2
+  batch: 8
+  model_path: "/opt/govoice/models/silero_vad.onnx"
+  ort_lib_path: "/opt/govoice/lib/libonnxruntime.so"
+  queue_cap: 512
+  stop_ms: 200
+
+providers:
+  google_stt:
+    project_id: ""
+    location: "us-central1"
+    rotation_threshold: 240s
+  google_tts:
+    sample_rate: 24000
+  xai_llm:
+    endpoint: "https://api.x.ai/v1/responses"
+
+observability:
+  log_level: "info"
+  json_format: true
+  timeline_max_events: 500
+  timeline_ttl: 10m
+
+storage:
+  dialect: "sqlite"
+
+retention:
+  enabled: true
+  interval: 1h
+  content_retention_days: 1
+  metadata_retention_days: 1
+  batch_size: 100
+
+warmup:
+  enabled: true
+  predial: false
+  on_start: false
+
+idle:
+  user_timeout: 30s
+  max_prompts: 2

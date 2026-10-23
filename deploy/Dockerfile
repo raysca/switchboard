@@ -89,10 +89,11 @@ COPY --from=builder /src/third_party/silero_vad.onnx /opt/govoice/models/silero_
 COPY --from=builder /src/config/production.yaml /etc/govoice/production.yaml
 COPY --from=builder /src/config/cloudrun.yaml /etc/govoice/cloudrun.yaml
 COPY --from=builder /src/config/cloudrun-sqlite.yaml /etc/govoice/cloudrun-sqlite.yaml
+COPY --from=builder /src/config/cloudflare-demo.yaml /etc/govoice/cloudflare-demo.yaml
 
 RUN chown -R govoice:govoice /opt/govoice /etc/govoice && \
     chmod 755 /opt/govoice/bin/server /opt/govoice/bin/vadworker /opt/govoice/bin/turnworker && \
-    chmod 644 /opt/govoice/third_party/silero_vad.onnx /opt/govoice/third_party/smart_turn_v3.2_cpu.onnx /opt/govoice/models/silero_vad.onnx /etc/govoice/production.yaml /etc/govoice/cloudrun.yaml /etc/govoice/cloudrun-sqlite.yaml /opt/govoice/lib/libonnxruntime.so
+    chmod 644 /opt/govoice/third_party/silero_vad.onnx /opt/govoice/third_party/smart_turn_v3.2_cpu.onnx /opt/govoice/models/silero_vad.onnx /etc/govoice/production.yaml /etc/govoice/cloudrun.yaml /etc/govoice/cloudrun-sqlite.yaml /etc/govoice/cloudflare-demo.yaml /opt/govoice/lib/libonnxruntime.so
 
 RUN mkdir -p /tmp /var/log/govoice && \
     chown -R govoice:govoice /tmp /var/log/govoice && \
