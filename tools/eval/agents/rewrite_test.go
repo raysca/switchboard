@@ -4,13 +4,15 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
+
+	"govoice/server/agent"
 )
 
 const flatAgent = `{"stt":{"provider":"google","model":"chirp_2","language":"fr-FR","fallbacks":[{"provider":"deepgram","model":"nova"}]},
 "llm":{"provider":"google","model":"gemini","system_prompt":"Be brief.","temperature":0.3,"max_output_tokens":200,
  "fallbacks":[{"provider":"xai","model":"grok"}]},
 "tts":{"provider":"elevenlabs","voice":"v1","fallbacks":[{"provider":"google","voice":"x"}]},
-"end_call":true,"tools":["a/b"]}`
+"idle":{"user_timeout_ms":10000,"max_prompts":2},"greeting":"Hello there."}`
 
 const deskAgent = `{"start":"front","steps":[
  {"id":"front","name":"Front desk","config":{"stt":{"provider":"google","model":"chirp_2"},"llm":{"provider":"google","model":"m","system_prompt":"front prompt"},"tts":{"provider":"google","voice":"a"}},"position":{"x":0,"y":80}},
@@ -63,9 +65,7 @@ func TestRewriteFlat(t *testing.T) {
 	for _, k := range []string{"system_prompt", "temperature", "max_output_tokens"} {
 		eq(t, "llm."+k, llm[k], ol[k])
 	}
-	for _, k := range []string{"end_call", "tools"} {
-		eq(t, k, got[k], orig[k])
-	}
+	eq(t, "greeting", got["greeting"], orig["greeting"])
 	if e := rewritten(t, flatAgent, modeEcho)["llm"].(map[string]any); e["provider"] != "echo" || e["model"] != "fake" {
 		t.Errorf("echo llm = %v", e)
 	}
@@ -131,7 +131,7 @@ func TestNeedsLive(t *testing.T) {
 		{"google", `{"llm":{"provider":"google","model":"m"}}`, true},
 		{"xai step", deskAgent, true},
 		{"offline plus google fallback", `{"llm":{"provider":"offline","model":"m","fallbacks":[{"provider":"google","model":"m"}]}}`, true},
-		{"step fallback", `{"steps":[{"id":"a","config":{"llm":{"provider":"echo","model":"f","fallbacks":[{"provider":"xai","model":"g"}]}}}]}`, true},
+		{"step fallback", `{"start":"a","steps":[{"id":"a","name":"A","config":{"llm":{"provider":"echo","model":"f","fallbacks":[{"provider":"xai","model":"g"}]}}}]}`, true},
 		{"garbage", `nope`, true},
 	} {
 		if got := NeedsLive(json.RawMessage(tc.cfg)); got != tc.want {
@@ -147,5 +147,87 @@ func TestNeedsLive(t *testing.T) {
 	out, _ := Rewrite(json.RawMessage(dentalAgent), modeKeep)
 	if !NeedsLive(out) {
 		t.Error("keep-mode dental agent must need live")
+	}
+}
+
+// mixedCaseAgent is accepted by the server (encoding/json matches keys case-insensitively).
+const mixedCaseAgent = `{"STT":{"Provider":"google","Model":"chirp_2","Language":"fr-FR","Fallbacks":[{"provider":"deepgram","model":"nova"}]},
+"LLM":{"PROVIDER":"google","model":"gemini","System_Prompt":"Be brief.","Fallbacks":[{"provider":"xai","model":"grok"}]},
+"Tts":{"provider":"elevenlabs","Voice":"v1"},"Idle":{"user_timeout_ms":10000,"max_prompts":2}}`
+
+const mixedCaseDesk = `{"start":"front","steps":[
+ {"id":"front","name":"Front desk","Config":{"STT":{"provider":"google","model":"m"},"LLM":{"provider":"google","model":"m"},"TTS":{"provider":"google","voice":"a"},"Idle":{"user_timeout_ms":10000,"max_prompts":2}}},
+ {"id":"sales","name":"Sales","CONFIG":{"llm":{"provider":"xai","model":"g"},"tts":{"provider":"xai","voice":"eve"}}}],
+ "handoffs":[{"id":"h","from":"front","to":"sales","condition":"wants a car"}]}`
+
+// requireTextOnly decodes out the way the server does and fails unless every step runs text-only
+// (and, outside keep mode, on exactly the swapped model).
+func requireTextOnly(t *testing.T, name string, out json.RawMessage, mode string) {
+	t.Helper()
+	def, err := agent.Decode(out)
+	if err != nil {
+		t.Fatalf("%s/%s: server rejects the rewritten config: %v", name, mode, err)
+	}
+	for _, s := range def.Steps {
+		c := s.Config
+		if p := c.STT.Provider; p != "" && p != "silence" {
+			t.Errorf("%s/%s step %s: stt %q", name, mode, s.ID, p)
+		}
+		if p := c.TTS.Provider; p != "silence" {
+			t.Errorf("%s/%s step %s: tts %q", name, mode, s.ID, p)
+		}
+		if c.Idle != nil {
+			t.Errorf("%s/%s step %s: idle kept", name, mode, s.ID)
+		}
+		if ch := c.Chain("llm"); mode != modeKeep && (len(ch) != 1 || ch[0].Provider != mode) {
+			t.Errorf("%s/%s step %s: llm chain %v", name, mode, s.ID, ch)
+		}
+	}
+}
+
+func TestRewriteOutputPassesServerDecoder(t *testing.T) {
+	for name, cfg := range map[string]string{"flat": flatAgent, "desk": deskAgent, "dental": dentalAgent, "mixed": mixedCaseAgent, "mixed-desk": mixedCaseDesk} {
+		for _, mode := range []string{modeKeep, modeOffline, modeEcho} {
+			out, err := Rewrite(json.RawMessage(cfg), mode)
+			if err != nil {
+				t.Fatalf("%s/%s: %v", name, mode, err)
+			}
+			requireTextOnly(t, name, out, mode)
+		}
+	}
+}
+
+func TestRewriteDropsIdle(t *testing.T) {
+	for _, cfg := range []string{flatAgent, mixedCaseAgent, mixedCaseDesk} {
+		in, err := agent.Decode(json.RawMessage(cfg))
+		if err != nil || in.StartStep().Config.Idle == nil {
+			t.Fatalf("fixture has no idle block: %v", err)
+		}
+		out, err := Rewrite(json.RawMessage(cfg), modeKeep)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if def, _ := agent.Decode(out); def.StartStep().Config.Idle != nil {
+			t.Errorf("idle kept: %s", out)
+		}
+	}
+}
+
+func TestRewriteRefusesConfigTheServerRejects(t *testing.T) {
+	if _, err := Rewrite(json.RawMessage(`{"llm":{"provider":"echo","model":"f"},"end_call":true}`), modeKeep); err == nil {
+		t.Error("unknown top-level key accepted")
+	}
+}
+
+func TestNeedsLiveFailsClosed(t *testing.T) {
+	for _, cfg := range []string{`{}`, `{"llm":{"provider":"google"}}`, `{"steps":[]}`, `{"LLM":{"provider":"google","model":"m"}}`,
+		`{"LLM":{"provider":"echo","model":"f","Fallbacks":[{"provider":"xai","model":"g"}]}}`,
+		`{"start":"a","steps":[{"id":"a","name":"A","Config":{"llm":{"provider":"google","model":"m"}}}]}`} {
+		if !NeedsLive(json.RawMessage(cfg)) {
+			t.Errorf("NeedsLive(%s) = false", cfg)
+		}
+	}
+	if NeedsLive(json.RawMessage(`{"LLM":{"Provider":"Echo","model":"f"}}`)) {
+		t.Error("mixed-case echo reported paid")
 	}
 }
