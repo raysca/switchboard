@@ -7,7 +7,7 @@ Status: spike works for scripted, text-modality scenarios. Not adopted for audio
 `make eval-pipecat` (`tools/eval/pipecat/run.sh`):
 
 1. Builds `cmd/server` (no tag) and runs it with the simulated `echo` provider (`providers.echo`:
-   `mimic: instant`, `stt: audio`; see `docs/providers.md`). The flow's stages are `echo.stt|llm|tts`:
+   `mimic: instant`, `stt: audio`; see `docs/providers.md`). The agent's stages are `echo.stt|llm|tts`:
    the real Google processors against simulated backends; the LLM replies "You said: <user text>".
    (This was a `-tags fakeproviders` build that replaced `google.*`; the tag no longer exists.)
    Go builds need the repo's `SDKROOT`/`CGO_LDFLAGS`, so run it through make.

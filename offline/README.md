@@ -42,7 +42,7 @@ export GOVOICE_MANAGEMENT_API_KEY="$(openssl rand -hex 32)"
 
 `make dev` also works (server, admin UI and seeded agents), but it seeds agents from the providers it detects, so open the console and check which provider each stage got. Set a stage to **Offline (local models)** to use this stack.
 
-**5. Create a flow on the `offline` provider** (in another terminal, same `GOVOICE_MANAGEMENT_API_KEY`):
+**5. Create an agent on the `offline` provider** (in another terminal, same `GOVOICE_MANAGEMENT_API_KEY`):
 
 ```bash
 ADMIN=http://127.0.0.1:9090
@@ -76,7 +76,7 @@ Expected summary (measured on Apple Silicon, CPU only):
  STT -> First Audio Out:  6381 ms
 ```
 
-For a live microphone call use `make dev` and the console's test call, or `make example-web`, with the flow above. Send a text turn instead of audio with `--text "hello"`.
+For a live microphone call use `make dev` and the console's test call, or `make example-web`, with the agent above. Send a text turn instead of audio with `--text "hello"`.
 
 **7. Stop.** `make offline-down` stops the containers and keeps the model volumes.
 
@@ -85,7 +85,7 @@ For a live microphone call use `make dev` and the console's test call, or `make 
 | Symptom | Check |
 |---|---|
 | `make offline-up` fails on `host-llm` with "Ollama is not answering" | Start Ollama (`ollama serve`, or the menu-bar app) and retry. |
-| Flow readiness is not `ready`, or `offline` is missing from `/api/v1/providers` | The server must be built with `-tags xaispeech` (`make build` does this); without it `offline` has no STT/TTS. |
+| Agent readiness is not `ready`, or `offline` is missing from `/api/v1/providers` | The server must be built with `-tags xaispeech` (`make build` does this); without it `offline` has no STT/TTS. |
 | The call connects but the bot never answers | `docker compose -f offline/compose.yaml logs adapter speaches`. The first call after a start is slow while Whisper and Kokoro load; raise `--timeout`. Check the models exist (`make offline-models`) and the LLM model is `govoice-test`. |
 | Port 8080/9090 already in use | Another server (for example a running `make dev`) owns it. Copy the config with other ports in `public_listen_addr` and `admin_listen_addr`, and pass `--admin` and `--ws` to the CLI. |
 | The bot cuts you off or never hears you | The endpointer is energy based (`OFFLINE_ENERGY_THRESHOLD`, `OFFLINE_ENDPOINT_SILENCE`); a noisy microphone needs a real VAD. |
@@ -93,7 +93,7 @@ For a live microphone call use `make dev` and the console's test call, or `make 
 
 ## The LLM
 
-`offline/Modelfile` defines `govoice-test`: `llama3.2:3b` with `temperature 0` and `seed 42`, because the adapter sends neither unless a flow sets `llm.temperature` (there is no seed setting), and repeatable flow tests need both. It was chosen because it completes a tool call and its result on `/v1/responses` (about 6 s on Apple Silicon); `gemma4` (9.6 GB) also does (about 10 s). Small models drift in wording after a tool result, so tool-dependent flow tests should assert outcomes, not wording. To try another model, change `FROM` in the Modelfile, rerun `make offline-models`, and check that a flow with a tool still calls it. Any server that implements `/v1/responses` with streaming and function calls works; only Ollama is verified.
+`offline/Modelfile` defines `govoice-test`: `llama3.2:3b` with `temperature 0` and `seed 42`, because the adapter sends neither unless an agent sets `llm.temperature` (there is no seed setting), and repeatable agent tests need both. It was chosen because it completes a tool call and its result on `/v1/responses` (about 6 s on Apple Silicon); `gemma4` (9.6 GB) also does (about 10 s). Small models drift in wording after a tool result, so tool-dependent agent tests should assert outcomes, not wording. To try another model, change `FROM` in the Modelfile, rerun `make offline-models`, and check that an agent with a tool still calls it. Any server that implements `/v1/responses` with streaming and function calls works; only Ollama is verified.
 
 ## Adapter configuration (environment)
 

@@ -10,7 +10,7 @@ docker compose -f deploy/rehearsal/docker-compose.yaml up --build -d
 GOVOICE_MANAGEMENT_API_KEY=<the value in .env> SMOKE_LOCAL=1 deploy/smoke-cloudrun.sh http://127.0.0.1:8080
 ```
 
-Open <http://localhost:8080>, enter the management key, and the "Smile Dental front desk" flow is there
+Open <http://localhost:8080>, enter the management key, and the "Smile Dental front desk" agent is there
 (installed on start; the server retries for up to a minute while the MCP server comes up). With real keys,
 make the two demo calls from the Test call panel (see `docs/demo/dentistry.md`).
 

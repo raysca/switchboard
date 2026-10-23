@@ -34,7 +34,7 @@ make build
 ```
 
 This generates:
-- `bin/server`: Config-driven voice edge server that runs stored flows
+- `bin/server`: Config-driven voice edge server that runs stored agents
 - `bin/vadworker`: Isolated child worker process for Silero VAD
 - `bin/turnworker`: Isolated child worker process for the Smart Turn model
 
@@ -44,13 +44,13 @@ To run it outside a laptop, see [deployment.md](deployment.md).
 
 ## 3. Configuration and Secrets
 
-`config/development.yaml` works as-is. YAML holds only infrastructure: listeners, TLS, limits, VAD, the token issuer, provider infrastructure (Google project/location/stream quotas, xAI endpoints) and `storage.dialect`. Models, voices and prompts belong to stored flows; provider keys belong to the environment. A `pipelines:` section is rejected at startup.
+`config/development.yaml` works as-is. YAML holds only infrastructure: listeners, TLS, limits, VAD, the token issuer, provider infrastructure (Google project/location/stream quotas, xAI endpoints) and `storage.dialect`. Models, voices and prompts belong to stored agents; provider keys belong to the environment. A `pipelines:` section is rejected at startup.
 
 The turn manager is on by default (see "Turn taking" below). Idle handling is on by default (`idle.user_timeout` 15 s, 2 prompts; `idle.user_timeout: 0s` turns it off). Other optional features (Smart Turn, DTMF, recording, OTel, redaction, audio filters, failover) are off by default and listed as commented examples at the end of `config/development.yaml`; defaults and semantics per key are in the "Default" column of [pipecat-parity-matrix.md](pipecat-parity-matrix.md).
 
 TTS streams by default. Two optional kill switches: `providers.google_tts.disable_streaming: true` serves Google voices with the unary request, and `providers.xai_tts.disable_streaming: true` does the same for xAI.
 
-The flow store is required. Set its DSN, the management API key and the provider variables:
+The agent store is required. Set its DSN, the management API key and the provider variables:
 
 In the development profile you can skip the DSN: the server then creates `.govoice-dev/switchboard.db`. Production always requires it.
 
@@ -91,7 +91,7 @@ curl http://127.0.0.1:9090/ready
 # {"circuits":{"google_llm":"closed",...},"status":"ready"}
 ```
 
-`/ready` is unready if the flow store is not enabled.
+`/ready` is unready if the agent store is not enabled.
 
 The remaining steps use the management API on the admin listener:
 
@@ -102,7 +102,7 @@ AUTH="Authorization: Bearer $GOVOICE_MANAGEMENT_API_KEY"
 
 ---
 
-## 5. Check Providers, Create a Flow, Issue a Token
+## 5. Check Providers, Create an Agent, Issue a Token
 
 ### 5a. Check which providers are available
 
@@ -112,15 +112,15 @@ curl -fsS "$ADMIN/api/v1/providers" -H "$AUTH" | jq '.data[] | {id, detected, ca
 
 A provider whose variables are not set reports each service with `"reason": "missing_env"` and the variable names in `missing_env`. Values are never returned.
 
-**No provider key yet?** To run real audio on local models with no key and no network at call time, follow [offline/README.md](../offline/README.md#run-it) and use provider `offline`. Or `echo` ("Echo (simulated)") is always detected: it needs no key and costs nothing, and runs the real pipeline against simulated speech services. Create the flow in 5b with `"provider": "echo"` in every stage (see `docs/providers.md`, "Echo (simulated)") to try everything here without spending anything.
+**No provider key yet?** To run real audio on local models with no key and no network at call time, follow [offline/README.md](../offline/README.md#run-it) and use provider `offline`. Or `echo` ("Echo (simulated)") is always detected: it needs no key and costs nothing, and runs the real pipeline against simulated speech services. Create the agent in 5b with `"provider": "echo"` in every stage (see `docs/providers.md`, "Echo (simulated)") to try everything here without spending anything.
 
-### 5b. Create a flow
+### 5b. Create an agent
 
 ```bash
-FLOW_ID=$(curl -fsS -X POST "$ADMIN/api/v1/agents" \
+AGENT_ID=$(curl -fsS -X POST "$ADMIN/api/v1/agents" \
   -H "$AUTH" -H 'Content-Type: application/json' \
   -d '{
-    "name": "Quickstart flow",
+    "name": "Quickstart agent",
     "config": {
       "stt": {"provider": "google", "model": "chirp_2", "language": "en-US"},
       "llm": {"provider": "google", "model": "gemini-2.5-flash", "system_prompt": "You are a friendly voice assistant. Keep answers short."},
@@ -128,21 +128,21 @@ FLOW_ID=$(curl -fsS -X POST "$ADMIN/api/v1/agents" \
     }
   }' | jq -r .data.id)
 
-curl -fsS "$ADMIN/api/v1/agents/$FLOW_ID" -H "$AUTH" | jq -r .data.readiness.state
+curl -fsS "$ADMIN/api/v1/agents/$AGENT_ID" -H "$AUTH" | jq -r .data.readiness.state
 # ready
 ```
 
-Each stage names only a provider: creation fails with `400 agent_not_attached` if a stage has no provider, or its provider's variables for that service are not set (`missing_credential_<stage>`). If a variable is removed later, the flow becomes not ready and `readiness.missing_env` names the variable. To use xAI for the LLM, set `XAI_API_KEY`, restart, and use `"llm": {"provider": "xai", "model": "grok-4.20-0309-non-reasoning", ...}`.
+Each stage names only a provider: creation fails with `400 agent_not_attached` if a stage has no provider, or its provider's variables for that service are not set (`missing_credential_<stage>`). If a variable is removed later, the agent becomes not ready and `readiness.missing_env` names the variable. To use xAI for the LLM, set `XAI_API_KEY`, restart, and use `"llm": {"provider": "xai", "model": "grok-4.20-0309-non-reasoning", ...}`.
 
 ### 5c. Issue a voice token
 
 ```bash
 TOKEN=$(curl -fsS -X POST "$ADMIN/api/v1/voice-tokens" \
   -H "$AUTH" -H 'Content-Type: application/json' \
-  -d "{\"principal\": \"user-1234\", \"agent_id\": \"$FLOW_ID\"}" | jq -r .data.token)
+  -d "{\"principal\": \"user-1234\", \"agent_id\": \"$AGENT_ID\"}" | jq -r .data.token)
 ```
 
-The token is single-use and lasts at most 60 seconds, so connect right away. An unknown flow returns 404. A flow that is not ready returns 409 `agent_not_ready`, with the readiness reasons in `error.details`. Each call pins the flow's current version, so later edits do not change a running call.
+The token is single-use and lasts at most 60 seconds, so connect right away. An unknown agent returns 404. An agent that is not ready returns 409 `agent_not_ready`, with the readiness reasons in `error.details`. Each call pins the agent's current version, so later edits do not change a running call.
 
 ---
 
@@ -215,7 +215,7 @@ The turn manager is on by default, and turns end the way Pipecat ends them. A us
 - a transcript exists;
 - the transcript is final, or the STT's p99 latency has passed.
 
-The p99 values are built in per provider (`core/turn/sttp99.go`: Google 1.57 s, xAI 2.14 s, Deepgram 0.35 s, ...). Override them with `turn.stt_p99` (per provider) or the flow's `stt_p99_ms`. A turn that never gets a transcript ends after `turn.no_transcript_timeout` (5 s).
+The p99 values are built in per provider (`core/turn/sttp99.go`: Google 1.57 s, xAI 2.14 s, Deepgram 0.35 s, ...). Override them with `turn.stt_p99` (per provider) or the agent's `stt_p99_ms`. A turn that never gets a transcript ends after `turn.no_transcript_timeout` (5 s).
 
 Upgrading from a release with the turn manager off: `turn.manager: false` restores turns that end on the raw VAD stop, but then set `vad.stop_ms: 800` too. A 200 ms raw stop cuts callers off mid-sentence, and the server logs a warning at startup.
 
@@ -283,7 +283,7 @@ go run ./examples/custom_processor
 
 ## 8. Local Development with `make dev`
 
-`make dev` is the shortcut for everything above (`scripts/dev.sh`). It builds the binaries and starts the server and the admin UI together, with a generated management key and token secret and a SQLite store in `.govoice-dev/` (git-ignored; delete the directory to start over). It seeds a ready **Dev Assistant** flow (the target of the examples) and a two-step **Dealership desk** flow (the front desk hands buyers to sales) from the providers the server detected, plus test MCP servers. Provider keys come from `examples/.env` (template `examples/.env.example`); nothing is stored.
+`make dev` is the shortcut for everything above (`scripts/dev.sh`). It builds the binaries and starts the server and the admin UI together, with a generated management key and token secret and a SQLite store in `.govoice-dev/` (git-ignored; delete the directory to start over). It seeds a ready **Dev Assistant** agent (the target of the examples) and a two-step **Dealership desk** agent (the front desk hands buyers to sales) from the providers the server detected, plus test MCP servers. Provider keys come from `examples/.env` (template `examples/.env.example`); nothing is stored.
 
 - **Admin UI**: `http://127.0.0.1:5173`, already signed in by the dev proxy, so there is nothing to paste. `make admin-link` prints a magic link that signs the UI in; `make admin-link URL=https://host` does the same for a hosted server.
 - **Ports**: `PUBLIC_PORT` (8080, voice WebSocket and `/health`), `ADMIN_PORT` (9090, management API, metrics, debug), `UI_PORT` (5173) and `CLIENT_PORT` (3000, only `make example-web`). A default port that something else holds is skipped: the next free one is used and printed. A port you name is exact: `PUBLIC_PORT=18080 make dev` fails with the holder's name if 18080 is taken.

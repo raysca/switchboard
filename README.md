@@ -9,7 +9,7 @@ Switchboard is a low-latency, resource-efficient voice agent runtime built in Go
 - **Unmodified Pipecat clients**: works with the official `@pipecat-ai/client-js@1.13.1` and `@pipecat-ai/websocket-transport@1.7.2` over binary Protobuf frames and RTVI 2.1.0. See [docs/pipecat-compatibility.md](docs/pipecat-compatibility.md).
 - **Barge-in under 200 ms**: on user speech the server stops sending assistant audio; the pinned client does not clear audio it already buffered, so residual playback is bounded by the 100 ms pacing queue.
 - **Fault-isolated VAD**: Silero VAD (and the Smart Turn model) run in supervised child processes in the production profile (`vad.mode: process`), so a native ONNX fault cannot crash the Go server; development runs them in-process.
-- **Stored flows**: every call runs a stored flow (providers, models, voice, prompt, MCP tools) managed through the [`/api/v1` management API](docs/api/v1.md); each call pins the flow version it started with. Flows can have several steps joined by routes.
+- **Stored agents**: every call runs a stored agent (providers, models, voice, prompt, MCP tools) managed through the [`/api/v1` management API](docs/api/v1.md); each call pins the agent version it started with. Agents can have several steps joined by handoffs.
 - **Environment-only secrets**: provider keys are read from the server's environment and never stored or returned ([docs/providers.md](docs/providers.md), [docs/security/credentials.md](docs/security/credentials.md)).
 - **Provider choice**: Google, xAI (STT and TTS need `-tags xaispeech`), OpenAI-compatible, NVIDIA, Deepgram, Cartesia, ElevenLabs, and a fully local offline stack ([offline/README.md](offline/README.md)), with failover between them.
 - **Bounded by design**: context, task and queue budgets, admission limits, ping liveness, and graceful drain.
@@ -29,7 +29,7 @@ make example-web               # in another terminal: browser client
 make example-cli TEXT="Hello"  # or a CLI call (omit TEXT for a voice clip)
 ```
 
-`make dev` builds everything, generates the management key and token secret, and keeps a local SQLite store in `.govoice-dev/` (git-ignored). Provider keys come from `examples/.env` (template: `examples/.env.example`). Without keys, the free targets in `make help` run on the `echo` fake provider. The admin UI is at `http://127.0.0.1:5173`. Seeded flows, ports and `make admin-link`: [quickstart section 8](docs/quickstart.md#8-local-development-with-make-dev); the full walkthrough (flows, tokens, the Pipecat client) is the rest of [docs/quickstart.md](docs/quickstart.md).
+`make dev` builds everything, generates the management key and token secret, and keeps a local SQLite store in `.govoice-dev/` (git-ignored). Provider keys come from `examples/.env` (template: `examples/.env.example`). Without keys, the free targets in `make help` run on the `echo` fake provider. The admin UI is at `http://127.0.0.1:5173`. Seeded agents, ports and `make admin-link`: [quickstart section 8](docs/quickstart.md#8-local-development-with-make-dev); the full walkthrough (agents, tokens, the Pipecat client) is the rest of [docs/quickstart.md](docs/quickstart.md).
 
 ---
 

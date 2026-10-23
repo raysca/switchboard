@@ -131,4 +131,4 @@ the browser. No Vite.
 
 | Spec | What it proves |
 |---|---|
-| `10-oneport.spec.ts` | The embedded UI loads from the public origin and a client route survives a hard load; a text call works over the same-origin API and socket with no CSP violation; a foreign browser `Origin` is refused the socket (403); `/health` is public while `/metrics`, `/ready` and `/debug/timeline` are not; `server-config` needs the key, is `no-store` and reports the client address; a missing asset is 404; repeated wrong keys end in 429 and the page shows the server's message |
+| `10-oneport.spec.ts` | The embedded UI loads from the public origin and a client-side page survives a hard load; a text call works over the same-origin API and socket with no CSP violation; a foreign browser `Origin` is refused the socket (403); `/health` is public while `/metrics`, `/ready` and `/debug/timeline` are not; `server-config` needs the key, is `no-store` and reports the client address; a missing asset is 404; repeated wrong keys end in 429 and the page shows the server's message |

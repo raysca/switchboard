@@ -1,6 +1,6 @@
 # MCP servers: operator guide
 
-An MCP server gives flows remote tools. This page covers what the states mean, how the server keeps them current, and what to do when something breaks. The API is in [api/mcp.md](../api/mcp.md); the security rules are in [security/mcp.md](../security/mcp.md).
+An MCP server gives agents remote tools. This page covers what the states mean, how the server keeps them current, and what to do when something breaks. The API is in [api/mcp.md](../api/mcp.md); the security rules are in [security/mcp.md](../security/mcp.md).
 
 ## States
 
@@ -27,7 +27,7 @@ mcp:
 
 The two-strike rule: a healthy server is marked failed only on its second background failure in a row. One success clears the count, so a single network blip changes nothing. A server that is already failing is updated on every check.
 
-A manual Sync always writes its result at once. The count is kept by the background check: after a manual Sync heals a failed server, it again takes two background failures in a row to mark it failed. If the tool list is unchanged, no new discovery is stored; only the state and the check times change. If a tool's schema changed, a new discovery is stored and flows that pinned the old schema are flagged (see below).
+A manual Sync always writes its result at once. The count is kept by the background check: after a manual Sync heals a failed server, it again takes two background failures in a row to mark it failed. If the tool list is unchanged, no new discovery is stored; only the state and the check times change. If a tool's schema changed, a new discovery is stored and agents that pinned the old schema are flagged (see below).
 
 The server detail page shows when the server was last checked (`last_checked_at`) and the interval. `GET /api/v1/server-config` returns it as `mcp_sync_interval_seconds` (0 means off).
 
@@ -48,24 +48,24 @@ Tokens are read only from the environment. A server stores the variable name (`M
 2. Restart the server.
 3. Run Sync on the MCP server.
 
-The variable name stays the same. New calls use the new value. Calls already running keep the token they captured until they end; end them if the old token must stop at once. If the variable is unset or empty, the server shows that the token variable is not set, and flows that need its tools are not callable (`auth_env_missing`). Only the variable name is shown.
+The variable name stays the same. New calls use the new value. Calls already running keep the token they captured until they end; end them if the old token must stop at once. If the variable is unset or empty, the server shows that the token variable is not set, and agents that need its tools are not callable (`auth_env_missing`). Only the variable name is shown.
 
 ## Edit a server
 
 Use Edit on the server page, or `PATCH /api/v1/mcp-servers/{id}`. You can change the name, description, endpoint and `auth_env`. An empty `auth_env` removes the token.
 
 - Changing the endpoint or `auth_env` resets the server to `not_validated` and syncs it at once.
-- The server id does not change, so flows keep their tool selections. Nothing is detached.
+- The server id does not change, so agents keep their tool selections. Nothing is detached.
 - Calls already running keep the endpoint and token they captured.
 - A refused create or edit gives a reason: `invalid_endpoint`, `destination_denied`, `invalid_auth_env`, `invalid_metadata` or `transport_unsupported`.
 
-## Recover a flow in `needs_tool_review`
+## Recover an agent in `needs_tool_review`
 
-A flow shows `needs_tool_review` when a tool it requires changed its schema or no longer exists, or when the server was removed with detach-and-delete.
+An agent shows `needs_tool_review` when a tool it requires changed its schema or no longer exists, or when the server was removed with detach-and-delete.
 
-1. Open the MCP server and find the tool. Compare the new schema with what the flow expects.
-2. If the new schema is fine, accept it for the flow (re-pin). This publishes a new flow version with the current schema.
-3. If the tool is gone, remove it from the flow or restore it on the remote server and Sync.
+1. Open the MCP server and find the tool. Compare the new schema with what the agent expects.
+2. If the new schema is fine, accept it for the agent (re-pin). This publishes a new agent version with the current schema.
+3. If the tool is gone, remove it from the agent or restore it on the remote server and Sync.
 
 Running calls keep the version they started with.
 

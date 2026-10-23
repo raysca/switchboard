@@ -52,7 +52,7 @@ node cli.js --agent <agent-id> --text "Hello, who am I talking to?"
 
 The CLI prints transcripts and the streamed assistant text, and exits `0` once a
 bot reply completes (the bot stops speaking, or 3s pass without new LLM text for
-flows that do not speak). It exits non-zero on a token refusal, a server error
+agents that do not speak). It exits non-zero on a token refusal, a server error
 or a timeout.
 
 npm shortcuts: `npm run call -- --agent <agent-id>`, `npm run call:text -- --agent <agent-id>`.

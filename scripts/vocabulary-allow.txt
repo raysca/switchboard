@@ -76,3 +76,28 @@ tools/provtest/report.go	F	flowing	# data flow
 tools/provtest/stt.go	F	flowing	# data flow
 server/storage/schema_names_test.go	F	"flow"	# the test that bans the old word in the schema
 server/storage/schema_names_test.go	F	says flow	# failure text of that test
+docs/api/mcp.md	R	api_routes.go	# HTTP routing table file name
+docs/api/mcp.md	R	before routing to the handler	# HTTP request routing
+docs/api/v1.md	R	management routes	# HTTP endpoints
+docs/api/v1.md	R	agent routes are provided	# HTTP endpoints
+docs/api/v1.md	R	no route accepts	# HTTP endpoint
+docs/api/v1.md	R	pipeline import route	# HTTP endpoint
+docs/api/v1.md	R	credentials` routes no longer	# HTTP endpoints
+docs/api/v1.md	R	must route token issuance	# load balancer routing
+docs/benchmarks/nvidia-live.md	R	cold route	# network route
+docs/deployment.md	R	management route still	# HTTP endpoint
+docs/deployment.md	R	api_routes.go	# HTTP routing table file name
+docs/deployment.md	R	sticky routing	# load balancer routing
+docs/deployment.md	R	| route token issue	# load balancer routing
+docs/deployment.md	R	Alertmanager routing	# alert routing
+docs/operations.md	R	stragglers routed	# load balancer routing
+docs/operations.md	R	still routed afterwards	# load balancer routing
+docs/operations.md	R	sticky routing	# load balancer routing
+docs/operations.md	R	instances, route by	# load balancer routing
+docs/pipecat-compatibility.md	F	Audio frame flow	# generic English: data flow
+docs/pipecat-parity-matrix.md	F	keeps flowing	# generic English: data flow
+docs/pipecat-parity-matrix.md	R	dropping or routing the text	# generic English
+docs/pipecat-parity-matrix.md	R	cross-instance routing	# generic English: request routing
+docs/security/credentials.md	R	management route,	# HTTP endpoint
+docs/security/mcp.md	R	proxy routing	# HTTP proxy routing
+docs/security/mcp.md	F	Cancellation flows into	# generic English: data flow
