@@ -4,7 +4,7 @@ For operators who run Switchboard outside a laptop. It covers what the repositor
 
 The container image is the V1 distribution. The systemd unit is a reference file and is not required to run V1. The runtime image is Debian bookworm. A host install on Ubuntu, Debian or RHEL is not part of this release, and the host numbers below are planning guidance, not a measured result.
 
-An early Cloudflare Containers demo target is maintained in [`deploy/cloudflare`](../deploy/cloudflare/README.md), with its implementation scope and call acceptance criteria in [deployment-cloudflare-plan.md](deployment-cloudflare-plan.md). It routes the existing image through a Worker and a single Durable Object; it is intended for a low-volume demo, not a multi-instance production deployment.
+An early Cloudflare Containers demo target is maintained in [`deploy/cloudflare`](../deploy/cloudflare/README.md), with its implementation scope and call acceptance criteria in [deployment-cloudflare-plan.md](deployment-cloudflare-plan.md). It fronts the existing image with a Worker and a single Durable Object; it is intended for a low-volume demo, not a multi-instance production deployment.
 
 <!-- src: former runbook; deploy/Dockerfile:52 -->
 

@@ -1,6 +1,6 @@
 # Cloudflare voice demo
 
-This target runs the existing Switchboard Docker image in Cloudflare Containers and routes requests through a Worker and a single named Durable Object. It is for a low-volume demo and test calls, not a horizontally scaled production deployment.
+This target runs the existing Switchboard Docker image in Cloudflare Containers and sends requests through a Worker and a single named Durable Object. It is for a low-volume demo and test calls, not a horizontally scaled production deployment.
 
 ## Requirements
 
@@ -56,7 +56,7 @@ Wrangler builds the image for Cloudflare Containers and deploys the Worker/Durab
 1. Confirm `GET /health` returns `{"status":"live"}` through the Worker URL.
 2. Open the embedded admin UI and authenticate with `GOVOICE_MANAGEMENT_API_KEY`.
 3. Confirm `/metrics`, `/ready`, and `/debug/timeline` are not reachable through public ingress.
-4. Create a one-step Echo agent in the UI and use **Test call** to validate WebSocket/RTVI/audio flow without provider spend.
+4. Create a one-step Echo agent in the UI and use **Test call** to validate WebSocket/RTVI/audio path without provider spend.
 5. Configure one real-provider agent and run one call to validate outbound provider connectivity.
 6. Check server and container logs for ONNX initialization errors, child-worker restarts, OOMs, or WebSocket failures.
 
