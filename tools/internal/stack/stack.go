@@ -72,6 +72,9 @@ var killGroup = func(pgid int, sig syscall.Signal) error { return syscall.Kill(-
 // readyClient bounds each /ready probe, so a server that accepts and never answers cannot outlast Start's deadline.
 var readyClient = &http.Client{Timeout: 2 * time.Second}
 
+// callClient bounds each management API request, so a server that stops answering cannot hang a harness.
+var callClient = &http.Client{Timeout: 30 * time.Second}
+
 // Start spawns the child in its own process group and waits up to 60 s for /ready.
 func Start(ctx context.Context, sp Spec) (*Server, error) {
 	ports, err := freePorts(2)
@@ -169,7 +172,7 @@ func (s *Server) Call(method, path string, body any) (json.RawMessage, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+s.Key)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := callClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

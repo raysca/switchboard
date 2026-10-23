@@ -24,10 +24,14 @@ type Observed struct {
 	ReplyMS                                          []int // typed turn -> first bot-llm-text
 	Transcript                                       []Line
 	Replies                                          string // every agent line, newline-joined
+	Dropped                                          int    // client events past the cap: the call is only partly seen
 }
 
 // Line is one transcript line; Who is caller or agent.
-type Line struct{ Who, Text string }
+type Line struct {
+	Who  string `json:"who"`
+	Text string `json:"text"`
+}
 
 // Sent is one typed caller turn.
 type Sent struct {
@@ -68,7 +72,8 @@ func Observe(sess api.SessionDTO, tr api.SessionTracesDTO, start string, ev []st
 	}
 
 	for _, e := range ev {
-		if e.Kind == "error" {
+		// The server closes a call with an error message that carries the end reason: not a fault.
+		if e.Kind == "error" && (sess.EndReason == "" || e.Text != sess.EndReason) {
 			o.ErrorFrames++
 		}
 	}
@@ -143,6 +148,9 @@ func Score(c Case, o Observed, stepNames map[string]string) (fails []string) {
 	}
 	if o.HandoffFailures > 0 {
 		fail("handoff: want 0 failed handoffs, got %d", o.HandoffFailures)
+	}
+	if o.Dropped > 0 {
+		fail("events: %d client events were dropped past the cap, the call was not fully seen", o.Dropped)
 	}
 	if len(e.Path) > 0 {
 		ok := len(e.Path) == len(o.Path)

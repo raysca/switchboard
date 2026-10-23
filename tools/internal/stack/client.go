@@ -147,21 +147,6 @@ func (c *Client) SendText(text string) error {
 	return c.SendMsg("send-text", map[string]string{"content": text})
 }
 
-// Wait polls cond until it holds (true), limit passes or the connection ends (false).
-func (c *Client) Wait(limit time.Duration, cond func() bool) bool {
-	for end := time.Now().Add(limit); time.Now().Before(end); {
-		if cond != nil && cond() {
-			return true
-		}
-		select {
-		case <-c.closed:
-			return cond != nil && cond() // events that arrived with the close still count
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
-	return cond != nil && cond()
-}
-
 // Closed fires when the connection ends.
 func (c *Client) Closed() <-chan struct{} { return c.closed }
 

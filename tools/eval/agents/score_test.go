@@ -96,6 +96,7 @@ func TestScore(t *testing.T) {
 		{"forbidden phrase", "traces-ok.json", func(c *Case, _ *Observed) { c.Expect.NeverSay = []string{"(?i)many"} }, `never_say: want no match for "(?i)many", matched "Many"`},
 		{"slow median", "traces-ok.json", func(c *Case, _ *Observed) { c.Expect.MedianReplyMSMax = 100 }, "median_reply_ms_max: want at most 100, got 380"},
 		{"wrong end reason", "traces-ok.json", func(c *Case, _ *Observed) { c.Expect.EndReason = "ended_by_agent" }, `end_reason: want "ended_by_agent", got "caller_hung_up"`},
+		{"dropped events", "traces-ok.json", func(_ *Case, o *Observed) { o.Dropped = 3 }, "events: 3 client events were dropped past the cap, the call was not fully seen"},
 		{"too many turns", "traces-ok.json", func(c *Case, _ *Observed) { c.Expect.MaxTurns = 2 }, "max_turns: want at most 2, got 3"},
 		{"missing phrase", "traces-ok.json", func(c *Case, _ *Observed) { c.Expect.Say = []string{"sedan"} }, `say: want a match for "sedan"`},
 		{"forbidden tool", "traces-ok.json", func(c *Case, _ *Observed) { c.Expect.ToolsNotCalled = []string{"transfer_to_sales"} }, `tools_not_called: want "transfer_to_sales" not called, got [transfer_to_sales:succeeded]`},
@@ -111,5 +112,21 @@ func TestScore(t *testing.T) {
 	c.Expect.Path = []string{"Front desk", "sales"}
 	if f := Score(c, observed(t, "traces-ok.json"), names); len(f) != 0 {
 		t.Errorf("names in path: %v", f)
+	}
+}
+
+// The server closes a call with an RTVI error message carrying the end reason: that is not a fault.
+func TestObserveIgnoresTheEndReasonMessage(t *testing.T) {
+	sess := fixture[api.SessionDTO](t, "session.json")
+	sess.EndReason = "ended_by_agent"
+	tr := fixture[api.SessionTracesDTO](t, "traces-ok.json")
+	ev, sent := callEvents()
+	ev = append(ev, stack.Event{At: t0.Add(4 * time.Second), Kind: "error", Text: "ended_by_agent"})
+	if o := Observe(sess, tr, "front", ev, sent); o.ErrorFrames != 0 {
+		t.Errorf("end-reason message counted: %d", o.ErrorFrames)
+	}
+	ev = append(ev, stack.Event{At: t0.Add(5 * time.Second), Kind: "error", Text: "provider_failed"})
+	if o := Observe(sess, tr, "front", ev, sent); o.ErrorFrames != 1 {
+		t.Errorf("real error not counted: %d", o.ErrorFrames)
 	}
 }

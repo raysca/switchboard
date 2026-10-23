@@ -69,9 +69,6 @@ func TestClientRecordsBotTextAndClose(t *testing.T) {
 	if !c.Has(t0, "error") || c.Has(t0, "bot-ready-nope") {
 		t.Error("Has")
 	}
-	if c.Wait(time.Second, func() bool { return false }) {
-		t.Error("Wait on a closed call must report false")
-	}
 	c.Close()
 }
 
@@ -112,27 +109,5 @@ func TestTextsSpacing(t *testing.T) {
 	}
 	if got := c.Texts(t0, "user-transcription", true); got != "What is two plus two?" {
 		t.Errorf("finals = %q", got)
-	}
-}
-
-func TestWaitRechecksConditionOnClose(t *testing.T) {
-	defer goleak.VerifyNone(t)
-	addr, stop := rtviServer(nil)
-	defer stop()
-	c, err := Dial(context.Background(), addr, "tok", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	first := true
-	// false the first time (after the socket has closed), true on the re-check
-	if !c.Wait(5*time.Second, func() bool {
-		if first {
-			first = false
-			<-c.Closed()
-			return false
-		}
-		return true
-	}) {
-		t.Fatal("Wait ignored a condition that held once the socket closed")
 	}
 }
