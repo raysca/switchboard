@@ -31,7 +31,7 @@ const OnboardingView = lazy(() => import("../routes/onboarding/OnboardingView").
 const AgentPage = lazy(() => import("../routes/agents/AgentPage").then((m) => ({ default: m.AgentPage })));
 const CallView = lazy(() => import("../routes/sessions/CallView").then((m) => ({ default: m.CallView })));
 
-function HandoffFocus() {
+function PageFocus() {
   const location = useLocation();
   const previousPath = useRef(location.pathname);
   useEffect(() => {
@@ -42,7 +42,7 @@ function HandoffFocus() {
       heading()?.focus();
       return;
     }
-    // A lazy route is still loading: focus its heading as soon as it mounts (give up after a few seconds).
+    // A lazy page is still loading: focus its heading as soon as it mounts (give up after a few seconds).
     const main = document.querySelector("main");
     if (!main) return;
     const observer = new MutationObserver(() => {
@@ -143,7 +143,7 @@ export function App({ initialPath }: { initialPath?: string }) {
   return (
     <QueryClientProvider client={queryClient}>
       <Router {...(initialPath ? { initialEntries: [initialPath] } : {})}>
-        <HandoffFocus />
+        <PageFocus />
         <a className="skip-link" href="#main">
           Skip to content
         </a>

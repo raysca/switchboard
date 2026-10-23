@@ -45,7 +45,7 @@ test("boards 3 to 12", async ({ page, stack }) => {
   await step(page, "board 4 agents list");
 
   await page.getByRole("button", { name: "New agent" }).click();
-  await page.getByLabel("Name").fill("After-hours line");
+  await page.getByLabel("Name your agent", { exact: true }).fill("After-hours line");
   await step(page, "board 5 new agent dialog");
   await page.getByRole("button", { name: "Create and open editor" }).click();
   await expect(page.getByRole("heading", { name: "After-hours line", level: 1 })).toBeVisible();

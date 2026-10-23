@@ -66,9 +66,9 @@ describe("Canvas fitting", () => {
 describe("Canvas refit", () => {
   it("refits in place: the graph is not remounted, so focus on a step and the viewport survive a panel opening", () => {
     const { container, rerender } = render(<ReactFlowProvider><Canvas graph={graph} fitKey="a" /></ReactFlowProvider>);
-    const agent = container.querySelector(".react-flow");
-    expect(agent).not.toBeNull();
+    const pane = container.querySelector(".react-flow");
+    expect(pane).not.toBeNull();
     rerender(<ReactFlowProvider><Canvas graph={graph} fitKey="b" /></ReactFlowProvider>);
-    expect(container.querySelector(".react-flow")).toBe(agent);
+    expect(container.querySelector(".react-flow")).toBe(pane);
   });
 });

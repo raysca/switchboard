@@ -39,7 +39,7 @@ const agent = (id: string, config: Record<string, unknown>, archived = false): A
 });
 
 describe("serviceList and hasService", () => {
-  it("lists only the services the catalog has, in agent order", () => {
+  it("lists only the services the catalog has, in pipeline order", () => {
     expect(serviceList(google)).toBe("STT · LLM · TTS");
     expect(serviceList(xai)).toBe("STT · LLM");
     expect(hasService(xai, "tts")).toBe(false);

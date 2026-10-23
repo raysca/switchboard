@@ -36,12 +36,12 @@ export const catalogDefault = (kind: "stt" | "llm" | "tts") => {
 // The echo provider's lists are closed (no "Other…"), so both stacks pick the catalog default.
 export const LLM_MODEL = () => catalogDefault("llm");
 
-export async function api<T = any>(stack: Stack, route: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${stack.adminUrl}/api/v1${route}`, {
+export async function api<T = any>(stack: Stack, path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${stack.adminUrl}/api/v1${path}`, {
     ...init,
     headers: { Authorization: `Bearer ${stack.managementKey}`, "Content-Type": "application/json" },
   });
-  expect(res.ok, `${init?.method ?? "GET"} ${route} -> ${res.status}`).toBeTruthy();
+  expect(res.ok, `${init?.method ?? "GET"} ${path} -> ${res.status}`).toBeTruthy();
   return (await res.json()) as T;
 }
 
@@ -122,7 +122,7 @@ export async function openDesigner(page: Page, stack: Stack) {
   await connectAdmin(page, stack);
   await openAgentsList(page);
   await page.getByRole("button", { name: "New agent" }).click();
-  await page.getByLabel("Name").fill("Main agent");
+  await page.getByLabel("Name your agent", { exact: true }).fill("Main agent");
   await page.getByRole("button", { name: "Create and open editor" }).click();
   await expect(page.getByRole("heading", { name: "Main agent", level: 1 })).toBeVisible();
   await page.getByRole("button", { name: "Add first step" }).click();

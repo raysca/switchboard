@@ -257,7 +257,7 @@ export function AgentEditor({ agent, providers, client, keyValue, pending, onSub
           {graph.steps.length} of {MAX_STEPS} steps
         </span>
         <span className="grow" />
-        {graph.steps.length > 0 && !call.live && <span className="subtext">Drag from the dot on a step's handoff to add a handoff</span>}
+        {graph.steps.length > 0 && !call.live && <span className="subtext">Drag from the dot on a step to another step to add a handoff</span>}
       </div>
 
       <div className={stageClass}>
@@ -285,7 +285,7 @@ export function AgentEditor({ agent, providers, client, keyValue, pending, onSub
             onConnect={drawHandoff}
             visual={call.live ? live.view.steps : undefined}
             traversedHandoffs={call.live ? live.traversedHandoffs : undefined}
-            justHandedHandoff={live.justHanded}
+            justHanded={live.justHanded}
           />
         )}
 

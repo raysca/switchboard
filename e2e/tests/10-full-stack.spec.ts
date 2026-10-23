@@ -55,7 +55,7 @@ test("admin UI: Google is detected from the server environment and a ready agent
 
   await page.getByRole("link", { name: "Agents", exact: true }).first().click();
   await page.getByRole("button", { name: "New agent" }).click();
-  await page.getByLabel("Name").fill(AGENT);
+  await page.getByLabel("Name your agent", { exact: true }).fill(AGENT);
   await page.getByRole("button", { name: "Create and open editor" }).click();
   await page.getByRole("button", { name: "Add first step" }).click();
   await page.getByLabel("Step name").fill("Assistant");
@@ -156,11 +156,11 @@ function botReply(page: Page, text: RegExp = FOUR) {
     .first();
 }
 
-async function api<T>(stack: Stack, route: string): Promise<T> {
-  const res = await fetch(`${stack.adminUrl}/api/v1${route}`, {
+async function api<T>(stack: Stack, path: string): Promise<T> {
+  const res = await fetch(`${stack.adminUrl}/api/v1${path}`, {
     headers: { Authorization: `Bearer ${stack.managementKey}` },
   });
-  expect(res.ok, `GET ${route}`).toBeTruthy();
+  expect(res.ok, `GET ${path}`).toBeTruthy();
   return (await res.json()) as T;
 }
 

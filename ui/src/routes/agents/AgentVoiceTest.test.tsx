@@ -418,7 +418,7 @@ describe("AgentVoiceTest", () => {
     // Trace link remains accessible after call disconnect
     expect(screen.getByTestId("view-trace-link")).toBeVisible();
 
-    // Clicking trace link routes to /sessions/:sessionId
+    // Clicking trace link navigates to /sessions/:sessionId
     await user.click(screen.getByTestId("view-trace-link"));
     expect(await screen.findByTestId("sessions-page")).toBeVisible();
   });

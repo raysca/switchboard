@@ -86,7 +86,7 @@ const stage = (c: Record<string, unknown>, k: string): Record<string, unknown> =
   c[k] && typeof c[k] === "object" ? (c[k] as Record<string, unknown>) : {};
 
 /** Handoffs as React Flow edges: a handoff with no condition yet draws as a labelled draft. */
-export function agentHandoffs(graph: AgentDraft, selected?: Selection, traversedHandoffs?: string[], justHandedHandoff?: string): Edge[] {
+export function agentHandoffs(graph: AgentDraft, selected?: Selection, traversedHandoffs?: string[], justHanded?: string): Edge[] {
   return graph.handoffs.map((e) => ({
     id: e.id,
     source: e.from,
@@ -98,7 +98,7 @@ export function agentHandoffs(graph: AgentDraft, selected?: Selection, traversed
     className:
       [
         !e.condition.trim() ? "handoff-edge--draft" : "",
-        traversedHandoffs?.includes(e.id) ? `handoff-edge--traversed${e.id === justHandedHandoff ? " handoff-edge--just" : ""}` : "",
+        traversedHandoffs?.includes(e.id) ? `handoff-edge--traversed${e.id === justHanded ? " handoff-edge--just" : ""}` : "",
       ]
         .join(" ")
         .trim() || undefined,
@@ -115,14 +115,14 @@ export type CanvasProps = {
   visual?: Record<string, StepVisual>;
   traversedHandoffs?: string[];
   /** The handoff taken a moment ago: its handoff draws in. */
-  justHandedHandoff?: string;
+  justHanded?: string;
   readOnly?: boolean;
   height?: number | string;
   /** The agent refits when this changes (a panel opened, closed or widened) as well as when a step is added or removed. */
   fitKey?: string;
 };
 
-export function Canvas({ graph, selected, onSelect, onMove, onConnect, visual, traversedHandoffs, justHandedHandoff, readOnly, height = 420, fitKey = "" }: CanvasProps) {
+export function Canvas({ graph, selected, onSelect, onMove, onConnect, visual, traversedHandoffs, justHanded, readOnly, height = 420, fitKey = "" }: CanvasProps) {
   const derived = useMemo<Node<StepNodeData>[]>(
     () =>
       graph.steps.map((n) => ({
@@ -151,18 +151,18 @@ export function Canvas({ graph, selected, onSelect, onMove, onConnect, visual, t
     setNodes(derived);
   }
 
-  const handoffs = useMemo(() => agentHandoffs(graph, selected, traversedHandoffs, justHandedHandoff), [graph.handoffs, selected, traversedHandoffs, justHandedHandoff]);
+  const handoffs = useMemo(() => agentHandoffs(graph, selected, traversedHandoffs, justHanded), [graph.handoffs, selected, traversedHandoffs, justHanded]);
 
   // Re-fit in place (not by remounting, which would drop focus on a step and the viewport) when a step is added or
   // removed, or the room for the agent changes, so no step is left off-screen or tiny.
-  const agent = useRef<ReactFlowInstance | null>(null);
+  const rf = useRef<ReactFlowInstance | null>(null);
   const fitted = useRef(`${graph.steps.length}:${fitKey}`);
   useEffect(() => {
     const key = `${graph.steps.length}:${fitKey}`;
     if (fitted.current === key) return;
     fitted.current = key;
     // A beat after the layout change: React Flow measures its container through a ResizeObserver.
-    const id = setTimeout(() => void agent.current?.fitView({ maxZoom: 1, duration: 0 }), 80);
+    const id = setTimeout(() => void rf.current?.fitView({ maxZoom: 1, duration: 0 }), 80);
     return () => clearTimeout(id);
   }, [graph.steps.length, fitKey]);
 
@@ -171,7 +171,7 @@ export function Canvas({ graph, selected, onSelect, onMove, onConnect, visual, t
     <div className="agent-canvas" style={{ height }} data-testid="agent-canvas" data-fit={`${graph.steps.length}:${fitKey}`}>
       <ReactFlow
         onInit={(instance) => {
-          agent.current = instance as unknown as ReactFlowInstance;
+          rf.current = instance as unknown as ReactFlowInstance;
         }}
         nodes={steps}
         edges={handoffs}

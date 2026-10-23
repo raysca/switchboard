@@ -224,7 +224,7 @@ describe("AgentEditor chrome", () => {
     const head = screen.getByRole("heading", { name: "Front desk", level: 1 }).closest("header") as HTMLElement;
     expect(within(head).getByRole("link", { name: "Agents" })).toHaveAttribute("href", "/agents");
     expect(screen.getByText("1 of 8 steps")).toBeVisible();
-    expect(screen.getByText(/Drag from the dot on a step's handoff to add a handoff/)).toBeVisible();
+    expect(screen.getByText(/Drag from the dot on a step to another step to add a handoff/)).toBeVisible();
   });
 
   it("explains the blank state with the canvas's words", () => {

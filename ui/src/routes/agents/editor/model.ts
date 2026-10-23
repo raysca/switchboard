@@ -261,7 +261,7 @@ export function fromAgentConfig(raw: unknown, selectedTools: string[] = []): Age
   return {
     start: String(cfg.start ?? ""),
     steps,
-    handoffs: handoffs,
+    handoffs,
     ...(cue.name ? { handoff_cue: { name: String(cue.name), ...(cue.after_ms ? { after_ms: Number(cue.after_ms) } : {}) } } : {}),
   };
 }

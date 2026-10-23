@@ -48,7 +48,7 @@ describe("admin shell", () => {
     expect(screen.getByText("Area not found")).toBeVisible();
   });
 
-  it("shows all six routes and keeps keyboard navigation visible", async () => {
+  it("shows all six sections and keeps keyboard navigation visible", async () => {
     render(<App initialPath="/agents" />);
     for (const name of [
       "Dashboard",
@@ -81,7 +81,7 @@ describe("admin shell", () => {
     expect(screen.getByText(/The key stays in this tab only/i)).toBeVisible();
   });
 
-  it("puts the key entry above the page content, and names every route link by its text", () => {
+  it("puts the key entry above the page content, and names every nav link by its text", () => {
     render(<App initialPath="/dashboard" />);
     const field = screen.getByLabelText(/management key/i);
     const heading = screen.getByRole("heading", { name: "Dashboard" });

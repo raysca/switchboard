@@ -31,7 +31,7 @@ test("first run: stack, agent, test call, connect", async ({ page, stack }) => {
   await step(page, "first run step 1 voice stack");
   await page.getByRole("button", { name: "Continue" }).click();
 
-  await page.getByLabel("Name your agent").fill("First run agent");
+  await page.getByLabel("Name your agent", { exact: true }).fill("First run agent");
   await step(page, "first run step 2 agent");
   await page.getByRole("button", { name: "Create and call it" }).click();
 

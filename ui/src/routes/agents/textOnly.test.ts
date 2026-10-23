@@ -10,7 +10,7 @@ describe("isTextOnly", () => {
     expect(isTextOnly({ stt: { provider: "echo" } })).toBe(false);
   });
 
-  it("reads a routed agent's speech-to-text from its START step, not the first or the last", () => {
+  it("reads the speech-to-text of an agent with handoffs from its START step, not the first or the last", () => {
     const silence = { stt: { provider: "silence", model: "text" } };
     const voice = { stt: { provider: "deepgram", model: "nova-3" } };
     const handedOff = (start: string) => ({ start, steps: [step("a", voice), step("b", silence), step("c", {})], handoffs: [] });
