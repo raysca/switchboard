@@ -239,7 +239,7 @@ func scenarioByID(id string) (scenario, bool) {
 
 // reply is the bot's streamed reply text after t, truncated for display.
 func reply(c *client, t time.Time, n int) string {
-	return truncate(c.texts(t, "bot-llm-text", false), n)
+	return truncate(c.Texts(t, "bot-llm-text", false), n)
 }
 
 // s1: n normal turns. v2v is end of speech to first bot audio.
@@ -255,30 +255,30 @@ func s1(x *sctx, r *Result) {
 			r.abort(redact(err))
 			return
 		}
-		c.wait(15*time.Second, func() bool { return c.has(mark, "audio") })
+		c.wait(15*time.Second, func() bool { return c.Has(mark, "audio") })
 		pfx := fmt.Sprintf("t%d.", i+1)
-		e, ok := c.firstAfter(mark, "audio")
+		e, ok := c.FirstAfter(mark, "audio")
 		r.check(pfx+"bot audio", ok, "")
 		if ok {
-			v2v := e.t.Sub(tEnd)
+			v2v := e.At.Sub(tEnd)
 			v2vs = append(v2vs, float64(v2v.Milliseconds()))
 			r.m(pfx+"v2v_ms", msv(v2v))
 			r.check(pfx+"v2v <= "+x.o.v2vMax.String(), v2v <= x.o.v2vMax, "")
 		}
-		if e, ok := c.firstAfter(tEnd.Add(-300*time.Millisecond), "user-stopped-speaking"); ok {
-			r.m(pfx+"vad_stop_ms", msv(e.t.Sub(tEnd)))
+		if e, ok := c.FirstAfter(tEnd.Add(-300*time.Millisecond), "user-stopped-speaking"); ok {
+			r.m(pfx+"vad_stop_ms", msv(e.At.Sub(tEnd)))
 		}
-		for _, e := range c.snap() {
-			if e.t.After(mark) && e.kind == "user-transcription" && e.final {
-				r.m(pfx+"final_tr_ms", msv(e.t.Sub(tEnd)))
+		for _, e := range c.Snap() {
+			if e.At.After(mark) && e.Kind == "user-transcription" && e.Final {
+				r.m(pfx+"final_tr_ms", msv(e.At.Sub(tEnd)))
 				break
 			}
 		}
-		c.wait(25*time.Second, func() bool { return c.has(tEnd, "bot-stopped-speaking") })
+		c.wait(25*time.Second, func() bool { return c.Has(tEnd, "bot-stopped-speaking") })
 		if ok {
-			s1Breakdown(x, r, pfx, tEnd, e.t)
+			s1Breakdown(x, r, pfx, tEnd, e.At)
 		}
-		heard, said := c.texts(mark, "user-transcription", true), c.texts(mark, "bot-llm-text", false)
+		heard, said := c.Texts(mark, "user-transcription", true), c.Texts(mark, "bot-llm-text", false)
 		r.m(pfx+"heard", heard)
 		r.m(pfx+"reply", truncate(said, 90))
 		r.check(pfx+"reply text", said != "", "")
@@ -339,7 +339,7 @@ func bargeSetup(x *sctx, r *Result) (ok bool) {
 	c := x.c
 	c.quiet(400 * time.Millisecond)
 	_, tEnd, _ := c.stream(x.clips["mars"])
-	if !c.wait(20*time.Second, func() bool { return c.has(tEnd, "audio") }) {
+	if !c.wait(20*time.Second, func() bool { return c.Has(tEnd, "audio") }) {
 		r.abort("no bot audio for the setup question")
 		return false
 	}
@@ -372,23 +372,23 @@ func s2(x *sctx, r *Result) {
 		r.m("audio_stop_ms", msv(d))
 		r.check("audio stops <= "+x.o.stopMax.String(), d <= x.o.stopMax, "")
 	}
-	if e, ok := c.firstAfter(onset, "bot-stopped-speaking"); ok {
-		r.m("bot_stopped_evt_ms", msv(e.t.Sub(onset)))
+	if e, ok := c.FirstAfter(onset, "bot-stopped-speaking"); ok {
+		r.m("bot_stopped_evt_ms", msv(e.At.Sub(onset)))
 	}
-	if e, ok := c.firstAfter(onset, "user-started-speaking"); ok {
-		r.m("user_started_evt_ms", msv(e.t.Sub(onset)))
+	if e, ok := c.FirstAfter(onset, "user-started-speaking"); ok {
+		r.m("user_started_evt_ms", msv(e.At.Sub(onset)))
 	}
-	c.wait(20*time.Second, func() bool { return c.has(tEnd, "audio") && c.has(tEnd, "bot-llm-started") })
-	if e, ok := c.firstAfter(tEnd, "bot-llm-started"); ok {
-		r.m("llm_start_after_end_ms", msv(e.t.Sub(tEnd)))
+	c.wait(20*time.Second, func() bool { return c.Has(tEnd, "audio") && c.Has(tEnd, "bot-llm-started") })
+	if e, ok := c.FirstAfter(tEnd, "bot-llm-started"); ok {
+		r.m("llm_start_after_end_ms", msv(e.At.Sub(tEnd)))
 	}
-	e, ok := c.firstAfter(tEnd, "audio")
+	e, ok := c.FirstAfter(tEnd, "audio")
 	r.check("second utterance answered", ok, "")
 	if ok {
-		r.m("second_reply_v2v_ms", msv(e.t.Sub(tEnd)))
+		r.m("second_reply_v2v_ms", msv(e.At.Sub(tEnd)))
 	}
-	c.wait(25*time.Second, func() bool { return c.has(tEnd, "bot-stopped-speaking") })
-	heard := c.texts(onset.Add(-500*time.Millisecond), "user-transcription", true)
+	c.wait(25*time.Second, func() bool { return c.Has(tEnd, "bot-stopped-speaking") })
+	heard := c.Texts(onset.Add(-500*time.Millisecond), "user-transcription", true)
 	r.m("heard_after_onset", heard)
 	r.m("reply_after_onset", reply(c, onset, 90))
 	if x.content() {
@@ -404,13 +404,13 @@ func s3(x *sctx, r *Result) {
 	if !bargeSetup(x, r) {
 		return
 	}
-	if x.p.Interims != "yes" && c.interims(c.t0) == 0 { // probe: did the setup question produce interims?
+	if x.p.Interims != "yes" && c.interims(c.T0) == 0 { // probe: did the setup question produce interims?
 		r.na("STT sent no interim results during the setup question (min_words only acts on finals)")
 		return
 	}
 	onset, tEnd, _ := c.stream(x.clips["backchannel"])
 	c.quiet(6 * time.Second) // long enough for a transcript, a model reply and its first audio
-	newReply, stops := c.has(onset, "bot-llm-started"), c.count(onset, "bot-stopped-speaking")
+	newReply, stops := c.Has(onset, "bot-llm-started"), c.Count(onset, "bot-stopped-speaking")
 	r.m("new_reply_started", newReply)
 	r.m("bot_stopped_evts", stops)
 	if stop, paused := c.audioRunEnd(onset, 250*time.Millisecond); paused {
@@ -418,13 +418,13 @@ func s3(x *sctx, r *Result) {
 	} else {
 		r.m("audio_gap_after_ms", "none")
 	}
-	r.m("heard", c.texts(onset.Add(-300*time.Millisecond), "user-transcription", true))
+	r.m("heard", c.Texts(onset.Add(-300*time.Millisecond), "user-transcription", true))
 	if x.minWords() { // without min_words a backchannel interrupts by design: measured only
 		r.check("backchannel did not start a new reply", !newReply, "")
 		r.check("bot not interrupted", stops == 0, "")
 	}
 	c.wait(30*time.Second, func() bool {
-		return c.has(tEnd.Add(3*time.Second), "bot-stopped-speaking") && !c.audioNow(1500*time.Millisecond)
+		return c.Has(tEnd.Add(3*time.Second), "bot-stopped-speaking") && !c.audioNow(1500*time.Millisecond)
 	})
 }
 
@@ -438,21 +438,21 @@ func s4(x *sctx, r *Result) {
 		r.abort(redact(err))
 		return
 	}
-	c.wait(20*time.Second, func() bool { return c.has(mark, "audio") })
-	if e, ok := c.firstAfter(mark, "audio"); ok {
-		r.m("first_audio_vs_end_ms", msv(e.t.Sub(tEnd))) // negative: the bot spoke before the user finished
+	c.wait(20*time.Second, func() bool { return c.Has(mark, "audio") })
+	if e, ok := c.FirstAfter(mark, "audio"); ok {
+		r.m("first_audio_vs_end_ms", msv(e.At.Sub(tEnd))) // negative: the bot spoke before the user finished
 	} else {
 		r.m("first_audio_vs_end_ms", "NONE")
 	}
-	c.wait(25*time.Second, func() bool { return c.has(tEnd, "bot-stopped-speaking") })
+	c.wait(25*time.Second, func() bool { return c.Has(tEnd, "bot-stopped-speaking") })
 	c.quiet(4 * time.Second) // late replies
 	// A user turn is a committed (final) transcription: the manager joins VAD segments, and a
 	// 1 s pause is longer than the VAD stop (800 ms), so raw VAD stops are 2 by design.
-	turns, replies := c.count(mark, "user-transcription")-c.interims(mark), c.count(mark, "bot-llm-started")
-	r.m("vad_stops", c.count(mark, "user-stopped-speaking"))
+	turns, replies := c.Count(mark, "user-transcription")-c.interims(mark), c.Count(mark, "bot-llm-started")
+	r.m("vad_stops", c.Count(mark, "user-stopped-speaking"))
 	r.m("user_turns", turns)
 	r.m("bot_replies", replies)
-	heard, said := c.texts(mark, "user-transcription", true), c.texts(mark, "bot-llm-text", false)
+	heard, said := c.Texts(mark, "user-transcription", true), c.Texts(mark, "bot-llm-text", false)
 	r.m("heard", heard)
 	r.m("reply", truncate(said, 110))
 	if x.manager() && x.content() { // plain VAD turns may split at the pause: measured only; fake STT emits a word per frame
@@ -466,21 +466,21 @@ func s4(x *sctx, r *Result) {
 
 // s5: no speech at all: idle prompt then hang-up at short timings.
 func s5(x *sctx, r *Result) {
-	c, t0 := x.c, x.c.t0
+	c, t0 := x.c, x.c.T0
 	c.wait(25*time.Second, func() bool { return c.isClosed() })
-	e, ok := c.firstAfter(t0, "audio")
+	e, ok := c.FirstAfter(t0, "audio")
 	r.check("idle prompt audio", ok, "")
 	if ok {
-		r.m("first_prompt_audio_s", fmt.Sprintf("%.1f", e.t.Sub(t0).Seconds()))
+		r.m("first_prompt_audio_s", fmt.Sprintf("%.1f", e.At.Sub(t0).Seconds()))
 	}
 	if c.isClosed() {
 		r.check("server hung up", true, "")
-		r.m("closed_after_s", fmt.Sprintf("%.1f", c.closeAt.Sub(t0).Seconds()))
-		r.m("close_status", int(websocket.CloseStatus(c.closeErr)))
+		r.m("closed_after_s", fmt.Sprintf("%.1f", c.CloseAt.Sub(t0).Seconds()))
+		r.m("close_status", int(websocket.CloseStatus(c.CloseErr)))
 	} else {
 		r.check("server hung up", false, "not closed within 25 s")
 	}
-	r.m("bot_text", c.texts(t0, "bot-llm-text", false))
+	r.m("bot_text", c.Texts(t0, "bot-llm-text", false))
 }
 
 // s6: the model calls get_time and the answer carries its result.
@@ -488,15 +488,15 @@ func s6(x *sctx, r *Result) {
 	c := x.c
 	c.quiet(400 * time.Millisecond)
 	mark := time.Now()
-	if err := c.sendText("What time is it right now?"); err != nil {
+	if err := c.SendText("What time is it right now?"); err != nil {
 		r.abort(redact(err))
 		return
 	}
-	c.wait(30*time.Second, func() bool { return c.has(mark, "bot-stopped-speaking") })
-	said := c.texts(mark, "bot-llm-text", false)
+	c.wait(30*time.Second, func() bool { return c.Has(mark, "bot-stopped-speaking") })
+	said := c.Texts(mark, "bot-llm-text", false)
 	r.m("reply", truncate(said, 110))
 	// There is no client-visible tool event: a reply matching the tool's output is the evidence.
-	r.check("bot replied with audio", c.has(mark, "audio"), "")
+	r.check("bot replied with audio", c.Has(mark, "audio"), "")
 	r.check("answer mentions the tool result ("+x.o.toolExpect.String()+")", x.o.toolExpect.MatchString(said), "")
 }
 
@@ -505,20 +505,20 @@ func s7(x *sctx, r *Result) {
 	c := x.c
 	c.quiet(400 * time.Millisecond)
 	mark := time.Now()
-	if err := c.sendText(x.clips.text("question")); err != nil {
+	if err := c.SendText(x.clips.text("question")); err != nil {
 		r.abort(redact(err))
 		return
 	}
-	c.wait(30*time.Second, func() bool { return c.has(mark, "bot-stopped-speaking") })
-	e, ok := c.firstAfter(mark, "audio")
+	c.wait(30*time.Second, func() bool { return c.Has(mark, "bot-stopped-speaking") })
+	e, ok := c.FirstAfter(mark, "audio")
 	r.check("bot audio", ok, "")
 	if ok {
-		r.m("text_to_audio_ms", msv(e.t.Sub(mark)))
+		r.m("text_to_audio_ms", msv(e.At.Sub(mark)))
 	}
-	if e, ok := c.firstAfter(mark, "bot-llm-started"); ok {
-		r.m("text_to_llm_ms", msv(e.t.Sub(mark)))
+	if e, ok := c.FirstAfter(mark, "bot-llm-started"); ok {
+		r.m("text_to_llm_ms", msv(e.At.Sub(mark)))
 	}
-	said := c.texts(mark, "bot-llm-text", false)
+	said := c.Texts(mark, "bot-llm-text", false)
 	r.m("reply", truncate(said, 90))
 	r.check("reply text", said != "", "")
 	if x.content() {
@@ -570,30 +570,30 @@ func s9(x *sctx, r *Result) {
 		r.abort(redact(err))
 		return
 	}
-	c.wait(25*time.Second, func() bool { return c.has(mark, "audio") })
-	c.wait(60*time.Second, func() bool { return c.has(tEnd, "bot-stopped-speaking") })
+	c.wait(25*time.Second, func() bool { return c.Has(mark, "audio") })
+	c.wait(60*time.Second, func() bool { return c.Has(tEnd, "bot-stopped-speaking") })
 	c.quiet(time.Second)
-	said := c.texts(mark, "bot-llm-text", false)
+	said := c.Texts(mark, "bot-llm-text", false)
 	var first, playEnd, last time.Time
 	var gaps int
 	var gapMs, audioMs int64
-	for _, e := range c.snap() {
-		if e.kind != "audio" || e.t.Before(mark) {
+	for _, e := range c.Snap() {
+		if e.Kind != "audio" || e.At.Before(mark) {
 			continue
 		}
 		if first.IsZero() {
-			first, playEnd = e.t, e.t
+			first, playEnd = e.At, e.At
 		}
-		if e.t.After(playEnd.Add(100 * time.Millisecond)) {
+		if e.At.After(playEnd.Add(100 * time.Millisecond)) {
 			gaps++
-			gapMs += e.t.Sub(playEnd).Milliseconds()
+			gapMs += e.At.Sub(playEnd).Milliseconds()
 		}
-		if e.t.After(playEnd) {
-			playEnd = e.t
+		if e.At.After(playEnd) {
+			playEnd = e.At
 		}
-		playEnd = playEnd.Add(e.dur)
-		audioMs += e.dur.Milliseconds()
-		last = e.t
+		playEnd = playEnd.Add(e.Dur)
+		audioMs += e.Dur.Milliseconds()
+		last = e.At
 	}
 	r.check("bot audio", !first.IsZero(), "")
 	if first.IsZero() {
@@ -636,19 +636,19 @@ func s10(x *sctx, r *Result) {
 			r.abort(redact(err))
 			return
 		}
-		c.wait(20*time.Second, func() bool { return c.has(mark, "audio") })
-		if e, ok := c.firstAfter(tEnd, "audio"); ok {
-			r.m(pfx+"v2v_ms", msv(e.t.Sub(tEnd)))
+		c.wait(20*time.Second, func() bool { return c.Has(mark, "audio") })
+		if e, ok := c.FirstAfter(tEnd, "audio"); ok {
+			r.m(pfx+"v2v_ms", msv(e.At.Sub(tEnd)))
 		}
-		c.wait(25*time.Second, func() bool { return c.has(tEnd, "bot-stopped-speaking") })
+		c.wait(25*time.Second, func() bool { return c.Has(tEnd, "bot-stopped-speaking") })
 		c.quiet(3 * time.Second) // a late second reply from a split turn
-		turns := c.count(mark, "user-transcription") - c.interims(mark)
-		r.m(pfx+"vad_stops", c.count(mark, "user-stopped-speaking"))
+		turns := c.Count(mark, "user-transcription") - c.interims(mark)
+		r.m(pfx+"vad_stops", c.Count(mark, "user-stopped-speaking"))
 		r.m(pfx+"user_turns", turns)
-		r.m(pfx+"bot_replies", c.count(mark, "bot-llm-started"))
+		r.m(pfx+"bot_replies", c.Count(mark, "bot-llm-started"))
 		r.m(pfx+"llm_requests", llm()-l0)
-		r.m(pfx+"heard", c.texts(mark, "user-transcription", true))
-		r.m(pfx+"reply", truncate(c.texts(mark, "bot-llm-text", false), 90))
+		r.m(pfx+"heard", c.Texts(mark, "user-transcription", true))
+		r.m(pfx+"reply", truncate(c.Texts(mark, "bot-llm-text", false), 90))
 		c.quiet(time.Second)
 	}
 }
@@ -665,10 +665,10 @@ func s11(x *sctx, r *Result) {
 		r.abort(redact(err))
 		return
 	}
-	replied := c.wait(6*time.Second, func() bool { return c.has(mark, "audio") })
+	replied := c.wait(6*time.Second, func() bool { return c.Has(mark, "audio") })
 	r.check("unpressed speech gets no reply", !replied, "")
 	if replied {
-		c.wait(25*time.Second, func() bool { return c.has(mark, "bot-stopped-speaking") })
+		c.wait(25*time.Second, func() bool { return c.Has(mark, "bot-stopped-speaking") })
 	}
 	c.quiet(time.Second)
 
@@ -687,34 +687,34 @@ func s11(x *sctx, r *Result) {
 		r.abort(redact(err))
 		return
 	}
-	early := c.has(mark, "audio")        // over the whole hold: a reply to the first half arrives late
+	early := c.Has(mark, "audio")        // over the whole hold: a reply to the first half arrives late
 	if err := c.ptt(false); err != nil { // released at the end of speech, before the final
 		r.abort(redact(err))
 		return
 	}
 	r.check("no reply while held", !early, "")
-	ok := c.wait(15*time.Second, func() bool { return c.has(tEnd, "audio") })
+	ok := c.wait(15*time.Second, func() bool { return c.Has(tEnd, "audio") })
 	r.check("reply after release", ok, "")
-	if e, ok := c.firstAfter(tEnd, "audio"); ok {
-		r.m("release_to_audio_ms", msv(e.t.Sub(tEnd)))
+	if e, ok := c.FirstAfter(tEnd, "audio"); ok {
+		r.m("release_to_audio_ms", msv(e.At.Sub(tEnd)))
 	}
-	c.wait(25*time.Second, func() bool { return c.has(tEnd, "bot-stopped-speaking") })
+	c.wait(25*time.Second, func() bool { return c.Has(tEnd, "bot-stopped-speaking") })
 	c.quiet(2 * time.Second) // a late second reply (the pause split the turn) would start here
-	heard, said := c.texts(mark, "user-transcription", true), c.texts(mark, "bot-llm-text", false)
+	heard, said := c.Texts(mark, "user-transcription", true), c.Texts(mark, "bot-llm-text", false)
 	r.m("heard", heard)
 	r.m("reply", truncate(said, 90))
 	turns := 0 // committed user turns: a pause that ends the held turn makes two
-	for _, e := range c.snap() {
-		if e.t.After(mark) && e.kind == "user-transcription" && e.final {
+	for _, e := range c.Snap() {
+		if e.At.After(mark) && e.Kind == "user-transcription" && e.Final {
 			turns++
 		}
 	}
-	replies := c.count(mark, "bot-llm-started")
+	replies := c.Count(mark, "bot-llm-started")
 	r.m("user_turns", turns)
 	r.m("replies", replies)
 	r.check("one user turn for the held utterance", turns == 1, fmt.Sprintf("%d turns", turns))
 	r.check("one reply for the held utterance", replies == 1, fmt.Sprintf("%d replies", replies))
-	r.check("no rejected client message", !c.has(mark, "error"), "")
+	r.check("no rejected client message", !c.Has(mark, "error"), "")
 	if x.content() {
 		h := strings.ToLower(heard)
 		r.check("heard both halves", strings.Contains(h, "know") && strings.Contains(h, "france"), heard)
@@ -733,8 +733,8 @@ func s12(x *sctx, r *Result) {
 		r.abort(redact(err))
 		return
 	}
-	c.wait(time.Second, func() bool { return c.has(mark, "user-started-speaking") })
-	r.check("speech detected before mute", c.has(mark, "user-started-speaking"), "")
+	c.wait(time.Second, func() bool { return c.Has(mark, "user-started-speaking") })
+	r.check("speech detected before mute", c.Has(mark, "user-started-speaking"), "")
 	tMute := time.Now()
 	if err := c.setMuted(true); err != nil {
 		r.abort(redact(err))
@@ -744,15 +744,15 @@ func s12(x *sctx, r *Result) {
 		r.abort(redact(err))
 		return
 	}
-	stop, ok := c.firstAfter(tMute, "user-stopped-speaking")
+	stop, ok := c.FirstAfter(tMute, "user-stopped-speaking")
 	note := "no user-stopped-speaking after mute"
 	if ok {
-		r.m("mute_to_stop_ms", msv(stop.t.Sub(tMute)))
+		r.m("mute_to_stop_ms", msv(stop.At.Sub(tMute)))
 		note = ""
 	}
-	r.check("segment ends at mute", ok && stop.t.Sub(tMute) < 1500*time.Millisecond, note)
-	c.wait(15*time.Second, func() bool { return c.has(tMute, "bot-stopped-speaking") }) // the cut turn may be answered
-	heard := c.texts(mark, "user-transcription", true)
+	r.check("segment ends at mute", ok && stop.At.Sub(tMute) < 1500*time.Millisecond, note)
+	c.wait(15*time.Second, func() bool { return c.Has(tMute, "bot-stopped-speaking") }) // the cut turn may be answered
+	heard := c.Texts(mark, "user-transcription", true)
 	r.m("heard", heard)
 	if x.content() {
 		r.check("muted speech not heard", !strings.Contains(strings.ToLower(heard), "france"), heard)
@@ -763,8 +763,8 @@ func s12(x *sctx, r *Result) {
 		return
 	}
 	c.quiet(3 * time.Second) // streams silence after unmute
-	r.check("no phantom segment after unmute", !c.has(tUnmute, "user-started-speaking"), "")
-	r.check("no rejected client message", !c.has(mark, "error"), "")
+	r.check("no phantom segment after unmute", !c.Has(tUnmute, "user-started-speaking"), "")
+	r.check("no rejected client message", !c.Has(mark, "error"), "")
 }
 
 // s13: the primary LLM's key is rejected; the fallback (another provider, see failoverPeer) answers.
@@ -778,10 +778,10 @@ func s13(x *sctx, r *Result) {
 		r.abort(redact(err))
 		return
 	}
-	ok := c.wait(20*time.Second, func() bool { return c.has(tEnd, "audio") })
+	ok := c.wait(20*time.Second, func() bool { return c.Has(tEnd, "audio") })
 	r.check("answered through the fallback", ok, "")
-	c.wait(25*time.Second, func() bool { return c.has(tEnd, "bot-stopped-speaking") })
-	said := c.texts(mark, "bot-llm-text", false)
+	c.wait(25*time.Second, func() bool { return c.Has(tEnd, "bot-stopped-speaking") })
+	said := c.Texts(mark, "bot-llm-text", false)
 	r.m("reply", truncate(said, 90))
 	n := x.srv.failovers() - before
 	r.m("llm_failovers", n)
@@ -794,20 +794,20 @@ func s13(x *sctx, r *Result) {
 // s14: Front hands a buyer to Sales; Sales answers the greeting and the next turn.
 func s14(x *sctx, r *Result) {
 	c := x.c
-	said := func(mark time.Time) string { return strings.ToLower(c.texts(mark, "bot-llm-text", false)) }
+	said := func(mark time.Time) string { return strings.ToLower(c.Texts(mark, "bot-llm-text", false)) }
 	c.quiet(400 * time.Millisecond)
 	mark := time.Now()
-	if err := c.sendText("I would like to buy a car. What are your prices?"); err != nil {
+	if err := c.SendText("I would like to buy a car. What are your prices?"); err != nil {
 		r.abort(redact(err))
 		return
 	}
 	reached := c.wait(45*time.Second, func() bool { return strings.Contains(said(mark), agentMarker) })
 	r.check("handoff reached the sales agent", reached, "")
-	r.m("reply", truncate(c.texts(mark, "bot-llm-text", false), 90))
+	r.m("reply", truncate(c.Texts(mark, "bot-llm-text", false), 90))
 	if reached {
 		r.m("handoff_ms", msv(time.Since(mark)))
 	}
-	c.wait(25*time.Second, func() bool { return c.has(mark, "bot-stopped-speaking") })
+	c.wait(25*time.Second, func() bool { return c.Has(mark, "bot-stopped-speaking") })
 	handoffs := 0
 	for _, e := range x.srv.timelineEvents(c.n) {
 		if e.Type == "handoff" {
@@ -819,7 +819,7 @@ func s14(x *sctx, r *Result) {
 
 	c.quiet(600 * time.Millisecond)
 	mark = time.Now()
-	if err := c.sendText("What kinds of cars do you sell?"); err != nil {
+	if err := c.SendText("What kinds of cars do you sell?"); err != nil {
 		r.abort(redact(err))
 		return
 	}

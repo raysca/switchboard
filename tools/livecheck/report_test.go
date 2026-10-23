@@ -209,27 +209,6 @@ func TestMCPToolPayloads(t *testing.T) {
 	}
 }
 
-// Streamed bot text keeps its own spacing; transcripts are trimmed and joined with one space.
-func TestTextsSpacing(t *testing.T) {
-	t0 := time.Now()
-	c := &client{}
-	for i, e := range []ev{{kind: "bot-llm-text", text: "Two"}, {kind: "bot-llm-text", text: " plus two"}, {kind: "bot-llm-text", text: " is four. "},
-		{kind: "user-transcription", text: " What is ", final: true}, {kind: "user-transcription", text: "two plus", final: false},
-		{kind: "user-transcription", text: "two plus two? ", final: true}} {
-		e.t = t0.Add(time.Duration(i+1) * time.Millisecond)
-		c.evs = append(c.evs, e)
-	}
-	if got := c.texts(t0, "bot-llm-text", false); got != "Two plus two is four." {
-		t.Errorf("bot text = %q", got)
-	}
-	if got := c.texts(t0, "user-transcription", true); got != "What is two plus two?" {
-		t.Errorf("finals = %q", got)
-	}
-	if c.interims(t0) != 1 {
-		t.Error("interims")
-	}
-}
-
 // -write-docs accumulates: a rerun replaces only its own (profile, mode, scenario) cells.
 func TestMergeDocsAccumulates(t *testing.T) {
 	dir := t.TempDir()

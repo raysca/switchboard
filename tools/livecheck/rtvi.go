@@ -2,119 +2,35 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 
-	"govoice/core"
 	"govoice/tools/internal/stack"
 	"govoice/transport/ws"
 )
 
-type ev struct {
-	t     time.Time
-	kind  string // audio | RTVI type
-	text  string
-	final bool
-	dur   time.Duration // audio: playback length of the chunk
+type client struct {
+	*stack.Client
+	next time.Time
+	n    int // server session number (1-based dial order)
 }
 
-// client is one RTVI WebSocket call: it records every server event with its arrival time and
-// streams audio at real-time pace.
-type client struct {
-	conn     *websocket.Conn
-	mu       sync.Mutex
-	evs      []ev
-	next     time.Time
-	closed   chan struct{} // closed when the connection ends; closeErr/closeAt are set before
-	closeErr error
-	closeAt  time.Time
-	t0       time.Time // bot-ready
-	n        int       // server session number (1-based dial order)
-}
+// liveMaxEvents bounds a livecheck call's recorded events (audio frames included).
+const liveMaxEvents = 1 << 20
 
 func dial(ctx context.Context, s *server, fl string, pushToTalk bool) (*client, error) {
 	tok, err := s.st.Token("livecheck", fl)
 	if err != nil {
 		return nil, err
 	}
-	dctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	conn, _, err := websocket.Dial(dctx, "ws://"+s.public+"/ws?token="+tok, nil)
+	sc, err := stack.DialN(ctx, s.public, tok, pushToTalk, liveMaxEvents)
 	if err != nil {
-		return nil, fmt.Errorf("dial: %v", err)
-	}
-	conn.SetReadLimit(1 << 20)
-	if err := stack.Handshake(dctx, conn, pushToTalk); err != nil {
-		conn.CloseNow()
 		return nil, err
 	}
 	s.calls++
-	c := &client{conn: conn, closed: make(chan struct{}), n: s.calls}
-	c.t0 = time.Now()
-	go c.reader(context.Background())
-	c.next = time.Now()
-	return c, nil
-}
-
-func (c *client) reader(ctx context.Context) {
-	seq := uint64(1)
-	for {
-		typ, data, err := c.conn.Read(ctx)
-		if err != nil {
-			c.closeErr, c.closeAt = err, time.Now()
-			close(c.closed)
-			return
-		}
-		if typ != websocket.MessageBinary {
-			continue
-		}
-		seq++
-		f, err := ws.DecodeBinaryFrame(data, seq, time.Now())
-		if err != nil {
-			continue
-		}
-		e := ev{t: time.Now()}
-		switch fr := f.(type) {
-		case *core.InputAudioFrame: // bot audio as seen by the client
-			e.kind = "audio"
-			e.dur = fr.Duration
-			if e.dur == 0 && fr.SampleRate > 0 {
-				e.dur = time.Duration(len(fr.Samples)/2/max(fr.Channels, 1)) * time.Second / time.Duration(fr.SampleRate)
-			}
-		case *ws.WireMessageFrame:
-			var m struct {
-				Type string
-				Data struct {
-					Text  string
-					Final bool
-					Error string
-				}
-			}
-			if json.Unmarshal([]byte(fr.Data), &m) != nil {
-				continue
-			}
-			e.kind, e.text, e.final = m.Type, m.Data.Text, m.Data.Final
-			if m.Type == "error" {
-				e.text = m.Data.Error // category only
-			}
-		default:
-			continue
-		}
-		c.mu.Lock()
-		c.evs = append(c.evs, e)
-		c.mu.Unlock()
-	}
-}
-
-func (c *client) snap() []ev {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]ev(nil), c.evs...)
+	return &client{Client: sc, n: s.calls, next: time.Now()}, nil
 }
 
 func (c *client) pace(b []byte) error {
@@ -123,32 +39,17 @@ func (c *client) pace(b []byte) error {
 	}
 	c.next = c.next.Add(chunkMS * time.Millisecond)
 	f, _ := ws.EncodeAudioFrame(b, rate, 1)
-	return c.conn.Write(context.Background(), websocket.MessageBinary, f)
-}
-
-// sendMsg sends one RTVI client message.
-func (c *client) sendMsg(typ string, data any) error {
-	b, _ := json.Marshal(map[string]any{"id": "m1", "label": "rtvi-ai", "type": typ, "data": data})
-	f, err := ws.EncodeMessageFrame(string(b))
-	if err != nil {
-		return err
-	}
-	return c.conn.Write(context.Background(), websocket.MessageBinary, f)
-}
-
-// sendText sends an RTVI send-text client message (a text turn, no audio).
-func (c *client) sendText(text string) error {
-	return c.sendMsg("send-text", map[string]string{"content": text})
+	return c.Conn.Write(context.Background(), websocket.MessageBinary, f)
 }
 
 // ptt presses (true) or releases (false) the push-to-talk button.
 func (c *client) ptt(pressed bool) error {
-	return c.sendMsg("push-to-talk", map[string]bool{"pressed": pressed})
+	return c.SendMsg("push-to-talk", map[string]bool{"pressed": pressed})
 }
 
 // setMuted mutes or unmutes the caller server-side.
 func (c *client) setMuted(muted bool) error {
-	return c.sendMsg("set-muted", map[string]bool{"muted": muted})
+	return c.SendMsg("set-muted", map[string]bool{"muted": muted})
 }
 
 // stream sends PCM in real time; the caller gets the wall-clock start and end.
@@ -173,7 +74,7 @@ func (c *client) wait(limit time.Duration, cond func() bool) bool {
 			return true
 		}
 		select {
-		case <-c.closed:
+		case <-c.Closed():
 			return false
 		default:
 		}
@@ -187,7 +88,7 @@ func (c *client) wait(limit time.Duration, cond func() bool) bool {
 // idle waits without sending anything (a muted client); reports whether the connection stayed open.
 func (c *client) idle(d time.Duration) (alive bool) {
 	select {
-	case <-c.closed:
+	case <-c.Closed():
 		return false
 	case <-time.After(d):
 		return true
@@ -196,7 +97,7 @@ func (c *client) idle(d time.Duration) (alive bool) {
 
 func (c *client) isClosed() bool {
 	select {
-	case <-c.closed:
+	case <-c.Closed():
 		return true
 	default:
 		return false
@@ -205,52 +106,10 @@ func (c *client) isClosed() bool {
 
 func (c *client) quiet(d time.Duration) { c.wait(d, nil) }
 
-func (c *client) firstAfter(t time.Time, kinds ...string) (ev, bool) {
-	for _, e := range c.snap() {
-		if e.t.After(t) {
-			for _, k := range kinds {
-				if e.kind == k {
-					return e, true
-				}
-			}
-		}
-	}
-	return ev{}, false
-}
-
-func (c *client) has(t time.Time, kind string) bool { _, ok := c.firstAfter(t, kind); return ok }
-
-// texts joins event texts of a kind after t ("final" restricts transcripts to finals). Streamed
-// bot text keeps its own spacing; transcripts are joined with a space.
-func (c *client) texts(t time.Time, kind string, finalOnly bool) string {
-	var parts []string
-	for _, e := range c.snap() {
-		if e.t.After(t) && e.kind == kind && (!finalOnly || e.final) {
-			parts = append(parts, e.text)
-		}
-	}
-	if kind == "bot-llm-text" {
-		return strings.TrimSpace(strings.Join(parts, ""))
-	}
-	for i := range parts {
-		parts[i] = strings.TrimSpace(parts[i])
-	}
-	return strings.Join(parts, " ")
-}
-
-func (c *client) count(t time.Time, kind string) (n int) {
-	for _, e := range c.snap() {
-		if e.t.After(t) && e.kind == kind {
-			n++
-		}
-	}
-	return
-}
-
 // interims counts non-final user transcripts after t: nonzero means the STT sends interim results.
 func (c *client) interims(t time.Time) (n int) {
-	for _, e := range c.snap() {
-		if e.t.After(t) && e.kind == "user-transcription" && !e.final {
+	for _, e := range c.Snap() {
+		if e.At.After(t) && e.Kind == "user-transcription" && !e.Final {
 			n++
 		}
 	}
@@ -261,14 +120,14 @@ func (c *client) interims(t time.Time) (n int) {
 // frame after from followed by a gap >= gap. ok=false when audio never paused.
 func (c *client) audioRunEnd(from time.Time, gap time.Duration) (time.Time, bool) {
 	var last time.Time
-	for _, e := range c.snap() {
-		if e.kind != "audio" || e.t.Before(from) {
+	for _, e := range c.Snap() {
+		if e.Kind != "audio" || e.At.Before(from) {
 			continue
 		}
-		if !last.IsZero() && e.t.Sub(last) >= gap {
+		if !last.IsZero() && e.At.Sub(last) >= gap {
 			return last, true
 		}
-		last = e.t
+		last = e.At
 	}
 	if !last.IsZero() && time.Since(last) >= gap { // audio ended and nothing followed
 		return last, true
@@ -277,10 +136,10 @@ func (c *client) audioRunEnd(from time.Time, gap time.Duration) (time.Time, bool
 }
 
 func (c *client) audioNow(within time.Duration) bool {
-	ev := c.snap()
+	ev := c.Snap()
 	for i := len(ev) - 1; i >= 0; i-- {
-		if ev[i].kind == "audio" {
-			return time.Since(ev[i].t) < within
+		if ev[i].Kind == "audio" {
+			return time.Since(ev[i].At) < within
 		}
 	}
 	return false
@@ -290,7 +149,7 @@ func (c *client) close() {
 	for i := 0; i < 100 && c.audioNow(300*time.Millisecond); i++ {
 		time.Sleep(20 * time.Millisecond)
 	}
-	_ = c.conn.Close(websocket.StatusNormalClosure, "")
+	_ = c.Conn.Close(websocket.StatusNormalClosure, "")
 }
 
 // timeline prints every non-audio event and bot audio runs (gap >= 250 ms starts a new run),
@@ -300,24 +159,24 @@ func (c *client) timeline() {
 	n := 0
 	flush := func() {
 		if n > 0 {
-			fmt.Fprintf(stdout, "    %7.2fs audio run %d frames until %.2fs\n", runStart.Sub(c.t0).Seconds(), n, runEnd.Sub(c.t0).Seconds())
+			fmt.Fprintf(stdout, "    %7.2fs audio run %d frames until %.2fs\n", runStart.Sub(c.T0).Seconds(), n, runEnd.Sub(c.T0).Seconds())
 			n = 0
 		}
 	}
-	for _, e := range c.snap() {
-		if e.kind == "audio" {
-			if n > 0 && e.t.Sub(runEnd) >= 250*time.Millisecond {
+	for _, e := range c.Snap() {
+		if e.Kind == "audio" {
+			if n > 0 && e.At.Sub(runEnd) >= 250*time.Millisecond {
 				flush()
 			}
 			if n == 0 {
-				runStart = e.t
+				runStart = e.At
 			}
 			n++
-			runEnd = e.t
+			runEnd = e.At
 			continue
 		}
 		flush()
-		fmt.Fprintf(stdout, "    %7.2fs %s %q final=%v\n", e.t.Sub(c.t0).Seconds(), e.kind, truncate(e.text, 60), e.final)
+		fmt.Fprintf(stdout, "    %7.2fs %s %q final=%v\n", e.At.Sub(c.T0).Seconds(), e.Kind, truncate(e.Text, 60), e.Final)
 	}
 	flush()
 }

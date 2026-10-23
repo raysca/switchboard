@@ -230,10 +230,10 @@ func runScenario(ctx context.Context, cfg runCfg, srv *server, fl string, it pla
 	t0 := time.Now()
 	reqBefore := srv.requests()
 	var overBudget atomic.Bool
-	stopWatch := watchSpend(cfg.act, srv.requestTotal, 250*time.Millisecond, func() { overBudget.Store(true); _ = c.conn.CloseNow() })
+	stopWatch := watchSpend(cfg.act, srv.requestTotal, 250*time.Millisecond, func() { overBudget.Store(true); _ = c.Conn.CloseNow() })
 	var timedOut atomic.Bool
-	wd := time.AfterFunc(cfg.scenarioTimeout, func() { timedOut.Store(true); _ = c.conn.CloseNow() })
-	stopOnCancel := context.AfterFunc(ctx, func() { _ = c.conn.CloseNow() }) // Ctrl-C ends the call now
+	wd := time.AfterFunc(cfg.scenarioTimeout, func() { timedOut.Store(true); _ = c.Conn.CloseNow() })
+	stopOnCancel := context.AfterFunc(ctx, func() { _ = c.Conn.CloseNow() }) // Ctrl-C ends the call now
 	func() {
 		defer func() {
 			if p := recover(); p != nil {
@@ -266,7 +266,7 @@ func runScenario(ctx context.Context, cfg runCfg, srv *server, fl string, it pla
 		srv.timeline(c.n)
 	}
 	if it.sc.id == "S5" || it.sc.id == "S8" {
-		_ = c.conn.CloseNow()
+		_ = c.Conn.CloseNow()
 	} else {
 		c.close()
 	}
