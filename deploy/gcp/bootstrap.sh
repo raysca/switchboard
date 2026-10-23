@@ -4,9 +4,10 @@
 # DRY_RUN=1 prints every command and runs none (and never prints a secret value).
 #
 # Required environment:
-#   PROJECT_ID  GITHUB_REPO (owner/name)
+#   PROJECT_ID
 #   XAI_API_KEY  ELEVENLABS_API_KEY  GOOGLE_API_KEY   provider keys (Gemini uses GOOGLE_API_KEY)
 #   GOOGLE_SA_KEY_FILE   path to the service-account JSON for Google speech (STT/TTS)
+# GITHUB_REPO (owner/name) is taken from the origin remote (or gh) when not exported.
 # Optional: REGION (us-central1)  AR_REPO (switchboard)  SQL_INSTANCE (switchboard-db)
 #           BILLING_ACCOUNT + BUDGET_USD (150)  for a budget alert
 #           OPENAI_API_KEY DEEPGRAM_API_KEY CARTESIA_API_KEY NVIDIA_API_KEY   more providers (each one set, or already in
@@ -18,8 +19,15 @@
 set -euo pipefail
 
 need() { [[ -n "${!1:-}" ]] || { echo "bootstrap: $1 is required" >&2; exit 2; }; }
-for v in PROJECT_ID GITHUB_REPO XAI_API_KEY ELEVENLABS_API_KEY GOOGLE_API_KEY GOOGLE_SA_KEY_FILE; do need "$v"; done
-[[ "$GITHUB_REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || { echo "bootstrap: GITHUB_REPO must look like owner/name" >&2; exit 2; }
+for v in PROJECT_ID XAI_API_KEY ELEVENLABS_API_KEY GOOGLE_API_KEY GOOGLE_SA_KEY_FILE; do need "$v"; done
+# The repo the deploy workflow runs from: exported GITHUB_REPO wins, then gh, then the origin remote.
+if [[ -z "${GITHUB_REPO:-}" ]] && command -v gh >/dev/null 2>&1; then
+  GITHUB_REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
+fi
+if [[ -z "${GITHUB_REPO:-}" ]]; then
+  GITHUB_REPO="$(git remote get-url origin 2>/dev/null | sed -E 's#^(https://github\.com/|git@github\.com:)##; s#\.git$##' || true)"
+fi
+[[ "$GITHUB_REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || { echo "bootstrap: GITHUB_REPO must look like owner/name (export it; no origin remote or gh found)" >&2; exit 2; }
 [[ -r "$GOOGLE_SA_KEY_FILE" ]] || { echo "bootstrap: GOOGLE_SA_KEY_FILE is not a readable file" >&2; exit 2; }
 
 REGION="${REGION:-us-central1}"
