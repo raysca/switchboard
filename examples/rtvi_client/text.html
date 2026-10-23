@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Switchboard — text-only agent in the browser</title>
+  <style>
+    :root { --bg: #0f172a; --card: #1e293b; --border: #334155; --text: #f8fafc; --muted: #94a3b8; --primary: #38bdf8; --danger: #ef4444; --ok: #4ade80; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); display: flex; justify-content: center; }
+    .container { width: 100%; max-width: 760px; display: flex; flex-direction: column; gap: 16px; }
+    h1 { margin: 0 0 4px; font-size: 22px; color: var(--primary); }
+    .subtitle { margin: 0; color: var(--muted); font-size: 14px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+    .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 12px; }
+    label.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+    input[type="text"], input[type="url"], input[type="password"] { padding: 10px 12px; border-radius: 8px; font-size: 14px; border: 1px solid var(--border); background: var(--bg); color: var(--text); min-width: 0; }
+    button { padding: 10px 16px; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+    button.primary { background: #0284c7; border-color: #0284c7; color: #fff; }
+    button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+    button[aria-pressed="true"] { background: #14532d; border-color: var(--ok); color: var(--ok); }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .grow { flex: 1; }
+    .error { color: var(--danger); font-size: 13px; min-height: 1em; margin-top: 8px; }
+    .badge { display: inline-block; padding: 4px 10px; border-radius: 9999px; font-size: 12px; font-weight: 600; background: var(--border); color: var(--muted); }
+    .badge.connected { background: #14532d; color: var(--ok); }
+    .transcript { min-height: 260px; max-height: 420px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
+    .message { padding: 10px 14px; border-radius: 8px; font-size: 14px; line-height: 1.5; max-width: 85%; }
+    .message.user { align-self: flex-end; background: #1e3a8a; color: #e0e7ff; }
+    .message.bot { align-self: flex-start; background: var(--card); border: 1px solid var(--border); }
+    .message.interim { opacity: .7; font-style: italic; }
+    .meta { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+    .text-row { display: flex; gap: 10px; margin-top: 12px; }
+    .text-row input { flex: 1; }
+    .note { font-size: 12px; color: var(--muted); line-height: 1.5; }
+    input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--primary); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Text-only agent, spoken by the browser</h1>
+      <p class="subtitle">The agent's speech stages are <code>silence</code>: Switchboard exchanges text, and this page listens and speaks with the browser's own speech.</p>
+    </header>
+
+    <div class="card">
+      <div class="fields">
+        <label class="field">Admin URL <input id="adminUrl" type="url" value="http://127.0.0.1:9090" autocomplete="off"></label>
+        <label class="field">Management key <input id="managementKey" type="password" autocomplete="off"></label>
+        <label class="field">Agent ID (a text-only agent) <input id="agentId" type="text" autocomplete="off"></label>
+        <label class="field">Server WebSocket URL <input id="wsUrl" type="url" value="ws://127.0.0.1:8080/ws" autocomplete="off"></label>
+      </div>
+      <div class="row">
+        <button id="btnConnect" class="primary">Connect</button>
+        <button id="btnDisconnect" class="danger" disabled>Disconnect</button>
+        <span class="grow"></span>
+        <span id="connBadge" class="badge" data-testid="connection-status" role="status">Disconnected</span>
+      </div>
+      <div id="errorMsg" class="error" role="alert" data-testid="connection-error"></div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="margin-bottom: 12px;">
+        <button id="btnListen" aria-pressed="false" disabled>Listen</button>
+        <label class="row" style="gap: 8px; font-size: 14px;"><input id="speakReplies" type="checkbox" checked> Speak replies</label>
+        <span id="speechNote" class="note"></span>
+      </div>
+      <div id="transcript" class="transcript" aria-live="polite">
+        <div class="message bot"><div class="meta">System</div>Enter the details above and click <strong>Connect</strong>. Then type, or click <strong>Listen</strong> and talk.</div>
+      </div>
+      <form id="textForm" class="text-row">
+        <label for="messageInput" class="meta" style="align-self: center; margin: 0;">Message</label>
+        <input id="messageInput" type="text" autocomplete="off" disabled>
+        <button id="btnSend" type="submit" class="primary" disabled>Send</button>
+      </form>
+    </div>
+
+    <p class="note">Privacy: browsers often run recognition and synthesis in the browser vendor's cloud. This keeps audio off Switchboard, not off the vendor.</p>
+  </div>
+
+  <script>
+    // This page talks to a text-only agent: no microphone audio is sent and none is played. It sends typed turns
+    // (RTVI send-text) and shows the reply text (bot-llm-text); recognition and synthesis are the browser's own.
+    let ws = null;
+    let sentAt = 0;          // when the last turn was sent, for the reply time
+    let botEl = null;        // the reply being streamed
+    let listening = false;   // the user wants recognition on
+    let recognition = null;
+
+    const $ = (id) => document.getElementById(id);
+    const [adminUrl, managementKey, agentId, wsUrl] = ['adminUrl', 'managementKey', 'agentId', 'wsUrl'].map($);
+    const configInputs = [adminUrl, managementKey, agentId, wsUrl];
+    const [btnConnect, btnDisconnect, btnListen, btnSend] = ['btnConnect', 'btnDisconnect', 'btnListen', 'btnSend'].map($);
+    const [connBadge, errorMsg, transcript, textForm, messageInput, speakReplies, speechNote] = ['connBadge', 'errorMsg', 'transcript', 'textForm', 'messageInput', 'speakReplies', 'speechNote'].map($);
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const canSpeak = 'speechSynthesis' in window;
+    if (!canSpeak) { speakReplies.checked = false; speakReplies.disabled = true; }
+    if (!SpeechRecognition) speechNote.textContent = 'This browser has no speech recognition: type instead.';
+
+    // Prefill from the client server (make example-web): it also finds a text-only agent for you.
+    fetch('/api/defaults').then((r) => (r.ok ? r.json() : null)).then((d) => {
+      if (!d) return;
+      adminUrl.value = d.adminUrl || adminUrl.value;
+      wsUrl.value = d.wsUrl || wsUrl.value;
+      agentId.value = agentId.value || d.textAgentId || d.agentId || '';
+      if (d.serverKey) managementKey.placeholder = 'Held by the client server (optional)';
+    }).catch(() => {});
+
+    function setConnected(on) {
+      connBadge.textContent = on ? 'Connected' : 'Disconnected';
+      connBadge.className = 'badge' + (on ? ' connected' : '');
+      messageInput.disabled = btnSend.disabled = !on;
+      btnListen.disabled = !on || !SpeechRecognition;
+    }
+
+    function addMessage(role, text, note) {
+      const el = document.createElement('div');
+      el.className = `message ${role}`;
+      el.dataset.testid = `transcript-${role}`;
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = role === 'user' ? 'You' : 'Agent';
+      const body = document.createElement('span');
+      body.className = 'text';
+      body.textContent = text;
+      el.append(meta, body);
+      if (note) { const n = document.createElement('div'); n.className = 'meta'; n.textContent = note; el.append(n); }
+      transcript.append(el);
+      transcript.scrollTop = transcript.scrollHeight;
+      return el;
+    }
+
+    // ---- Wire format: the same minimal protobuf codec as index.html (proto/frames.proto) ----
+    //   Frame { AudioRawFrame audio = 2; MessageFrame message = 4; }   MessageFrame { string data = 1; }
+    function writeVarint(arr, val) { while (val >= 0x80) { arr.push((val & 0x7F) | 0x80); val >>>= 7; } arr.push(val); }
+    function writeBytesField(arr, field, bytes) { arr.push((field << 3) | 2); writeVarint(arr, bytes.length); for (const b of bytes) arr.push(b); }
+    function sendRtvi(obj) {
+      const message = [];
+      writeBytesField(message, 1, new TextEncoder().encode(JSON.stringify(obj)));
+      const frame = [];
+      writeBytesField(frame, 4, message);
+      ws.send(new Uint8Array(frame));
+    }
+    function readVarint(arr, pos) {
+      let res = 0, mul = 1;
+      while (pos < arr.length) { const b = arr[pos++]; res += (b & 0x7F) * mul; if ((b & 0x80) === 0) break; mul *= 128; }
+      return [res, pos];
+    }
+    function readFields(u8) { // {fieldNumber: varint number | Uint8Array}
+      const fields = {};
+      let pos = 0;
+      while (pos < u8.length) {
+        let key, len;
+        [key, pos] = readVarint(u8, pos);
+        const field = Math.floor(key / 8), wire = key & 7;
+        if (wire === 0) [fields[field], pos] = readVarint(u8, pos);
+        else if (wire === 2) { [len, pos] = readVarint(u8, pos); fields[field] = u8.subarray(pos, pos + len); pos += len; }
+        else if (wire === 1) pos += 8;
+        else if (wire === 5) pos += 4;
+        else break;
+      }
+      return fields;
+    }
+    function handleBinaryFrame(buf) {
+      const frame = readFields(new Uint8Array(buf));
+      const data = frame[4] && readFields(frame[4])[1]; // bot audio frames (field 2) are silence here: ignored
+      if (data) { try { handleRtvi(JSON.parse(new TextDecoder().decode(data))); } catch (e) { /* not a message we know */ } }
+    }
+
+    // ---- Conversation ----
+    function sendTurn(text) {
+      text = text.trim();
+      if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+      if (canSpeak) speechSynthesis.cancel(); // a new turn interrupts the spoken reply
+      sentAt = performance.now();
+      botEl = null;
+      sendRtvi({ id: `text-${Date.now()}`, label: 'rtvi-ai', type: 'send-text', data: { content: text } });
+    }
+
+    function handleRtvi(msg) {
+      switch (msg.type) {
+        case 'bot-ready': setConnected(true); break;
+        case 'error': errorMsg.textContent = `Server error: ${msg.data?.error || 'unknown'}${msg.data?.fatal ? ' (fatal)' : ''}`; break;
+        case 'user-transcription': if (msg.data?.final) addMessage('user', msg.data.text); break;
+        case 'bot-llm-text':
+          if (!msg.data?.text) break;
+          if (!botEl) botEl = addMessage('bot', '', sentAt ? `Reply started in ${Math.round(performance.now() - sentAt)} ms` : '');
+          botEl.querySelector('.text').textContent += msg.data.text;
+          transcript.scrollTop = transcript.scrollHeight;
+          break;
+        case 'bot-llm-stopped': // the whole reply is here: say it
+          if (botEl && canSpeak && speakReplies.checked) speak(botEl.querySelector('.text').textContent);
+          botEl = null;
+          break;
+      }
+    }
+
+    function speak(text) {
+      if (recognition && listening) recognition.stop(); // do not hear ourselves; onend of the utterance resumes listening
+      const u = new SpeechSynthesisUtterance(text);
+      u.onend = u.onerror = () => { if (listening) startRecognition(); };
+      speechSynthesis.speak(u);
+    }
+
+    // ---- Browser recognition ----
+    function startRecognition() {
+      if (!SpeechRecognition || !ws) return;
+      recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = false; // final phrases only: each one is a turn
+      recognition.lang = navigator.language || 'en-US';
+      recognition.onresult = (e) => {
+        for (let i = e.resultIndex; i < e.results.length; i++) if (e.results[i].isFinal) sendTurn(e.results[i][0].transcript);
+      };
+      recognition.onend = () => { if (listening && !(canSpeak && speechSynthesis.speaking)) try { recognition.start(); } catch (err) { /* already running */ } };
+      recognition.onerror = (e) => { if (e.error === 'not-allowed') { listening = false; syncListen(); errorMsg.textContent = 'The browser refused the microphone for speech recognition.'; } };
+      try { recognition.start(); } catch (err) { /* already running */ }
+    }
+    function syncListen() { btnListen.setAttribute('aria-pressed', String(listening)); btnListen.textContent = listening ? 'Stop listening' : 'Listen'; }
+    btnListen.addEventListener('click', () => {
+      listening = !listening;
+      syncListen();
+      if (listening) startRecognition(); else if (recognition) recognition.stop();
+    });
+
+    // ---- Connection ----
+    btnConnect.addEventListener('click', async () => {
+      btnConnect.disabled = true;
+      configInputs.forEach((i) => (i.disabled = true));
+      errorMsg.textContent = '';
+      connBadge.textContent = 'Connecting...';
+      try {
+        const res = await fetch('/api/voice-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ adminUrl: adminUrl.value.trim(), managementKey: managementKey.value, agentId: agentId.value.trim() }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || !body?.data?.token) throw new Error(`voice token refused (${res.status} ${body?.error?.code || 'http_' + res.status}): ${body?.error?.message || res.statusText}`);
+        const sock = ws = new WebSocket(`${wsUrl.value.trim()}?token=${encodeURIComponent(body.data.token)}`);
+        sock.binaryType = 'arraybuffer';
+        btnDisconnect.disabled = false;
+        // A socket that is no longer the current one (disconnected, then reconnected) must not touch the page.
+        sock.onopen = () => { if (sock === ws) sendRtvi({ id: 'init-001', label: 'rtvi-ai', type: 'client-ready', data: { version: '2.1.0' } }); };
+        sock.onmessage = (e) => { if (sock === ws && e.data instanceof ArrayBuffer) handleBinaryFrame(e.data); };
+        sock.onclose = (e) => { if (sock !== ws) return; if (e.code !== 1000 && e.code !== 1005 && !errorMsg.textContent) errorMsg.textContent = `Connection closed (${e.code}${e.reason ? ': ' + e.reason : ''})`; cleanup(); };
+        sock.onerror = () => { if (sock === ws) cleanup(); };
+      } catch (err) {
+        errorMsg.textContent = 'Connection error: ' + err.message;
+        cleanup();
+      }
+    });
+    btnDisconnect.addEventListener('click', () => { if (ws) ws.close(); cleanup(); });
+    textForm.addEventListener('submit', (e) => { e.preventDefault(); sendTurn(messageInput.value); messageInput.value = ''; });
+
+    function cleanup() {
+      listening = false;
+      syncListen();
+      if (recognition) { recognition.onend = null; recognition.stop(); recognition = null; }
+      if (canSpeak) speechSynthesis.cancel();
+      ws = null;
+      botEl = null;
+      btnConnect.disabled = false;
+      btnDisconnect.disabled = true;
+      configInputs.forEach((i) => (i.disabled = false));
+      setConnected(false);
+    }
+  </script>
+</body>
+</html>

@@ -87,3 +87,28 @@ down, barge-in supported) or type into **Message** and click **Send text**.
 Test hooks: `data-testid="connection-status"` (`Disconnected` / `Connecting...` /
 `Connected` after `bot-ready`), `data-testid="connection-error"`, and transcript
 entries `data-testid="transcript-user"` / `data-testid="transcript-bot"`.
+
+---
+
+## 3. Text-only page (`/text`)
+
+For an agent with no server-side speech: its speech-to-text and text-to-speech are the
+keyless `silence` provider ([providers.md](../../docs/providers.md#silence-text-only)) and
+only the model is real. This page connects to such an agent, sends what you type or say as
+RTVI `send-text` turns, and shows the reply text as it streams. Listening and speaking are
+the **browser's own**: the Web Speech API's recognition for **Listen** and speech synthesis
+for **Speak replies** (Chrome and Edge have recognition; without it you type). No microphone
+audio is sent to or played from Switchboard.
+
+```bash
+npm start                      # then open http://127.0.0.1:3000/text
+```
+
+With `make dev` running, `make example-web` serves it, finds the seeded **Text assistant**
+agent through the server's own key and prefills it. By hand, give it the Admin URL,
+Management key and the ID of any agent whose speech-to-text and text-to-speech are `silence`.
+Each reply shows how long it took to start. The page keeps `index.html`'s small protobuf
+codec (`proto/frames.proto`); it is self-contained like the other page.
+
+Browsers often run recognition and synthesis in the browser vendor's cloud, so this keeps
+audio off Switchboard, not off the vendor.
