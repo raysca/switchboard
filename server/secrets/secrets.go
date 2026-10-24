@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"govoice/server/storage"
 )
@@ -62,8 +63,9 @@ type Resolver interface {
 
 // Info describes a secret without its value.
 type Info struct {
-	Name   string
-	Source string // "environment", "directory" or "store"
+	Name                  string
+	Source                string    // "environment", "directory" or "store"
+	UpdatedAt, LastUsedAt time.Time // the store only; zero otherwise
 }
 
 // Chain tries each resolver in order.
@@ -95,7 +97,7 @@ func (e Env) List(environ []string) []Info {
 	for _, kv := range environ {
 		name, _, _ := strings.Cut(kv, "=")
 		if _, ok := e.Resolve(context.Background(), name); ok {
-			out = append(out, Info{name, sourceEnv})
+			out = append(out, Info{Name: name, Source: sourceEnv})
 		}
 	}
 	return out
@@ -146,7 +148,7 @@ func (d Dir) List() []Info {
 	var out []Info
 	for _, e := range entries {
 		if _, ok := d.Resolve(context.Background(), e.Name()); ok {
-			out = append(out, Info{e.Name(), sourceDir})
+			out = append(out, Info{Name: e.Name(), Source: sourceDir})
 		}
 	}
 	return out
@@ -270,7 +272,7 @@ func (s Store) List(ctx context.Context) ([]Info, error) {
 	}
 	out := make([]Info, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, Info{r.Name, sourceStore})
+		out = append(out, Info{Name: r.Name, Source: sourceStore, UpdatedAt: r.UpdatedAt, LastUsedAt: r.LastUsedAt})
 	}
 	return out, nil
 }

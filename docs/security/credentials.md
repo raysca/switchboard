@@ -1,6 +1,8 @@
 # Provider credential security
 
-Provider secrets exist only in the server's process environment. There is no credential store, no credential API and no encryption keyring: the database has no secret column, and `GOVOICE_CREDENTIAL_KEYS` is no longer read. [providers.md](../providers.md) lists every variable.
+Provider secrets exist only in the server's process environment. There is no provider credential store, no provider credential API and no provider encryption keyring: the agent tables have no secret column, and `GOVOICE_CREDENTIAL_KEYS` is no longer read. [providers.md](../providers.md) lists every variable.
+
+Credentials for tools and MCP servers are a separate class: they belong to the people who author agents, change often, and must not need a redeploy. They are described in [Tool and MCP secrets](#tool-and-mcp-secrets) below and never mix with provider keys.
 
 ## What is read, and when
 
@@ -16,13 +18,28 @@ Nobody, through the server. Management responses, readiness (`missing_env`), err
 
 Environment values are server-wide: every agent on the server uses the same key for a provider. There is no per-tenant isolation.
 
-## MCP bearer tokens
+## Tool and MCP secrets
 
-An MCP server names its token with `auth_env`, which must match `MCP_TOKEN_[A-Z0-9_]{1,48}`. The prefix is checked when the server is created and again every time the token is read, so a management-key holder can never make the server send an unrelated secret (a provider key, `GOVOICE_MANAGEMENT_API_KEY`) to an endpoint they choose, even through a row written straight into the database. Responses carry `auth_env` and `auth_env_set`, never the token.
+An MCP server names its credential with `auth_env`. The value is a secret name, and the server finds it, in this order, in:
+
+1. **The environment**: `MCP_TOKEN_[A-Z0-9_]{1,48}` and `HTTP_TOKEN_[A-Z0-9_]{1,48}`. Nothing else is ever read from the environment on behalf of a tool, so a management-key holder cannot make the server send a provider key or `GOVOICE_MANAGEMENT_API_KEY` to an endpoint they choose.
+2. **A directory of files** (`secrets.dir`): one file per secret, named in lower case (`crm-api`). It works on any platform that mounts secrets as files (Kubernetes, Docker and Compose, Nomad, systemd credentials, Cloud Run volumes). The file is read on every use, so a rotated file takes effect without a restart. Symbolic links are followed only while they stay inside the directory.
+3. **The encrypted store** in the server's own database (SQLite or Postgres), written through [`/api/v1/secrets`](../api/secrets.md) or the dashboard. It is enabled by one master key in `SWITCHBOARD_SECRETS_KEY`, set once at deployment; adding a secret needs no redeploy.
+
+The names are checked when a server is created and again at every read. Responses carry the name and whether it resolves (`auth_env_set`), never the value. No API reads a secret back.
+
+### The encrypted store
+
+- **Sealing.** Each value is encrypted with AES-256-GCM, a random nonce, and the secret name and key id as associated data, so a row copied under another name does not open. The database holds only the sealed bytes.
+- **Master key.** `SWITCHBOARD_SECRETS_KEY` is `id:base64key` with a 32-byte key (for example `k1:` followed by the output of `openssl rand -base64 32`). With the variable unset the store is off: `PUT /secrets/{name}` answers 503 `secrets_store_disabled`, and the environment and directory backends still work. A malformed key stops the server at start.
+- **Rotation.** List several keys, newest first: `k2:<new>,k1:<old>`. New writes use the first key and every key can still open old rows. Re-sealing is `Store.Reseal`; once every row has been re-sealed, drop the old key. Losing every key that sealed a row makes that secret unrecoverable; set it again.
+- **What it protects against.** A database dump or backup alone does not reveal a secret. It does not protect against someone who can read both the database and the process environment, or who can call the management API with a tool that sends the secret to a host they control: the master key, the management key and the destination checks (HTTPS, public addresses, no redirects) are the controls.
+- **Audit.** Every write and delete is logged with the secret name and request id, never the value. `last_used_at` shows when a secret was last resolved.
+- **Deletion.** A secret an MCP server uses cannot be deleted (409 `secret_in_use`, with the servers listed).
 
 ## Rotation
 
-Rotation is a redeploy: change the variable (or the service-account file) and restart. A call already running keeps the clients it built with the old key until it ends. There is no in-place rotate action by design.
+Provider keys: rotation is a redeploy: change the variable (or the service-account file) and restart. (Tool and MCP secrets in the directory or the store rotate without one.) A call already running keeps the clients it built with the old key until it ends. There is no in-place rotate action by design.
 
 ## Catalog overlay
 

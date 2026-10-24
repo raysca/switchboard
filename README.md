@@ -47,7 +47,7 @@ make example-cli TEXT="Hello"  # or a CLI call (omit TEXT for a voice clip)
 | Deploy it | [Deployment guide](docs/deployment.md), [Cloud Run rehearsal](deploy/rehearsal/README.md) |
 | Run it | [Operations](docs/operations.md), [Agent evals](docs/operations/agent-evals.md), [Observability](docs/observability.md), [Storage](docs/storage.md), [Privacy and retention](docs/privacy.md) |
 | Integrate with it | [Management API v1](docs/api/v1.md), [MCP API](docs/api/mcp.md), [Providers](docs/providers.md), [Audio filters](docs/audio-filters.md), [Output pacing](docs/output-pacing-and-flush.md) |
-| Secure it | [Provider credentials](docs/security/credentials.md), [MCP transport and security](docs/security/mcp.md) |
+| Secure it | [Credentials and secrets](docs/security/credentials.md), [Secrets API](docs/api/secrets.md), [MCP transport and security](docs/security/mcp.md) |
 | Check compatibility | [Pipecat compatibility](docs/pipecat-compatibility.md), [parity matrix](docs/pipecat-parity-matrix.md), [decisions](docs/decisions/pipecat-evals.md) |
 | Plan upcoming work | [Next implementation phases](docs/roadmap-next-phases.md) |
 | Measure it | [Benchmarks and perf gates](docs/benchmarks/README.md) |

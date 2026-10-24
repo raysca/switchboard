@@ -69,6 +69,13 @@ type Config struct {
 		SyncInterval   time.Duration `yaml:"sync_interval"`
 	} `yaml:"mcp"`
 
+	// Secrets: where tool and MCP credentials are found, besides MCP_TOKEN_* and HTTP_TOKEN_* variables. Dir is a
+	// directory with one file per secret (any platform that mounts secrets as files). The encrypted store in the
+	// database is enabled by the master key in SWITCHBOARD_SECRETS_KEY (see docs/security/credentials.md).
+	Secrets struct {
+		Dir string `yaml:"dir"`
+	} `yaml:"secrets"`
+
 	// Demo installs at start-up (the admin UI button works without it).
 	Demo DemoConfig `yaml:"demo"`
 

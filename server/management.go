@@ -16,6 +16,7 @@ import (
 	"govoice/server/api"
 	"govoice/server/mcp"
 	"govoice/server/retention"
+	"govoice/server/secrets"
 	"govoice/server/storage"
 	"govoice/server/trace"
 )
@@ -27,6 +28,7 @@ type management struct {
 	retention *retention.Job
 	mcpSync   *mcp.Syncer
 	recStop   context.CancelFunc // ends the recording janitor
+	secrets   secrets.Store      // encrypted secrets; disabled without SWITCHBOARD_SECRETS_KEY
 }
 
 // EnableManagement opens storage and installs the agent, provider, MCP and
@@ -55,7 +57,16 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	fail := func(err error) error { m.close(); return err }
 
 	m.traces = trace.NewAdapter(store.Traces())
-	mcpTokens := mcp.EnvTokens(func(k string) string { return s.env(k) })
+	keys, err := secrets.ParseKeyring(s.env("SWITCHBOARD_SECRETS_KEY"))
+	if err != nil {
+		return fail(fmt.Errorf("SWITCHBOARD_SECRETS_KEY: %w", err))
+	}
+	m.secrets = secrets.Store{Repo: store.Secrets(), Keys: keys}
+	mcpTokens := mcp.ResolverTokens(secrets.Chain{
+		secrets.Env{Getenv: s.env},
+		secrets.Dir{Path: s.cfg.Secrets.Dir},
+		m.secrets,
+	})
 	mcpCfg := mcp.ServiceConfig{Store: store, Remote: mcp.NewSDKClient(), Tokens: mcpTokens, Tracer: m.traces, Timeout: s.cfg.MCP.Timeout}
 	if s.cfg.MCP.AllowLocalHTTP {
 		s.logger.Warn("MCP allows plain HTTP to loopback (development and tests)")
@@ -108,6 +119,7 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	s.agents = agents
 	s.setAgentManagementAPI(api.NewAgentsHandler(s.agents))
 	s.setMCPManagementAPI(mcp.Handler(mcpService))
+	s.setSecretsManagementAPI(secrets.Handler(secrets.Sources{Env: secrets.Env{Getenv: s.env}, Dir: secrets.Dir{Path: s.cfg.Secrets.Dir}, Store: m.secrets, Logger: s.logger}))
 	s.setSessionManagementAPI(api.NewTracesHandler(store.Sessions(), store.Traces()))
 
 	if policy != nil {

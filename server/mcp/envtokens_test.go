@@ -6,8 +6,8 @@ import (
 )
 
 func TestValidAuthEnv(t *testing.T) {
-	good := []string{"MCP_TOKEN_CRM", "MCP_TOKEN_A", "MCP_TOKEN_" + strings.Repeat("X", 48)}
-	bad := []string{"", "TOKEN_SECRET", "GOVOICE_MANAGEMENT_API_KEY", "XAI_API_KEY", "mcp_token_crm",
+	good := []string{"MCP_TOKEN_CRM", "MCP_TOKEN_A", "MCP_TOKEN_" + strings.Repeat("X", 48), "HTTP_TOKEN_CRM", "crm-api", "mcp_token_crm"}
+	bad := []string{"", "TOKEN_SECRET", "GOVOICE_MANAGEMENT_API_KEY", "XAI_API_KEY", "Crm-Api", "../x",
 		"MCP_TOKEN_", "MCP_TOKEN_A B", "MCP_TOKEN_a", "MCP_TOKEN_" + strings.Repeat("X", 49), "MCP_TOKEN_A\n", "XMCP_TOKEN_A"}
 	for _, n := range good {
 		if !ValidAuthEnv(n) {

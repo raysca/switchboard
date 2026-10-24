@@ -1,0 +1,49 @@
+# Secrets API
+
+Credentials that tools and MCP servers send to other services. A tool or server refers to a secret by name; the value is looked up when it is used and is never returned by any endpoint. How the names are found, how the store is sealed and how to rotate the master key is in [Tool and MCP secrets](../security/credentials.md#tool-and-mcp-secrets).
+
+All endpoints need the management key (`Authorization: Bearer <key>`) and use the common envelope of [v1.md](v1.md).
+
+| Method and path | Purpose |
+|---|---|
+| `GET /api/v1/secrets` | List the secrets the server can resolve, from every backend, without values |
+| `PUT /api/v1/secrets/{name}` | Create or replace a stored secret |
+| `DELETE /api/v1/secrets/{name}` | Delete a stored secret that nothing uses |
+
+There is no `GET /api/v1/secrets/{name}`: a value cannot be read back.
+
+## List
+
+```json
+{ "data": [
+  { "name": "MCP_TOKEN_CRM", "source": "environment", "writable": false },
+  { "name": "billing-api",   "source": "directory",   "writable": false },
+  { "name": "crm-api",       "source": "store",       "writable": true,
+    "updated_at": "2026-10-24T09:12:00Z", "last_used_at": "2026-10-24T09:30:11Z" }
+] }
+```
+
+`source` is `environment`, `directory` or `store`. Only environment variables named `MCP_TOKEN_*` or `HTTP_TOKEN_*` and files in `secrets.dir` appear; nothing else in the environment is listed.
+
+## Create or replace
+
+```
+PUT /api/v1/secrets/crm-api
+{ "value": "…" }
+```
+
+The name is 1 to 63 characters: lower-case letters, digits, `-` and `_`, starting with a letter or digit. The value is 1 to 4096 characters with no spaces or control characters. The response carries the name and source, not the value.
+
+| Status and code | Meaning |
+|---|---|
+| 400 `invalid_secret` | the name or the value is not allowed |
+| 409 `secret_managed_externally` | a file of that name exists in `secrets.dir`; the directory is consulted before the store |
+| 503 `secrets_store_disabled` | `SWITCHBOARD_SECRETS_KEY` is not set |
+
+## Delete
+
+`204` on success, `404 not_found` when no stored secret has that name, and `409 secret_in_use` with the referencing servers in `error.details` (`kind`, `id`, `name`) while anything uses it. Environment and directory secrets are changed where they live, not here.
+
+## Using a secret
+
+Set an MCP server's `auth_env` to the secret name (`MCP_TOKEN_CRM`, `billing-api` or `crm-api`). `auth_env_set` in the server view says whether the name currently resolves.

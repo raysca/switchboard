@@ -95,3 +95,24 @@ func finishSecret(row SecretRow, created, updated string, used sql.NullString) (
 	}
 	return row, nil
 }
+
+// SecretUse names something that refers to a secret by name and would stop working if it were deleted.
+type SecretUse struct{ Kind, ID, Name string }
+
+// Uses lists what refers to the secret: today the MCP servers that authenticate with it.
+func (r SecretsRepository) Uses(ctx context.Context, name string) ([]SecretUse, error) {
+	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT id,name FROM mcp_servers WHERE auth_env=? ORDER BY name,id"), name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SecretUse
+	for rows.Next() {
+		u := SecretUse{Kind: "mcp_server"}
+		if err := rows.Scan(&u.ID, &u.Name); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
