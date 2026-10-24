@@ -156,6 +156,7 @@ Also present and not in the original roadmap: STT, TTS and model failover with c
 - Close the PII gaps listed in `docs/privacy.md`, and add a per-agent policy and an export path that applies it.
 - Recording disclosure that is played and recorded as played, not only acknowledged in configuration.
 - Document durability for the SQLite demo profiles versus production storage.
+- **Deferred, planned:** opt-in capture of tool arguments and results, off by default and set per agent. Today the recorder (`turnRecorder`, `server/call.go`) stores only a tool call's name, status and timing; `tool_calls.arguments_summary` and `result_summary` exist in the schema but are written empty, and traces and OTel drop `tool.arguments` and `tool.result` by policy (`docs/privacy.md`). Capture would fill those columns through `core/redact` with a size cap, extend the retention purge to them, add the fields to the API and the trace viewer, and relax the privacy statements and tests deliberately. Evaluation scorers are written against optional `Arguments` and `Result` fields on the tool-call input so tool-call accuracy and live correctness gain argument-level checks when capture lands, with no scorer changes.
 
 **Acceptance criteria**
 
@@ -212,6 +213,7 @@ Also present and not in the original roadmap: STT, TTS and model failover with c
 - Persist run history by agent version, with criterion-level results and the provider configuration used.
 - A configurable publish gate with an audited override.
 - Convert a real call into a sanitised scenario with an explicit redaction step.
+- Scorers (correctness, tool-call accuracy, answer relevancy, toxicity) share one interface for suites and for sampled live calls. Until the tool capture in Phase 4 exists, tool-call accuracy judges tool names, order and outcomes only, and live correctness sees the transcript, the step path and tool names.
 
 **Acceptance criteria**
 
