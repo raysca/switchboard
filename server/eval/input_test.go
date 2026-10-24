@@ -88,6 +88,33 @@ func TestBuildInput(t *testing.T) {
 	}
 }
 
+// The client view keeps the old Observe transcript: caller lines, agent text grouped per typed turn,
+// a new LLM reply starting a new sentence.
+func TestClientViewTranscript(t *testing.T) {
+	ev, sent := callEvents()
+	tr, _ := clientView(ev, sent)
+	want := []Line{{"agent", "Welcome to the desk."}, {"caller", "I want a car"}, {"agent", "Sure, connecting you. We sell hatchbacks."},
+		{"caller", "What kinds?"}, {"agent", "Many."}}
+	if !reflect.DeepEqual(tr, want) {
+		t.Errorf("transcript = %v", tr)
+	}
+}
+
+// BuildInput carries the client facts and prompts the scorers and judges read.
+func TestBuildInputCopiesClientFacts(t *testing.T) {
+	o := observed(storedCall(true, "succeeded"))
+	o.ClientErrors, o.Dropped = 2, 3
+	a := testAgent
+	a.Prompts = map[string]string{"front": "p"}
+	in := BuildInput(a, o, nil)
+	if in.ClientErrors != 2 || in.Dropped != 3 {
+		t.Errorf("client facts = %d errors, %d dropped", in.ClientErrors, in.Dropped)
+	}
+	if in.Prompts["front"] != "p" {
+		t.Error("prompts not carried")
+	}
+}
+
 func TestBuildInputStepOfTool(t *testing.T) {
 	st := Stored{
 		Spans: []storage.TraceSpan{{Name: "handoff.active", StartedAt: sec(2), AttributesJSON: `{"from_step":"front","to_step":"sales"}`}},

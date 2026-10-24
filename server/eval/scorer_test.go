@@ -231,3 +231,16 @@ func TestLookupAndOrder(t *testing.T) {
 		t.Error("unknown scorer found")
 	}
 }
+
+// An errored scorer (an unreachable judge, say) fails the case-run; a skipped one does not.
+func TestCaseRunPassedCountsErrors(t *testing.T) {
+	if CaseRunPassed([]Result{{Outcome: Pass}, {Outcome: Errored}}) {
+		t.Error("an errored scorer passed the case-run")
+	}
+	if CaseRunPassed([]Result{{Outcome: Pass}, {Outcome: Fail}}) {
+		t.Error("a failed scorer passed the case-run")
+	}
+	if !CaseRunPassed([]Result{{Outcome: Pass}, {Outcome: Skipped}}) {
+		t.Error("a skipped scorer failed the case-run")
+	}
+}
