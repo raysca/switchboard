@@ -30,9 +30,9 @@ describe("ConnectServerDialog", () => {
     const { onSubmit, user } = setup();
     await user.type(screen.getByLabelText("Name"), "crm");
     await user.type(screen.getByLabelText("Endpoint URL"), "https://mcp.example.com");
-    await user.type(screen.getByLabelText("Token variable (optional)"), "OPENAI_API_KEY");
+    await user.type(screen.getByLabelText("Secret (optional)"), "OPENAI_API_KEY");
     await user.click(screen.getByRole("button", { name: "Connect" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("Token variable must match MCP_TOKEN_ followed by A-Z, 0-9 or _ (max 48).");
+    expect(screen.getByRole("alert")).toHaveTextContent("Secret must be an MCP_TOKEN_ variable name or a lower-case name such as crm-api.");
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
@@ -49,7 +49,7 @@ describe("ConnectServerDialog", () => {
     await user.type(screen.getByLabelText("Name"), "billing");
     await user.type(screen.getByLabelText("Endpoint URL"), "https://mcp.example.com/billing");
     await user.type(screen.getByLabelText("Description (optional)"), "Invoices");
-    await user.type(screen.getByLabelText("Token variable (optional)"), "MCP_TOKEN_BILLING");
+    await user.type(screen.getByLabelText("Secret (optional)"), "MCP_TOKEN_BILLING");
     await user.click(screen.getByLabelText("Enabled for agents"));
     await user.click(screen.getByRole("button", { name: "Connect" }));
     expect(onSubmit).toHaveBeenCalledWith({ name: "billing", description: "Invoices", endpoint: "https://mcp.example.com/billing", transport: "streamable-http", auth_env: "MCP_TOKEN_BILLING", enabled: false });

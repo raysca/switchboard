@@ -22,6 +22,7 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
   const [connectError, setConnectError] = useState<string | null>(null);
 
   const serversQuery = useQuery({ queryKey: ["mcp-servers"], queryFn: () => client.getMCPServers(), enabled: !!keyValue, retry: false });
+  const secretsQuery = useQuery({ queryKey: ["secrets"], queryFn: () => client.getSecrets(), enabled: !!keyValue, retry: false });
   const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: () => client.getAgents(), enabled: !!keyValue, retry: false });
   const servers = serversQuery.data ?? [];
   // The list endpoint has no tool counts, so each server's detail is read; the selected one reuses the same cache entry.
@@ -59,7 +60,7 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
       )}
     </header>
   );
-  const dialog = connecting && <ConnectServerDialog pending={connect.isPending} error={connectError} onSubmit={(input) => connect.mutate(input)} onCancel={() => setConnecting(false)} />;
+  const dialog = connecting && <ConnectServerDialog secrets={secretsQuery.data?.secrets.map((s) => s.name)} pending={connect.isPending} error={connectError} onSubmit={(input) => connect.mutate(input)} onCancel={() => setConnecting(false)} />;
 
   // The page uses the whole workspace, like Providers: the server list as a column, the selected server beside it.
   const page = (body: ReactNode) => (
@@ -83,7 +84,7 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
     return page(
       <section className="message-panel">
         <h2>No MCP servers yet.</h2>
-        <p>Connect a remote MCP server by its endpoint to let agents call its tools. Tokens are read only from MCP_TOKEN_* environment variables.</p>
+        <p>Connect a remote MCP server by its endpoint to let agents call its tools. Credentials are named secrets: add them on the Secrets page, or set an MCP_TOKEN_* variable.</p>
       </section>,
     );
   }

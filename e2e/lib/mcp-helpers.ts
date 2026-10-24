@@ -9,7 +9,7 @@ export async function connectMCPServer(page: Page, name: string, endpoint: strin
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel("Name").fill(name);
   await dialog.getByLabel("Endpoint URL").fill(endpoint);
-  if (tokenVariable) await dialog.getByLabel("Token variable (optional)").fill(tokenVariable);
+  if (tokenVariable) await dialog.getByLabel("Secret (optional)").fill(tokenVariable);
   await dialog.getByRole("button", { name: "Connect", exact: true }).click();
   await expect(page.getByRole("heading", { name, level: 2 })).toBeVisible();
   await page.getByRole("button", { name: "Sync tools" }).click();

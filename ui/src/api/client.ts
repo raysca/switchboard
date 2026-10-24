@@ -288,6 +288,18 @@ export type CreateMCPServerInput = {
 /** PATCH body: a field left out is unchanged; `auth_env: ""` clears the token variable. */
 export type UpdateMCPServerInput = Partial<Pick<CreateMCPServerInput, "name" | "description" | "endpoint" | "auth_env">>;
 
+// Secrets: names and where they live; a value is only ever sent, never received.
+export const secretSchema = z.object({
+  name: z.string(),
+  source: z.enum(["environment", "directory", "store"]),
+  writable: z.boolean(),
+  updated_at: z.string().nullish(),
+  last_used_at: z.string().nullish(),
+});
+export type SecretDTO = z.infer<typeof secretSchema>;
+const secretListEnvelope = z.object({ data: z.object({ store_enabled: z.boolean(), secrets: z.array(secretSchema) }) });
+const secretEnvelope = z.object({ data: secretSchema });
+
 const mcpServersEnvelope = z.object({
   data: z.array(mcpServerSchema),
 });
@@ -610,6 +622,14 @@ export function createApiClient(
           },
         )
       ).data,
+
+    // Secrets endpoints
+    getSecrets: async () => (await request("/secrets", secretListEnvelope)).data,
+    putSecret: async (name: string, value: string) =>
+      (await request(`/secrets/${encodeURIComponent(name)}`, secretEnvelope, { method: "PUT", body: { value } })).data,
+    deleteSecret: async (name: string) => {
+      await request(`/secrets/${encodeURIComponent(name)}`, z.unknown(), { method: "DELETE" });
+    },
 
     // MCP endpoints
     getMCPServers: async () =>

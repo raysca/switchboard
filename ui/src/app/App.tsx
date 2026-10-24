@@ -21,6 +21,7 @@ import { getBrowserCapabilities } from "./capabilities";
 import { ProvidersView } from "../routes/providers/ProvidersView";
 import { AgentsView } from "../routes/agents/AgentsView";
 import { MCPView } from "../routes/mcp/MCPView";
+import { SecretsView } from "../routes/secrets/SecretsView";
 import { CallsView } from "../routes/sessions/CallsView";
 import { DashboardView } from "../routes/dashboard/DashboardView";
 import { ServerView } from "../routes/server/ServerView";
@@ -245,6 +246,7 @@ export function App({ initialPath }: { initialPath?: string }) {
                   path="/mcp-servers/:serverId"
                   element={<MCPView client={client} keyValue={keyValue} />}
                 />
+                <Route path="/secrets" element={<SecretsView client={client} keyValue={keyValue} />} />
                 <Route
                   path="/sessions"
                   element={<CallsView client={client} keyValue={keyValue} />}

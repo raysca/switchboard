@@ -124,6 +124,7 @@ export default async function globalSetup() {
       TOKEN_SECRET: stack.tokenSecret,
       GOVOICE_MANAGEMENT_API_KEY: stack.managementKey,
       MCP_TOKEN_TEST: "e2e-mcp-token",
+      SWITCHBOARD_SECRETS_KEY: "e2e:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
       DENTAL_MCP_URL: `http://127.0.0.1:${PORTS.dental}/mcp`,
       MCP_TOKEN_DENTAL: "e2e-dental-token",
       ...providerEnv,

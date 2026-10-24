@@ -2594,6 +2594,10 @@ main:has(.mcp-page) {
 .mcp-page > :not(.mcp-layout) {
   margin-inline: clamp(24px, 5vw, 72px) 32px;
 }
+.row-actions {
+  display: inline-flex;
+  gap: 8px;
+}
 .mcp-layout {
   display: flex;
   flex-wrap: wrap;

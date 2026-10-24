@@ -6,7 +6,7 @@ type Tone = "ok" | "bad" | "idle";
 export function serverStatus(s: MCPServerDTO): { tone: Tone; label: string } {
   if (s.pending_deletion) return { tone: "idle", label: "Being removed" };
   if (!s.enabled || s.validation_state === "disabled") return { tone: "idle", label: "Disabled" };
-  if (s.auth_env && !s.auth_env_set) return { tone: "bad", label: `Token variable ${s.auth_env} is not set on the server` };
+  if (s.auth_env && !s.auth_env_set) return { tone: "bad", label: `Secret ${s.auth_env} is not set on the server` };
   switch (s.validation_state) {
     case "healthy":
       return { tone: "ok", label: "Connected" };

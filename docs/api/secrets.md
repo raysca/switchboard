@@ -15,15 +15,15 @@ There is no `GET /api/v1/secrets/{name}`: a value cannot be read back.
 ## List
 
 ```json
-{ "data": [
+{ "data": { "store_enabled": true, "secrets": [
   { "name": "MCP_TOKEN_CRM", "source": "environment", "writable": false },
   { "name": "billing-api",   "source": "directory",   "writable": false },
   { "name": "crm-api",       "source": "store",       "writable": true,
     "updated_at": "2026-10-24T09:12:00Z", "last_used_at": "2026-10-24T09:30:11Z" }
-] }
+] } }
 ```
 
-`source` is `environment`, `directory` or `store`. Only environment variables named `MCP_TOKEN_*` or `HTTP_TOKEN_*` and files in `secrets.dir` appear; nothing else in the environment is listed.
+`store_enabled` is false when `SWITCHBOARD_SECRETS_KEY` is not set; writes then fail with 503. `source` is `environment`, `directory` or `store`. Only environment variables named `MCP_TOKEN_*` or `HTTP_TOKEN_*` and files in `secrets.dir` appear; nothing else in the environment is listed.
 
 ## Create or replace
 

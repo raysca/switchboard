@@ -48,13 +48,14 @@ describe("admin shell", () => {
     expect(screen.getByText("Area not found")).toBeVisible();
   });
 
-  it("shows all six sections and keeps keyboard navigation visible", async () => {
+  it("shows all seven sections and keeps keyboard navigation visible", async () => {
     render(<App initialPath="/agents" />);
     for (const name of [
       "Dashboard",
       "Agents",
       "Providers",
       "MCP tools",
+      "Secrets",
       "Calls",
       "Server",
     ]) {

@@ -43,7 +43,7 @@ func testProviderVars(t *testing.T) map[string]string {
 	if err := os.WriteFile(sa, []byte(`{"type":"service_account"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return map[string]string{"GOOGLE_API_KEY": "test-google-api-key", "GOOGLE_APPLICATION_CREDENTIALS": sa, "XAI_API_KEY": "test-xai-key"}
+	return map[string]string{"GOOGLE_API_KEY": "test-google-api-key", "GOOGLE_APPLICATION_CREDENTIALS": sa, "XAI_API_KEY": "test-xai-key", "SWITCHBOARD_SECRETS_KEY": "k1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}
 }
 
 func apiRequest(s *Server, method, path, bearer, body string) *httptest.ResponseRecorder {

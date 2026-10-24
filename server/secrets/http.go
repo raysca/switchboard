@@ -20,6 +20,12 @@ type SecretView struct {
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 }
 
+// SecretList is the list response. StoreEnabled says whether PUT can work (the master key is set).
+type SecretList struct {
+	StoreEnabled bool         `json:"store_enabled"`
+	Secrets      []SecretView `json:"secrets"`
+}
+
 // Sources are the backends the handler lists and writes to.
 type Sources struct {
 	Env     Env
@@ -68,7 +74,7 @@ func Handler(src Sources) http.Handler {
 				views = append(views, v)
 			}
 		}
-		api.WriteJSON(w, 200, api.SuccessResponse[[]SecretView]{Data: views})
+		api.WriteJSON(w, 200, api.SuccessResponse[SecretList]{Data: SecretList{StoreEnabled: src.Store.Enabled(), Secrets: views}})
 	})
 	mux.HandleFunc("/api/v1/secrets/{name}", func(w http.ResponseWriter, r *http.Request) {
 		id := api.RequestID(w, r)

@@ -2,18 +2,18 @@ import { useId, useState, type FormEvent } from "react";
 import type { CreateMCPServerInput, MCPServerDTO, UpdateMCPServerInput } from "../../api/client";
 import { Modal } from "../../components/Modal";
 
-// Mirrors the server: only MCP_TOKEN_* variables can be named, so a management key cannot point a server at an unrelated secret.
-const AUTH_ENV_PREFIX = "MCP_TOKEN_";
-const AUTH_ENV_PATTERN = /^MCP_TOKEN_[A-Z0-9_]{1,48}$/;
+// Mirrors the server: a secret is an MCP_TOKEN_* or HTTP_TOKEN_* variable, or a lower-case stored or directory name,
+// so a management key cannot point a server at an unrelated variable such as a provider key.
+const SECRET_NAME_PATTERN = /^((MCP|HTTP)_TOKEN_[A-Z0-9_]{1,48}|[a-z0-9][a-z0-9_-]{0,62})$/;
 
-type Common = { pending: boolean; error: string | null; onCancel: () => void };
+type Common = { pending: boolean; error: string | null; onCancel: () => void; /** Names the server can already resolve, offered as suggestions. */ secrets?: string[] };
 /** Without `server` the dialog connects a new one; with it, it edits that server. */
 export type ConnectServerDialogProps = Common &
   ({ server?: undefined; onSubmit: (input: CreateMCPServerInput) => void } | { server: MCPServerDTO; onSubmit: (patch: UpdateMCPServerInput) => void });
 
-/** Connect (or edit) a remote MCP server by endpoint. Only the name of the token variable is entered, never a token. */
+/** Connect (or edit) a remote MCP server by endpoint. Only the name of a secret is entered, never its value. */
 export function ConnectServerDialog(props: ConnectServerDialogProps) {
-  const { pending, error, onCancel, server } = props;
+  const { pending, error, onCancel, server, secrets = [] } = props;
   const uid = useId();
   const [name, setName] = useState(server?.name ?? "");
   const [endpoint, setEndpoint] = useState(server?.endpoint ?? "");
@@ -26,8 +26,8 @@ export function ConnectServerDialog(props: ConnectServerDialogProps) {
     e.preventDefault();
     if (!name.trim()) return setProblem("Server name is required");
     if (!endpoint.trim()) return setProblem("Endpoint URL is required");
-    if (authEnv.trim() && !AUTH_ENV_PATTERN.test(authEnv.trim())) {
-      return setProblem(`Token variable must match ${AUTH_ENV_PREFIX} followed by A-Z, 0-9 or _ (max 48).`);
+    if (authEnv.trim() && !SECRET_NAME_PATTERN.test(authEnv.trim())) {
+      return setProblem("Secret must be an MCP_TOKEN_ variable name or a lower-case name such as crm-api.");
     }
     setProblem(null);
     if (props.server) {
@@ -66,10 +66,15 @@ export function ConnectServerDialog(props: ConnectServerDialogProps) {
           <input id={`${uid}-desc`} type="text" value={description} autoComplete="off" onChange={(e) => setDescription(e.target.value)} />
         </label>
         <div className="form-field">
-          <label htmlFor={`${uid}-auth`}>Token variable (optional)</label>
-          <input id={`${uid}-auth`} type="text" value={authEnv} placeholder={`${AUTH_ENV_PREFIX}CRM`} autoComplete="off" onChange={(e) => setAuthEnv(e.target.value)} />
+          <label htmlFor={`${uid}-auth`}>Secret (optional)</label>
+          <input id={`${uid}-auth`} type="text" list={`${uid}-secrets`} value={authEnv} placeholder="crm-api" autoComplete="off" onChange={(e) => setAuthEnv(e.target.value)} />
+          <datalist id={`${uid}-secrets`}>
+            {secrets.map((s) => (
+              <option key={s} value={s} />
+            ))}
+          </datalist>
           <small>
-            The name of a server environment variable starting with <code>{AUTH_ENV_PREFIX}</code>. Its value is sent as the bearer token to this server only. Public HTTPS hosts only (development servers also reach local test servers).
+            The name of a secret on the <a href="/secrets">Secrets</a> page, or an <code>MCP_TOKEN_</code> environment variable. Its value is sent as the bearer token to this server only. Public HTTPS hosts only (development servers also reach local test servers).
           </small>
         </div>
         {!server && (

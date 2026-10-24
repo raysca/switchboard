@@ -144,8 +144,8 @@ describe("MCPView", () => {
 
   it("shows a missing token variable as the status text, in the list and the detail", async () => {
     setup({ getAgents: vi.fn().mockResolvedValue([]), getMCPServers: vi.fn().mockResolvedValue([server({ auth_env_set: false })]), getMCPServer: vi.fn().mockResolvedValue(detail({ auth_env_set: false })) });
-    expect(await within(await screen.findByRole("link", { name: /^billing/ })).findByText(/^Token variable MCP_TOKEN_BILLING is not set on the server/)).toBeVisible();
-    expect(screen.getAllByText(/Token variable MCP_TOKEN_BILLING is not set on the server/).length).toBeGreaterThan(1);
+    expect(await within(await screen.findByRole("link", { name: /^billing/ })).findByText(/^Secret MCP_TOKEN_BILLING is not set on the server/)).toBeVisible();
+    expect(screen.getAllByText(/Secret MCP_TOKEN_BILLING is not set on the server/).length).toBeGreaterThan(1);
   });
 
   it("shows when the server was last checked and how often it checks by itself", async () => {
@@ -195,7 +195,7 @@ describe("MCPView", () => {
     const updateMCPServer = vi.fn().mockResolvedValue(server({ auth_env: "" }));
     const { user } = setup({ updateMCPServer });
     await user.click(await screen.findByRole("button", { name: "Edit" }));
-    await user.clear(screen.getByLabelText("Token variable (optional)"));
+    await user.clear(screen.getByLabelText("Secret (optional)"));
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(updateMCPServer).toHaveBeenCalledWith("billing", expect.objectContaining({ auth_env: "" }));
   });

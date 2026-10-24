@@ -116,6 +116,11 @@ load_env() {
      echo "TOKEN_SECRET=$(openssl rand -hex 32)" >> "$DEV_ENV")
     echo "dev: generated secrets in ${DEV_ENV#"$ROOT"/}"
   fi
+  # The encrypted secret store (Secrets page) needs a master key; older dev.env files get one added.
+  if ! grep -q '^SWITCHBOARD_SECRETS_KEY=' "$DEV_ENV"; then
+    need openssl "to generate dev secrets"
+    (umask 077; echo "SWITCHBOARD_SECRETS_KEY=dev:$(openssl rand -base64 32)" >> "$DEV_ENV")
+  fi
   set -a; source "$DEV_ENV"; set +a
   # Environment wins over dev.env; dev.env remembers the last ports used.
   PUBLIC_PORT="${PUBLIC_PORT_OVERRIDE:-${PUBLIC_PORT:-8080}}"
