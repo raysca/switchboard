@@ -22,7 +22,7 @@ What a pass means depends on the model under test (`-providers`):
 
 The report prints the mode on its last line, so an echo pass is never mistaken for a behaviour pass. `offline` can be pointed at a paid OpenAI-compatible endpoint by setting the server's `providers.offline.llm_endpoint`; that is then your cost, and this tool cannot tell, so use `keep` and the gate when the model is paid.
 
-There is no LLM judge. Assertions are structural (step path, tool names and statuses, end reason, turn count) plus regular expressions over the agent's words and a reply-time median. A judge could be added later as one more `expect` key.
+Assertions are structural (step path, tool names and statuses, end reason, turn count) plus regular expressions over the agent's words and a reply-time median. Three further scorers are graded by an LLM judge (`correctness`, `answer_relevancy`, `toxicity`); they run only with `-judge offline` (a local Ollama model, free) and are skipped otherwise. A judge reads the call as data, in a delimited block, and must answer with exactly one JSON score; a reply it cannot parse, or a judge that is unreachable, fails the run as an error rather than passing it. See Reading a report.
 
 ## Case format
 
@@ -43,7 +43,7 @@ expect:
   path: [front, sales]                     # exact step path, step ids or names
   tools_called: [transfer_to_sales]        # each must appear; "name" means succeeded, or "name:failed", "name:cancelled"
   tools_not_called: [end_call]
-  say: ["(?i)hatchback|suv"]               # each regexp must match the agent's replies, joined with a newline
+  say: ["(?i)hatchback|suv"]               # each regexp must match the agent's replies, joined with a newline (the stored, redacted text)
   never_say: ["(?i)as an ai"]              # none may match
   end_reason: caller_hung_up               # the stored end reason of the call
   max_turns: 6                             # most stored turns (see Limits)
@@ -52,7 +52,7 @@ expect:
 
 Always checked, not configurable: no RTVI `error` message (other than the server closing the call with its own end reason) and no failed handoff.
 
-Regular expressions are Go RE2 and are not made case-insensitive: write `(?i)` yourself. Tool names are the ones in the call's trace: `transfer_to_<step>`, `end_call`, and an MCP tool's own name. Only name and status are recorded; arguments and results never are.
+Regular expressions are Go RE2 and are not made case-insensitive: write `(?i)` yourself. `say` and `never_say` match the stored `assistant_text` of the call, which the server has redacted, so redaction (a phone number or an email address in a reply, say) can change what matches. Tool names are the ones in the call's trace: `transfer_to_<step>`, `end_call`, and an MCP tool's own name. Only name and status are recorded; arguments and results never are.
 
 ### Callers
 
@@ -133,7 +133,7 @@ agent-eval: 2 passed, 1 failed (offline)
 
 Each run is scored by five built-in scorers: `expectations` (path, phrases, end reason, turn count, reply time, no RTVI errors or failed handoffs), `tool_call_accuracy` (`tools_called`, `tools_not_called`, and the optional `tools_ordered`), and the model-graded `correctness`, `answer_relevancy` and `toxicity`. A model-graded scorer without a judge is skipped, never passed. The JSON report lists them under `scores` for each run. The optional case key `expected_answer` is extra evidence for the correctness judge.
 
-Each failed assertion prints as `FAIL <key>: want ..., got ...` under its run. The session id opens in the Calls page; the agent version id and config hash pin the result to what ran. `errors` in the JSON are harness problems (a timeout, an API error), not verdicts on the agent. The JSON report (`govoice.agent-eval/v1`) has no timestamps, so two runs diff cleanly:
+Each failed check prints as one `FAIL` line under its run: `FAIL <key>: want ..., got ...` for a structural assertion, and `FAIL <scorer>: <reason>` for a judged or errored scorer (`FAIL correctness: off topic`, `FAIL toxicity: judge: ...`). A skipped scorer prints nothing, and in the JSON report its `score` is `null`. The session id opens in the Calls page; the agent version id and config hash pin the result to what ran. `errors` in the JSON are harness problems (a timeout, an API error), not verdicts on the agent. The JSON report (`govoice.agent-eval/v1`) has no timestamps, so two runs diff cleanly:
 
 ```bash
 diff <(jq -S '.results[]|{case,passed,runs:[.runs[]|{path,tools,end_reason}]}' v3.json) <(jq -S '...same...' v4.json)
