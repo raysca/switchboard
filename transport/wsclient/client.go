@@ -40,7 +40,13 @@ type Client struct {
 	max     int
 	dropped int
 	closed  chan struct{} // closed when the reader ends
+
+	ctx    context.Context // owner lifetime: ends with Close; bounds the reader and every send
+	cancel context.CancelFunc
 }
+
+// sendTimeout bounds one write to the server.
+const sendTimeout = 10 * time.Second
 
 // Dial opens the call's WebSocket, runs the RTVI handshake and starts the reader, which ends
 // when the connection ends.
@@ -62,17 +68,23 @@ func DialN(ctx context.Context, public, token string, pushToTalk bool, maxEvents
 		return nil, err
 	}
 	c := &Client{Conn: conn, T0: time.Now(), max: maxEvents, closed: make(chan struct{})}
-	go c.reader(context.Background())
+	c.ctx, c.cancel = context.WithCancel(context.Background())
+	go c.reader(c.ctx)
 	return c, nil
 }
 
 func (c *Client) reader(ctx context.Context) {
+	defer close(c.closed)
+	defer func() {
+		if r := recover(); r != nil { // a client anomaly must not take the process down
+			c.CloseErr, c.CloseAt = fmt.Errorf("reader panicked: %v", r), time.Now()
+		}
+	}()
 	seq := uint64(1)
 	for {
 		typ, data, err := c.Conn.Read(ctx)
 		if err != nil {
 			c.CloseErr, c.CloseAt = err, time.Now()
-			close(c.closed)
 			return
 		}
 		if typ != websocket.MessageBinary {
@@ -141,7 +153,9 @@ func (c *Client) SendMsg(typ string, data any) error {
 	if err != nil {
 		return err
 	}
-	return c.Conn.Write(context.Background(), websocket.MessageBinary, f)
+	ctx, cancel := context.WithTimeout(c.ctx, sendTimeout)
+	defer cancel()
+	return c.Conn.Write(ctx, websocket.MessageBinary, f)
 }
 
 // SendText sends an RTVI send-text client message (a text turn, no audio).
@@ -201,6 +215,7 @@ func (c *Client) Count(t time.Time, kind string) (n int) {
 func (c *Client) Close() {
 	_ = c.Conn.Close(websocket.StatusNormalClosure, "")
 	<-c.closed
+	c.cancel()
 }
 
 // Handshake sends RTVI client-ready and waits up to 20 s for bot-ready.

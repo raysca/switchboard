@@ -33,10 +33,19 @@ func TestCloseEndsReader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.Close()
+	done := make(chan struct{})
+	go func() { c.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close hung")
+	}
 	select {
 	case <-c.Closed():
-	case <-time.After(time.Second):
-		t.Fatal("reader did not end after Close")
+	default:
+		t.Fatal("Closed did not fire after Close")
+	}
+	if err := c.SendText("late"); err == nil {
+		t.Error("SendText after Close succeeded")
 	}
 }
