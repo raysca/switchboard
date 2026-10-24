@@ -105,7 +105,7 @@ The independent review of the first draft found the following; each is resolved 
 | Multiple instances cannot erase each other's recordings | Documented limit (12) |
 | Wiring: the handler cannot import the sink | A `SessionLifecycle` interface is injected (10) |
 | Guard must be in the DELETE itself, and a zero-row result must map to 404 or 409 | Specified (6) |
-| Routing: `erase` versus an id, new methods on existing paths, the `held` query key | Specified and tested (10) |
+| Path handling: `erase` versus an id, new methods on existing paths, the `held` query key | Specified and tested (10) |
 | The recording name change: `StoredSessionID` may be empty, exclusive create, `keep` mapping, `Remove` safety | Fallback, one recording per call, suffix stripping and UUIDv7 check, fixed names and regular files only (3, 5, 6) |
 | Data classes left over, and an untestable "nothing identifies the caller" | A removes-and-leaves section, a table-wide scan test and a log-capture test (plan 3) |
 | `remaining` pagination | The client stops when `erased` is 0 (8) |
