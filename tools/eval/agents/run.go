@@ -20,6 +20,7 @@ const (
 	agentPageSize  = 100
 	sessionEndWait = 15 * time.Second
 	rowsSettleWait = 500 * time.Millisecond // tool rows are written by a per-call goroutine
+	tracesWait     = 5 * time.Second        // handoff spans arrive through the async trace queue
 )
 
 // opts bounds one call.
@@ -134,15 +135,50 @@ func jti(token string) (string, error) {
 	return p.JTI, nil
 }
 
-// activity reports whether an event shows the agent working (text, a tool call, a new step's greeting).
+// activity reports whether an event shows the agent working (text, a tool call, a new step's greeting, an error).
 func activity(kind string) bool {
-	return kind == "audio" || strings.HasPrefix(kind, "bot-") || strings.HasPrefix(kind, "llm-function-call")
+	return kind == "audio" || kind == "error" || strings.HasPrefix(kind, "bot-") || strings.HasPrefix(kind, "llm-function-call")
 }
 
-// waitSettled returns once the agent has shown no activity for o.Quiet after mark and, when
-// needText, has said something since mark. The quiet window restarts on every new reply, tool
-// call and step greeting, so a tool round or a handoff does not split one turn into two. It
-// returns early (nil) when the connection ends, e.g. after end_call.
+// turnState reads the events after mark: when the agent last showed activity, whether it has said
+// anything, and whether a reply is still open. A reply is bracketed by bot-llm-started (sent with its
+// first text piece, or, for a reply with no text, just before its stop) and bot-llm-stopped, and a slow
+// model or tool leaves gaps inside it: it is open from its start to its stop, while a tool call is in
+// flight, and after a tool call ends until the reply that follows it (a transfer's greeting included)
+// stops. An RTVI error after a tool call ends closes that reply too: a model call that failed sends no
+// stop, and the turn must not wait out -turn-timeout for it.
+func turnState(ev []stack.Event, mark time.Time) (last time.Time, text, open bool) {
+	last = mark
+	reply, calls, afterCall := false, 0, false
+	for _, e := range ev {
+		if !e.At.After(mark) || !activity(e.Kind) {
+			continue
+		}
+		last = e.At
+		switch e.Kind {
+		case "bot-llm-text":
+			text = true
+		case "bot-llm-started":
+			reply = true
+		case "bot-llm-stopped":
+			reply, afterCall = false, false
+		case "llm-function-call-started":
+			calls++
+		case "llm-function-call-stopped":
+			calls = max(calls-1, 0)
+			afterCall = true
+		case "error":
+			if calls == 0 {
+				reply, afterCall = false, false
+			}
+		}
+	}
+	return last, text, reply || calls > 0 || afterCall
+}
+
+// waitSettled returns once the agent has shown no activity for o.Quiet after mark, has no reply
+// open (see turnState) and, when needText, has said something since mark. It returns early (nil)
+// when the connection ends, e.g. after end_call, and fails at o.TurnTimeout.
 func waitSettled(ctx context.Context, cl *stack.Client, mark time.Time, needText bool, o opts) error {
 	deadline := time.Now().Add(o.TurnTimeout)
 	tick := time.NewTicker(25 * time.Millisecond)
@@ -155,14 +191,8 @@ func waitSettled(ctx context.Context, cl *stack.Client, mark time.Time, needText
 			return nil
 		case <-tick.C:
 		}
-		last, text := mark, false
-		for _, e := range cl.Snap() {
-			if e.At.After(mark) && activity(e.Kind) {
-				last = e.At
-				text = text || e.Kind == "bot-llm-text"
-			}
-		}
-		if (text || !needText) && time.Since(last) >= o.Quiet {
+		last, text, open := turnState(cl.Snap(), mark)
+		if (text || !needText) && !open && time.Since(last) >= o.Quiet {
 			return nil
 		}
 		if time.Now().After(deadline) {
@@ -227,6 +257,10 @@ turns:
 			errs = append(errs, fmt.Errorf("more than %d caller turns", maxPersonaTurn))
 			break
 		}
+		if _, _, open := turnState(cl.Snap(), time.Time{}); open { // the harness gave up on a slow reply: not the agent's fault
+			errs = append(errs, fmt.Errorf("turn %d: reply still open when the next line was sent", turn))
+			break
+		}
 		mark := time.Now()
 		sent = append(sent, Sent{At: mark, Text: line})
 		if err := cl.SendText(line); err != nil {
@@ -278,12 +312,41 @@ func fetchCall(ctx context.Context, srv *stack.Server, id string) (api.SessionDT
 	if err := sleepCtx(ctx, rowsSettleWait); err != nil {
 		return sess, tr, err
 	}
-	d, err := srv.Call("GET", "sessions/"+id+"/traces", nil)
-	if err == nil {
-		err = json.Unmarshal(d, &tr)
+	// Handoff spans go through the asynchronous trace queue and may land after the tool rows: poll
+	// until every transfer tool has its span, or give up loudly.
+	for end := time.Now().Add(tracesWait); ; {
+		d, err := srv.Call("GET", "sessions/"+id+"/traces", nil)
+		if err == nil {
+			tr = api.SessionTracesDTO{}
+			err = json.Unmarshal(d, &tr)
+		}
+		if err != nil {
+			return sess, tr, fmt.Errorf("session %s traces: %w", id, err)
+		}
+		if tracesComplete(tr) {
+			return sess, tr, nil
+		}
+		if time.Now().After(end) {
+			return sess, tr, fmt.Errorf("session %s: traces incomplete: a transfer tool has no handoff span after %s", id, tracesWait)
+		}
+		if err := sleepCtx(ctx, 200*time.Millisecond); err != nil {
+			return sess, tr, err
+		}
 	}
-	if err != nil {
-		return sess, tr, fmt.Errorf("session %s traces: %w", id, err)
+}
+
+// tracesComplete reports whether every transfer_to_* tool call has its handoff span (active or failed).
+func tracesComplete(tr api.SessionTracesDTO) bool {
+	transfers, spans := 0, 0
+	for _, c := range tr.ToolCalls {
+		if strings.HasPrefix(c.RemoteName, "transfer_to_") {
+			transfers++
+		}
 	}
-	return sess, tr, nil
+	for _, sp := range tr.Spans {
+		if sp.Name == "handoff.active" || sp.Name == "handoff.failed" {
+			spans++
+		}
+	}
+	return spans >= transfers
 }

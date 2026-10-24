@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -128,5 +129,39 @@ func TestObserveIgnoresTheEndReasonMessage(t *testing.T) {
 	ev = append(ev, stack.Event{At: t0.Add(5 * time.Second), Kind: "error", Text: "provider_failed"})
 	if o := Observe(sess, tr, "front", ev, sent); o.ErrorFrames != 1 {
 		t.Errorf("real error not counted: %d", o.ErrorFrames)
+	}
+}
+
+// Idle and time-limit hang-ups close with a different word than the stored end reason.
+func TestObserveIgnoresMappedEndMessages(t *testing.T) {
+	tr := fixture[api.SessionTracesDTO](t, "traces-ok.json")
+	for stored, msg := range endMessages {
+		sess := fixture[api.SessionDTO](t, "session.json")
+		sess.EndReason = stored
+		ev, sent := callEvents()
+		final := append(slices.Clone(ev), stack.Event{At: t0.Add(4 * time.Second), Kind: "error", Text: msg})
+		if o := Observe(sess, tr, "front", final, sent); o.ErrorFrames != 0 {
+			t.Errorf("%s: closing message %q counted", stored, msg)
+		}
+		// not the last event: a real fault that happens to use the word
+		early := slices.Insert(slices.Clone(ev), 2, stack.Event{At: t0.Add(30 * time.Millisecond), Kind: "error", Text: msg})
+		if o := Observe(sess, tr, "front", early, sent); o.ErrorFrames != 1 {
+			t.Errorf("%s: mid-call %q not counted", stored, msg)
+		}
+	}
+	sess := fixture[api.SessionDTO](t, "session.json") // caller_hung_up: user_idle is a fault
+	ev, sent := callEvents()
+	ev = append(ev, stack.Event{At: t0.Add(4 * time.Second), Kind: "error", Text: "user_idle"})
+	if o := Observe(sess, tr, "front", ev, sent); o.ErrorFrames != 1 {
+		t.Errorf("user_idle under caller_hung_up not counted")
+	}
+}
+
+// The path starts at the agent's start step as given; a handoff from another step is not papered over.
+func TestObserveKeepsTheGivenStart(t *testing.T) {
+	ev, sent := callEvents()
+	o := Observe(fixture[api.SessionDTO](t, "session.json"), fixture[api.SessionTracesDTO](t, "traces-ok.json"), "other", ev, sent)
+	if want := []string{"other", "sales"}; !reflect.DeepEqual(o.Path, want) {
+		t.Errorf("path = %v, want %v", o.Path, want)
 	}
 }

@@ -18,17 +18,19 @@ import (
 	"govoice/tools/internal/stack"
 )
 
-const defaultMaxCalls = 40 // caller turns per run; paid runs stay bounded
+const defaultMaxTurns = 40 // caller turns per run (not calls: a call has up to one per typed line); paid runs stay bounded
 
 // config is the parsed command line.
 type config struct {
 	Dir, Only, Mode, JSON, Admin, Public string
-	Version, Runs, MinPass, MaxCalls     int
+	CallerLLM, CallerURL, CallerModel    string
+	Version, Runs, MinPass, MaxTurns     int
 	Opts                                 opts
 	Selftest                             bool
 }
 
-func parseFlags(args []string) (config, error) {
+// parseFlags parses the command line; -h prints the flag defaults to usage and returns flag.ErrHelp.
+func parseFlags(args []string, usage io.Writer) (config, error) {
 	var c config
 	fs := flag.NewFlagSet("agents", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -41,11 +43,21 @@ func parseFlags(args []string) (config, error) {
 	fs.StringVar(&c.JSON, "json", "", "also write the report as JSON to this file (mode 0600)")
 	fs.DurationVar(&c.Opts.TurnTimeout, "turn-timeout", 45*time.Second, "most time one typed turn may take")
 	fs.DurationVar(&c.Opts.Quiet, "quiet", 1500*time.Millisecond, "agent silence that ends a turn (tool rounds and handoffs restart it)")
-	fs.IntVar(&c.MaxCalls, "max-calls", defaultMaxCalls, "most caller turns in the whole run")
+	fs.IntVar(&c.MaxTurns, "max-turns", defaultMaxTurns, "most caller turns in the whole run")
 	fs.StringVar(&c.Admin, "admin", "http://127.0.0.1:9090", "management API base URL")
 	fs.StringVar(&c.Public, "public", "127.0.0.1:8080", "public listener host:port")
+	fs.StringVar(&c.CallerLLM, "caller-llm", callerOffline, "model that plays persona callers: offline (Ollama, free) or xai (paid, XAI_API_KEY, needs GOVOICE_LIVE=1)")
+	fs.StringVar(&c.CallerURL, "caller-url", "", "persona model endpoint for -caller-llm offline (default Ollama on 127.0.0.1:11434; a non-loopback host counts as paid)")
+	fs.StringVar(&c.CallerModel, "caller-model", "", "persona model name (default govoice-test, or the xAI default)")
 	fs.BoolVar(&c.Selftest, "selftest", false, "prove the harness on a server child and the echo provider, with deliberately broken agents (free)")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fs.SetOutput(usage)
+			fmt.Fprintln(usage, "usage: go run ./tools/eval/agents [flags]")
+			fmt.Fprintln(usage, "MCP tools run for real: an eval call executes the agent's selected tools with whatever arguments the model sends.")
+			fmt.Fprintln(usage, "Point evals at agents whose tools hit test systems; GOVOICE_LIVE gates model cost only, not what tools do.")
+			fs.PrintDefaults()
+		}
 		return c, err
 	}
 	switch {
@@ -53,8 +65,12 @@ func parseFlags(args []string) (config, error) {
 		return c, fmt.Errorf("-providers %q: want keep, offline or echo", c.Mode)
 	case c.Runs < 1 || c.MinPass < 1 || c.MinPass > c.Runs:
 		return c, errors.New("-runs must be at least 1 and -min-pass between 1 and -runs")
-	case c.MaxCalls < 1 || c.Version < 0 || c.Opts.TurnTimeout <= 0 || c.Opts.Quiet <= 0:
-		return c, errors.New("-max-calls must be at least 1, -version not negative, -turn-timeout and -quiet positive")
+	case c.CallerLLM != callerOffline && c.CallerLLM != callerXAI:
+		return c, fmt.Errorf("-caller-llm %q: want offline or xai", c.CallerLLM)
+	case c.CallerLLM == callerXAI && c.CallerURL != "":
+		return c, errors.New("-caller-url is for -caller-llm offline: the xAI key is sent only to the xAI endpoint")
+	case c.MaxTurns < 1 || c.Version < 0 || c.Opts.TurnTimeout <= 0 || c.Opts.Quiet <= 0:
+		return c, errors.New("-max-turns must be at least 1, -version not negative, -turn-timeout and -quiet positive")
 	}
 	return c, nil
 }
@@ -71,23 +87,28 @@ func plannedTurns(cases []Case, runs int) (n int) {
 	return n
 }
 
-// checkPlan refuses a run before its first call: callers that do not exist yet, or more turns than the cap.
-func checkPlan(cases []Case, runs, maxCalls int) error {
-	for _, c := range cases {
-		if c.Caller.Persona != nil {
-			return fmt.Errorf("case %s: persona callers are not available yet, use a script", c.Name)
-		}
-	}
-	if n := plannedTurns(cases, runs); n > maxCalls {
-		return fmt.Errorf("the run plans %d caller turns, more than -max-calls %d", n, maxCalls)
+// checkPlan refuses a run before its first call: more caller turns than the cap.
+func checkPlan(cases []Case, runs, maxTurns int) error {
+	if n := plannedTurns(cases, runs); n > maxTurns {
+		return fmt.Errorf("the run plans %d caller turns, more than -max-turns %d", n, maxTurns)
 	}
 	return nil
+}
+
+// hasPersona reports whether any case needs the persona model.
+func hasPersona(cases []Case) bool {
+	for _, c := range cases {
+		if c.Caller.Persona != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // liveGate refuses a run that reaches a paid model unless GOVOICE_LIVE=1.
 func liveGate(needsLive bool, env string) error {
 	if needsLive && env != "1" {
-		return errors.New("this run calls the agents' own models and spends API credit: set GOVOICE_LIVE=1 to allow it, or use -providers offline")
+		return errors.New("this run reaches a paid model (an agent's own, or the persona caller) and spends API credit: set GOVOICE_LIVE=1 to allow it, or use -providers offline with the offline caller")
 	}
 	return nil
 }
@@ -96,28 +117,35 @@ func liveGate(needsLive bool, env string) error {
 // rewritten config reaches a paid model.
 func prepare(srv *stack.Server, cases []Case, c config) (refs map[string]agentRef, needsLive bool, err error) {
 	refs = map[string]agentRef{}
+	tried := map[string]bool{}
+	var errs []error
 	for _, cs := range cases {
-		if _, done := refs[cs.Agent]; done {
+		if tried[cs.Agent] {
 			continue
 		}
+		tried[cs.Agent] = true
 		ref, err := resolveAgent(srv, cs.Agent, c.Version, c.Mode)
 		if err != nil {
-			return nil, false, fmt.Errorf("case %s: %w", cs.Name, err)
+			errs = append(errs, fmt.Errorf("case %s: %w", cs.Name, err)) // report every missing agent, not only the first
+			continue
 		}
 		refs[cs.Agent] = ref
 		needsLive = needsLive || NeedsLive(ref.Draft)
+	}
+	if err := errors.Join(errs...); err != nil {
+		return nil, false, err
 	}
 	return refs, needsLive, nil
 }
 
 // execute runs every case c.Runs times and builds the report.
-func execute(ctx context.Context, srv *stack.Server, cases []Case, refs map[string]agentRef, c config) Report {
+func execute(ctx context.Context, srv *stack.Server, cases []Case, refs map[string]agentRef, c config, ask AskFunc) Report {
 	rep := Report{Schema: reportSchema, Mode: c.Mode}
 	for _, cs := range cases {
 		res := CaseResult{Case: cs.Name}
 		ok := 0
 		for range c.Runs {
-			run := runCase(ctx, srv, refs[cs.Agent], cs, c.Opts)
+			run := runCase(ctx, srv, refs[cs.Agent], cs, c.Opts, ask)
 			if run.OK() {
 				ok++
 			}
@@ -135,8 +163,12 @@ func execute(ctx context.Context, srv *stack.Server, cases []Case, refs map[stri
 	return rep
 }
 
-func runCase(ctx context.Context, srv *stack.Server, ref agentRef, cs Case, o opts) RunResult {
-	obs, err := runOnce(ctx, srv, ref, ScriptCaller(cs.Caller.Script), o)
+func runCase(ctx context.Context, srv *stack.Server, ref agentRef, cs Case, o opts, ask AskFunc) RunResult {
+	next := ScriptCaller(cs.Caller.Script)
+	if p := cs.Caller.Persona; p != nil {
+		next = PersonaCaller(*p, ref.Name, ask)
+	}
+	obs, err := runOnce(ctx, srv, ref, next, o)
 	run := RunResult{SessionID: obs.SessionID, AgentVersionID: obs.AgentVersionID, ConfigHash: obs.ConfigHash,
 		Path: obs.Path, Tools: obs.Tools, EndReason: obs.EndReason, TurnCount: obs.TurnCount,
 		MedianReplyMS: medianMS(obs.ReplyMS), Transcript: obs.Transcript}
@@ -150,7 +182,10 @@ func runCase(ctx context.Context, srv *stack.Server, ref agentRef, cs Case, o op
 func main() { os.Exit(realMain(os.Args[1:], os.Stdout, os.Stderr)) }
 
 func realMain(args []string, stdout, stderr io.Writer) int {
-	c, err := parseFlags(args)
+	c, err := parseFlags(args, stderr)
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, "agent-eval:", err)
 		return 2
@@ -169,7 +204,7 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return setup(err)
 	}
-	if err := checkPlan(cases, c.Runs, c.MaxCalls); err != nil {
+	if err := checkPlan(cases, c.Runs, c.MaxTurns); err != nil {
 		return setup(err)
 	}
 	key := os.Getenv("GOVOICE_MANAGEMENT_API_KEY") // never printed
@@ -181,12 +216,23 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return setup(err)
 	}
+	var ask AskFunc
+	if hasPersona(cases) {
+		needsLive = needsLive || callerNeedsLive(c.CallerLLM, c.CallerURL)
+	}
 	if err := liveGate(needsLive, os.Getenv("GOVOICE_LIVE")); err != nil {
 		return setup(err)
 	}
+	if hasPersona(cases) {
+		var closeAsk func()
+		if ask, closeAsk, err = newAsk(c); err != nil {
+			return setup(err)
+		}
+		defer closeAsk()
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	rep := execute(ctx, srv, cases, refs, c)
+	rep := execute(ctx, srv, cases, refs, c, ask)
 	WriteText(stdout, rep)
 	if c.JSON != "" {
 		if err := WriteJSON(c.JSON, rep); err != nil {

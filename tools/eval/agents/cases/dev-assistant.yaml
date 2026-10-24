@@ -1,0 +1,12 @@
+name: dev-assistant-answers
+agent: Dev Assistant
+caller:
+  script:
+    - "Hello! What can you help me with?"
+    - "Thanks, that's all."
+expect:
+  tools_not_called: [end_call]
+  never_say: ["(?i)as an ai language model", "\\n\\s*[-*] "]
+  end_reason: caller_hung_up
+  max_turns: 2
+  median_reply_ms_max: 10000

@@ -41,6 +41,18 @@ note: echo mode checks the plumbing (handoffs, tools, hang-up), never prompts or
 agent-eval: 1 passed, 1 failed (echo)
 `
 
+// Path, tools and end reason come from the server: control characters in them cannot forge report lines.
+func TestReportTextEscapesServerStrings(t *testing.T) {
+	r := fixedReport()
+	run := &r.Results[0].Runs[0]
+	run.Path, run.Tools, run.EndReason = []string{"a\nFAKE: pass"}, []string{"t\nFAKE: pass"}, "e\nFAKE: pass"
+	var b bytes.Buffer
+	WriteText(&b, r)
+	if strings.Contains(b.String(), "\nFAKE") {
+		t.Errorf("a server string broke out of its line:\n%s", b.String())
+	}
+}
+
 func TestReportText(t *testing.T) {
 	var b bytes.Buffer
 	WriteText(&b, fixedReport())
@@ -84,5 +96,17 @@ func TestReportJSON(t *testing.T) {
 	}
 	if strings.Contains(string(raw), "time") {
 		t.Errorf("report carries a timestamp: %s", raw)
+	}
+}
+
+func TestReportQuotesControlCharacters(t *testing.T) {
+	r := fixedReport()
+	r.Results[1].Runs[0].Transcript = []Line{{"agent", "a\x1b[31mred\nnext\ttab\u0085 ok é"}}
+	r.Results[1].Runs[0].Failures = []string{"never_say: matched \"\x1b[2J\""}
+	var b bytes.Buffer
+	WriteText(&b, r)
+	out := b.String()
+	if strings.ContainsAny(out, "\x1b\t\u0085") || !strings.Contains(out, `agent: a\x1b[31mred\nnext\ttab\x85 ok é`) || !strings.Contains(out, `matched "\x1b[2J"`) {
+		t.Errorf("control characters reach the terminal:\n%q", out)
 	}
 }

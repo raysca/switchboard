@@ -7,6 +7,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"unicode"
 )
 
 const (
@@ -75,6 +76,27 @@ func nonNil(s []string) []string {
 	return s
 }
 
+// visible writes control characters (an agent's text can carry terminal escapes) as \n, \t, \x1b, ...
+func visible(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\n':
+			b.WriteString(`\n`)
+		case r == '\t':
+			b.WriteString(`\t`)
+		case unicode.IsControl(r) && r < 0x100:
+			fmt.Fprintf(&b, `\x%02x`, r)
+		case unicode.IsControl(r):
+			fmt.Fprintf(&b, `\u%04x`, r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // WriteText prints the human report.
 func WriteText(w io.Writer, r Report) {
 	r = r.view()
@@ -97,16 +119,16 @@ func WriteText(w io.Writer, r Report) {
 			if len(run.Tools) > 0 {
 				tools = strings.Join(run.Tools, ", ")
 			}
-			fmt.Fprintf(w, "    path: %s\n    tools: %s\n", strings.Join(run.Path, " > "), tools)
-			fmt.Fprintf(w, "    end: %s, %d turns, median reply %d ms\n", run.EndReason, run.TurnCount, run.MedianReplyMS)
+			fmt.Fprintf(w, "    path: %s\n    tools: %s\n", visible(strings.Join(run.Path, " > ")), visible(tools))
+			fmt.Fprintf(w, "    end: %s, %d turns, median reply %d ms\n", visible(run.EndReason), run.TurnCount, run.MedianReplyMS)
 			for _, l := range run.Transcript {
-				fmt.Fprintf(w, "    %s: %s\n", l.Who, strings.ReplaceAll(l.Text, "\n", `\n`))
+				fmt.Fprintf(w, "    %s: %s\n", l.Who, visible(l.Text))
 			}
 			for _, e := range run.Errors {
-				fmt.Fprintf(w, "    ERROR %s\n", e)
+				fmt.Fprintf(w, "    ERROR %s\n", visible(e))
 			}
 			for _, f := range run.Failures {
-				fmt.Fprintf(w, "    FAIL %s\n", f)
+				fmt.Fprintf(w, "    FAIL %s\n", visible(f))
 			}
 		}
 	}

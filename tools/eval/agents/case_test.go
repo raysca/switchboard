@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -115,5 +116,25 @@ func TestLoadAcceptsYml(t *testing.T) {
 	}
 	if cs, err := LoadCases(dir, nil); err != nil || len(cs) != 1 {
 		t.Fatalf("cases = %v, err = %v", cs, err)
+	}
+}
+
+// The example cases that ship with the tool (make eval-agents) must load.
+func TestExampleCasesLoad(t *testing.T) {
+	for dir, want := range map[string][]string{
+		"cases":        {"dealership-buyer-reaches-sales", "dev-assistant-answers"},
+		"cases-dental": {"dental-new-patient-books"},
+	} {
+		cs, err := LoadCases(dir, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var names []string
+		for _, c := range cs {
+			names = append(names, c.Name)
+		}
+		if !slices.Equal(names, want) {
+			t.Errorf("%s = %v, want %v", dir, names, want)
+		}
 	}
 }

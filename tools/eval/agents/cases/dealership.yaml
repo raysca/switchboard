@@ -1,0 +1,11 @@
+name: dealership-buyer-reaches-sales
+agent: Dealership desk
+caller:
+  script:
+    - "Hi, I'd like to buy a car. What are your prices?"
+    - "What kinds of cars do you sell?"
+expect:
+  path: [front, sales]
+  tools_called: [transfer_to_sales]
+  say: ["(?i)hatchback|suv|saloon|electric"]
+  end_reason: caller_hung_up
