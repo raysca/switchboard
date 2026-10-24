@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router";
 import type { ApiClient, ApiError } from "../../api/client";
 import { EmptyState, ErrorState, LoadingState } from "../../components/primitives";
 import { TurnTimeline } from "../../components/timeline/TurnTimeline";
+import { CallRetention } from "./CallRetention";
 import { CallTranscript } from "./CallTranscript";
 import { LiveCallControls } from "./LiveCallControls";
 import { ReplyWaterfall } from "./ReplyWaterfall";
@@ -198,6 +199,8 @@ export function CallView({ client, keyValue }: CallViewProps) {
           )}
         </aside>
       </div>
+
+      <CallRetention client={client} session={s} />
 
       <details className="call-technical">
         <summary>Technical trace</summary>

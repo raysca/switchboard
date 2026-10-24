@@ -21,6 +21,8 @@ const agent = (over: Partial<AgentDTO> = {}): AgentDTO => ({
 });
 const call = (over: Partial<SessionDTO> = {}): SessionDTO => ({
   draft: false,
+  held: false,
+  hold_reason: "",
   id: "0192aaaa-0000-7000-8000-000000000001",
   agent_id: "a1",
   agent_version_id: "v7",
@@ -72,6 +74,15 @@ function setup(client: Partial<ApiClient>, path = "/sessions", key: string | nul
 }
 
 describe("CallsView", () => {
+  it("marks calls on hold and filters to them, keeping the filter in the URL", async () => {
+    const getSessions = listOnly((p) => ((p as { held?: boolean }).held ? [call({ held: true })] : [call(), call({ id: "0192aaaa-0000-7000-8000-000000000002", held: true })]));
+    const { user } = setup({ getSessions });
+    expect(await screen.findAllByText("On hold", { selector: "td .chip" })).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "On hold" }));
+    expect(screen.getByTestId("where")).toHaveTextContent("/sessions?held=1");
+    expect(getSessions).toHaveBeenLastCalledWith(expect.objectContaining({ held: true }));
+  });
+
   it("asks for a management key first", () => {
     setup({}, "/sessions", null);
     expect(screen.getByText(/Enter a management key/)).toBeVisible();

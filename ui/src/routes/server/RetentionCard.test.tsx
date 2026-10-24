@@ -12,6 +12,8 @@ const status = (over: Partial<RetentionStatus> = {}): RetentionStatus => ({
   metadata_retention_days: 30,
   batch_size: 500,
   recording_retention_days: 3,
+  held_sessions: 0,
+  recent_actions: [],
   last_run: { started_at: new Date(Date.now() - 5 * 60_000).toISOString(), duration_ms: 40, turns_purged: 12, sessions_deleted: 4, turns_deleted: 9, tool_calls_deleted: 2, spans_deleted: 31, events_deleted: 70 },
   ...over,
 });
@@ -33,6 +35,28 @@ describe("RetentionCard", () => {
     expect(table).toHaveTextContent("Call records kept30 days");
     expect(table).toHaveTextContent("Recordings kept3 days");
     expect(table).toHaveTextContent("12 turns blanked, 4 calls deleted");
+  });
+
+  it("counts the calls on hold and lists the recent holds and erasures", async () => {
+    const at = new Date(Date.now() - 60_000).toISOString();
+    setup(
+      vi.fn().mockResolvedValue(
+        status({
+          held_sessions: 2,
+          recent_actions: [
+            { at, action: "erase_call", subject: "0192aaaa-0000-7000-8000-000000000001", request_id: "11111111-2222" },
+            { at, action: "erase_caller", subject: "ab12cd34ef56ab12", request_id: "33333333-4444" },
+            { at, action: "hold", subject: "0192bbbb-0000-7000-8000-000000000001", request_id: "55555555-6666" },
+          ],
+        }),
+      ),
+    );
+    expect(await screen.findByRole("table", { name: "Data retention" })).toHaveTextContent("Calls on hold2 (skipped by every run)");
+    const list = screen.getByRole("region", { name: "Recent holds and erasures" });
+    expect(list).toHaveTextContent("Erased call_0192aaaa");
+    expect(list).toHaveTextContent("Erased every call of a caller caller ab12cd34");
+    expect(list).toHaveTextContent("Held call_0192bbbb");
+    expect(list).not.toHaveTextContent("ab12cd34ef56ab12"); // only a short form of the hash is shown
   });
 
   it("says purging is off and offers no preview", async () => {

@@ -5,6 +5,8 @@ import { DataTable } from "../../components/primitives";
 import { ago } from "../mcp/mcpStats";
 
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+const ACTION_TEXT = { hold: "Held", release: "Released", erase_call: "Erased", erase_caller: "Erased every call of a caller" } as const;
+const subjectText = (action: keyof typeof ACTION_TEXT, subject: string) => (action === "erase_caller" ? `caller ${subject.slice(0, 8)}` : `call_${subject.slice(0, 8)}`);
 const days = (n: number) => (n > 0 ? `${n} ${n === 1 ? "day" : "days"}` : "Until deleted by hand");
 
 /** The retention policy in force, the last run, and a preview of what the next run would remove. Read-only. */
@@ -51,8 +53,21 @@ export function RetentionCard({ client }: { client: ApiClient }) {
           ["Call records kept", days(r.enabled ? r.metadata_retention_days : 0)],
           ["Recordings kept", r.recording_retention_days > 0 ? days(r.recording_retention_days) : "Not recorded"],
           ["Last run", lastText],
+          ["Calls on hold", r.held_sessions > 0 ? `${r.held_sessions} (skipped by every run)` : "None"],
         ]}
       />
+      {r.recent_actions.length > 0 && (
+        <section aria-label="Recent holds and erasures">
+          <h3>Recent holds and erasures</h3>
+          <ul className="plain-list">
+            {r.recent_actions.map((a) => (
+              <li key={`${a.at}-${a.request_id}-${a.subject}-${a.action}`}>
+                {ACTION_TEXT[a.action]} <code>{subjectText(a.action, a.subject)}</code> <span className="subtext">{ago(a.at, Date.now())} · request {a.request_id.slice(0, 8)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {!r.enabled && <p className="subtext">With automatic purging off, transcripts and call records stay until someone deletes them. Turn it on with <code>retention.enabled</code>.</p>}
       {r.enabled && (
         <div className="retention-preview">

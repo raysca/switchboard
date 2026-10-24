@@ -372,6 +372,16 @@ export const retentionStatusSchema = z.object({
       metadata_events: z.number(),
     })
     .nullish(),
+  held_sessions: z.number(),
+  recent_actions: z.array(
+    z.object({
+      at: z.string(),
+      action: z.enum(["hold", "release", "erase_call", "erase_caller"]),
+      // A call id, or for erase_caller the hash of the caller label.
+      subject: z.string(),
+      request_id: z.string(),
+    }),
+  ),
 });
 export type RetentionStatus = z.infer<typeof retentionStatusSchema>;
 const retentionEnvelope = z.object({ data: retentionStatusSchema });
@@ -511,6 +521,9 @@ export const sessionSchema = z.object({
   draft: z.boolean().optional().default(false),
   caller: z.string().optional().default(""),
   end_reason: z.string().optional().default(""),
+  // On hold: retention and erasure leave the call alone. hold_reason is the operator's note.
+  held: z.boolean().optional().default(false),
+  hold_reason: z.string().optional().default(""),
   median_reply_ms: z.number().nullish(),
   provider_stack: z.unknown().optional(),
   runtime_snapshot: z.unknown().optional(),
@@ -523,6 +536,7 @@ type SessionFilterParams = {
   offset?: number;
   status?: string;
   agent_id?: string;
+  held?: boolean;
 };
 
 const sessionsEnvelope = z.object({
@@ -531,6 +545,7 @@ const sessionsEnvelope = z.object({
 const sessionEnvelope = z.object({
   data: sessionSchema,
 });
+const erasureEnvelope = z.object({ data: z.object({ turns: z.number(), tool_calls: z.number(), spans: z.number(), events: z.number(), recordings_removed: z.number() }) });
 const turnsEnvelope = z.object({
   data: z.array(turnSchema),
 });
@@ -822,6 +837,7 @@ export function createApiClient(
         searchParams.set("offset", String(params.offset));
       if (params?.status) searchParams.set("status", params.status);
       if (params?.agent_id) searchParams.set("agent_id", params.agent_id);
+      if (params?.held !== undefined) searchParams.set("held", String(params.held));
       const qs = searchParams.toString();
       return (
         await request(`/sessions${qs ? `?${qs}` : ""}`, sessionsEnvelope)
@@ -841,6 +857,11 @@ export function createApiClient(
           turnsEnvelope,
         )
       ).data,
+    holdSession: async (id: string, reason: string) =>
+      (await request(`/sessions/${encodeURIComponent(id)}/hold`, sessionEnvelope, { method: "PUT", body: { reason } })).data,
+    releaseSession: async (id: string) =>
+      (await request(`/sessions/${encodeURIComponent(id)}/hold`, sessionEnvelope, { method: "DELETE" })).data,
+    eraseSession: async (id: string) => (await request(`/sessions/${encodeURIComponent(id)}`, erasureEnvelope, { method: "DELETE" })).data,
     addSessionNote: async (id: string, content: string, run: boolean) =>
       (await request(`/sessions/${encodeURIComponent(id)}/context`, acceptedEnvelope, { method: "POST", body: { messages: [{ content }], run } })).data,
     runSession: async (id: string) =>

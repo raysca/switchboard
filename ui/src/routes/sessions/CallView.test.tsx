@@ -23,6 +23,8 @@ const agent = (over: Partial<AgentDTO> = {}): AgentDTO => ({
 });
 const session = (over: Partial<SessionDTO> = {}): SessionDTO => ({
   draft: false,
+  held: false,
+  hold_reason: "",
   id: ID,
   agent_id: "a1",
   agent_version_id: "v7",
