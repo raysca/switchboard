@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -98,5 +99,42 @@ func TestExampleCasesLoad(t *testing.T) {
 		if !slices.Equal(names, want) {
 			t.Errorf("%s = %v, want %v", dir, names, want)
 		}
+	}
+}
+
+func TestScoreCallFailureLines(t *testing.T) {
+	c := eval.Case{Name: "c", Expect: eval.Expect{Say: []string{"zzz"}, ToolsCalled: []string{"book"}}}
+	in := eval.Input{Case: &c, Turns: []eval.Line{{Who: "caller", Text: "hi"}, {Who: "agent", Text: "hello"}}}
+	scores, fails := scoreCall(context.Background(), in, nil)
+	if len(scores) != 5 {
+		t.Fatalf("scores = %+v", scores)
+	}
+	want := []string{"say: want a match for \"zzz\"", "tools_called: want \"book:succeeded\", got []"}
+	if !slices.Equal(fails, want) {
+		t.Errorf("failures = %q, want %q", fails, want)
+	}
+	for _, s := range scores {
+		if s.Scorer == "correctness" && s.Outcome != "skipped" {
+			t.Errorf("no judge: %+v", s)
+		}
+	}
+	bad := &eval.Judge{Model: "m", Ask: func(context.Context, string, string) (string, error) {
+		return `{"score":0.1,"reason":"off topic"}`, nil
+	}}
+	_, fails = scoreCall(context.Background(), in, bad)
+	if !slices.Contains(fails, "correctness: off topic") || !slices.Contains(fails, "answer_relevancy: off topic") {
+		t.Errorf("judged failures = %q", fails)
+	}
+}
+
+func TestJudgeFlag(t *testing.T) {
+	if _, err := parseFlags([]string{"-judge", "gpt"}, io.Discard); err == nil {
+		t.Error("-judge gpt accepted")
+	}
+	if c, err := parseFlags([]string{"-judge", "offline"}, io.Discard); err != nil || c.Judge != judgeOffline {
+		t.Errorf("-judge offline: %+v, %v", c, err)
+	}
+	if c, _ := parseFlags(nil, io.Discard); c.Judge != judgeNone {
+		t.Errorf("default judge = %q", c.Judge)
 	}
 }

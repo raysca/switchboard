@@ -202,7 +202,7 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 		return fail("%v", err)
 	}
 	c := config{Mode: eval.ModeEcho, Runs: 1, MinPass: 1, Opts: eval.Opts{TurnTimeout: 30 * time.Second, Quiet: selftestQuiet}}
-	run := func(srv *stack.Server, cs []eval.Case, hand map[string]func(map[string]any), ask eval.AskFunc) (Report, error) {
+	run := func(srv *stack.Server, cs []eval.Case, hand map[string]func(map[string]any), ask eval.AskFunc, judge *eval.Judge) (Report, error) {
 		refs, _, err := prepare(srv, cs, c)
 		if err != nil {
 			return Report{}, err
@@ -212,10 +212,10 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 				return Report{}, err
 			}
 		}
-		return execute(ctx, srv, cs, refs, c, ask), nil
+		return execute(ctx, srv, cs, refs, c, ask, judge), nil
 	}
 
-	good, err := run(srv, cases, nil, nil)
+	good, err := run(srv, cases, nil, nil, nil)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -228,6 +228,29 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 	if passed != len(cases) || len(good.Results) != len(cases) {
 		WriteText(stderr, good)
 		return fail("%d of %d plumbing cases passed", passed, len(cases))
+	}
+
+	// A judge scorer: with no judge the replies case passes and its model-graded scorers are skipped; a
+	// judge that scores the replies 0.1 must fail the same case on correctness.
+	repliesIdx := slices.IndexFunc(cases, func(c eval.Case) bool { return c.Name == "echo-assistant-replies" })
+	if repliesIdx < 0 {
+		return fail("the plumbing cases lack echo-assistant-replies")
+	}
+	replies := []eval.Case{cases[repliesIdx]}
+	if !slices.ContainsFunc(good.Results[repliesIdx].Runs[0].Scores, func(l ScoreLine) bool {
+		return l.Scorer == "correctness" && l.Outcome == string(eval.Skipped) && l.Reason == "no judge configured"
+	}) {
+		return fail("without a judge correctness was not skipped: %+v", good.Results[repliesIdx].Runs[0].Scores)
+	}
+	badJudge := &eval.Judge{Ask: scriptedAsk(`{"score":0.1,"reason":"off topic"}`), Model: "scripted"}
+	judged, err := run(srv, replies, nil, nil, badJudge)
+	if err != nil {
+		return fail("%v", err)
+	}
+	if len(judged.Results) != 1 || judged.Results[0].Passed || len(judged.Results[0].Runs[0].Errors) > 0 ||
+		!slices.ContainsFunc(judged.Results[0].Runs[0].Failures, func(f string) bool { return strings.HasPrefix(f, "correctness:") }) {
+		WriteText(stderr, judged)
+		return fail("a judge that scored the replies 0.1 did not fail the case on correctness")
 	}
 
 	var broken []eval.Case
@@ -247,7 +270,7 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 		}
 		broken = append(broken, mc)
 	}
-	bad, err := run(srv, broken, hand, nil)
+	bad, err := run(srv, broken, hand, nil, nil)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -282,11 +305,11 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 		Caller: eval.Caller{Persona: &eval.Persona{Who: "a caller", Goal: "reach sales", MaxTurns: 3}},
 		Expect: eval.Expect{Path: []string{"front", "sales"}, ToolsCalled: []string{"transfer_to_sales"}}}
 	goal := scriptedAsk("please transfer to sales", "DONE")
-	if rep, err := run(srv, []eval.Case{pc}, nil, goal); err != nil || len(rep.Results) != 1 || !rep.Results[0].Passed {
+	if rep, err := run(srv, []eval.Case{pc}, nil, goal, nil); err != nil || len(rep.Results) != 1 || !rep.Results[0].Passed {
 		WriteText(stderr, rep)
 		return fail("the persona caller did not reach its goal on echo: %v", err)
 	}
-	if rep, err := run(srv, []eval.Case{pc}, nil, scriptedAsk("hello there")); err != nil || len(rep.Results) != 1 || rep.Results[0].Passed ||
+	if rep, err := run(srv, []eval.Case{pc}, nil, scriptedAsk("hello there"), nil); err != nil || len(rep.Results) != 1 || rep.Results[0].Passed ||
 		len(rep.Results[0].Runs[0].Errors) > 0 || rep.Results[0].Runs[0].TurnCount < 3 {
 		WriteText(stderr, rep)
 		return fail("a persona that never reaches its goal was not failed on an assertion within max_turns: %v", err)
@@ -302,13 +325,7 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 	if err := createFixture(slow, assistant, "Eval assistant", nil); err != nil {
 		return fail("%v", err)
 	}
-	var replies []eval.Case
-	for _, cs := range cases {
-		if cs.Name == "echo-assistant-replies" {
-			replies = append(replies, cs)
-		}
-	}
-	slowRep, err := run(slow, replies, nil, nil)
+	slowRep, err := run(slow, replies, nil, nil, nil)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -333,7 +350,7 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 	if fi, err := os.Stat(report); err != nil || fi.Mode().Perm() != reportFileMode {
 		return fail("the JSON report is missing or not mode 0600: %v", err)
 	}
-	fmt.Fprintf(stdout, "agent-eval selftest: %d passed, %d mutations failed as expected, persona caller driven, goal-less persona failed, slow model read as one reply\n", passed, failed)
+	fmt.Fprintf(stdout, "agent-eval selftest: %d passed, %d mutations failed as expected, persona caller driven, goal-less persona failed, slow model read as one reply, judge scorer failed a bad reply, skipped without a judge\n", passed, failed)
 	return 0
 }
 

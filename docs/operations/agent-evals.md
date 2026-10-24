@@ -106,6 +106,7 @@ go run ./tools/eval/agents -admin http://127.0.0.1:9090 -public 127.0.0.1:8080 -
 | `-max-turns N` | 40 | most caller turns in the whole run (cases x runs x lines, or `max_turns` for a persona), checked before the first call |
 | `-caller-llm` | `offline` | persona model: `offline` or `xai` |
 | `-caller-url`, `-caller-model` | Ollama, `govoice-test` | persona model endpoint (offline only) and name |
+| `-judge` | `none` | model that grades the model-graded scorers (`correctness`, `answer_relevancy`, `toxicity`): `none` skips them with the reason `no judge configured`, `offline` asks the Ollama model. `make eval-agents` uses `offline` |
 | `-admin`, `-public` | `http://127.0.0.1:9090`, `127.0.0.1:8080` | management API and public listener |
 | `-selftest` | off | the harness self-test (`make eval-agents-echo`) |
 
@@ -129,6 +130,8 @@ PASS dealership-buyer-reaches-sales (offline, 1/1 runs)
     agent: ...
 agent-eval: 2 passed, 1 failed (offline)
 ```
+
+Each run is scored by five built-in scorers: `expectations` (path, phrases, end reason, turn count, reply time, no RTVI errors or failed handoffs), `tool_call_accuracy` (`tools_called`, `tools_not_called`, and the optional `tools_ordered`), and the model-graded `correctness`, `answer_relevancy` and `toxicity`. A model-graded scorer without a judge is skipped, never passed. The JSON report lists them under `scores` for each run. The optional case key `expected_answer` is extra evidence for the correctness judge.
 
 Each failed assertion prints as `FAIL <key>: want ..., got ...` under its run. The session id opens in the Calls page; the agent version id and config hash pin the result to what ran. `errors` in the JSON are harness problems (a timeout, an API error), not verdicts on the agent. The JSON report (`govoice.agent-eval/v1`) has no timestamps, so two runs diff cleanly:
 

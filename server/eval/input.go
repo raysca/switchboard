@@ -2,8 +2,6 @@ package eval
 
 import (
 	"encoding/json"
-	"fmt"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -113,70 +111,6 @@ func MedianMS(ms []int) int {
 	}
 	s := slices.Sorted(slices.Values(ms))
 	return s[len(s)/2]
-}
-
-// Score checks the call against the case; stepNames maps step id to name. It returns one line per
-// failed assertion, none for a pass. Zero RTVI error messages and zero failed handoffs are always required.
-func Score(c Case, in Input) (fails []string) {
-	fail := func(f string, a ...any) { fails = append(fails, fmt.Sprintf(f, a...)) }
-	e := c.Expect
-	tools := in.ToolStrings()
-	replies := in.replies()
-	if in.ClientErrors > 0 {
-		fail("errors: want 0 RTVI error messages, got %d", in.ClientErrors)
-	}
-	if in.HandoffFailures > 0 {
-		fail("handoff: want 0 failed handoffs, got %d", in.HandoffFailures)
-	}
-	if in.Dropped > 0 {
-		fail("events: %d client events were dropped past the cap, the call was not fully seen", in.Dropped)
-	}
-	if len(e.Path) > 0 {
-		ok := len(e.Path) == len(in.Path)
-		for i := 0; ok && i < len(in.Path); i++ {
-			ok = e.Path[i] == in.Path[i] || e.Path[i] == in.StepNames[in.Path[i]]
-		}
-		if !ok {
-			fail("path: want %v, got %v", e.Path, in.Path)
-		}
-	}
-	for _, t := range e.ToolsCalled {
-		if !strings.Contains(t, ":") {
-			t += ":succeeded"
-		}
-		if !slices.Contains(tools, t) {
-			fail("tools_called: want %q, got %v", t, tools)
-		}
-	}
-	for _, t := range e.ToolsNotCalled {
-		if slices.ContainsFunc(tools, func(got string) bool { return got == t || strings.HasPrefix(got, t+":") }) {
-			fail("tools_not_called: want %q not called, got %v", t, tools)
-		}
-	}
-	for _, p := range e.Say {
-		if !regexp.MustCompile(p).MatchString(replies) { // validated by LoadCases
-			fail("say: want a match for %q", p)
-		}
-	}
-	for _, p := range e.NeverSay {
-		if m := regexp.MustCompile(p).FindString(replies); m != "" {
-			fail("never_say: want no match for %q, matched %q", p, Truncate(m, 80))
-		}
-	}
-	if e.EndReason != "" && in.EndReason != e.EndReason {
-		fail("end_reason: want %q, got %q", e.EndReason, in.EndReason)
-	}
-	if e.MaxTurns > 0 && in.TurnCount > e.MaxTurns {
-		fail("max_turns: want at most %d, got %d", e.MaxTurns, in.TurnCount)
-	}
-	if e.MedianReplyMSMax > 0 {
-		if len(in.ReplyMS) == 0 {
-			fail("median_reply_ms_max: no reply was measured")
-		} else if m := MedianMS(in.ReplyMS); m > e.MedianReplyMSMax {
-			fail("median_reply_ms_max: want at most %d, got %d", e.MedianReplyMSMax, m)
-		}
-	}
-	return fails
 }
 
 // Truncate cuts s to n runes, adding "..." when it cut.

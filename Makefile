@@ -185,7 +185,7 @@ eval-agents-echo: ## free|Agent eval harness self-test on the echo provider, wit
 EVAL_ADMIN ?= http://127.0.0.1:9090
 EVAL_PUBLIC ?= 127.0.0.1:8080
 eval-agents: ## dev|Agent evals against make dev on the offline model (Ollama; CASES= dir, EVAL_ARGS=; MCP tools run for real)
-	@go run ./tools/eval/agents -admin $(EVAL_ADMIN) -public $(EVAL_PUBLIC) -providers offline -cases $(or $(CASES),tools/eval/agents/cases) $(EVAL_ARGS)
+	@go run ./tools/eval/agents -admin $(EVAL_ADMIN) -public $(EVAL_PUBLIC) -providers offline -judge offline -cases $(or $(CASES),tools/eval/agents/cases) $(EVAL_ARGS)
 
 eval-agents-live: ## paid|Agent evals on each agent's own model (GOVOICE_LIVE=1; cap MAX_TURNS caller turns, default 40; MCP tools run for real)
 	@test "$$GOVOICE_LIVE" = 1 || { echo "eval-agents-live runs the agents' own models and spends API credit: run GOVOICE_LIVE=1 make eval-agents-live"; exit 1; }

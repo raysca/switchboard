@@ -46,9 +46,19 @@ type RunResult struct {
 	Errors         []string    `json:"errors"` // harness problems: setup, timeouts
 	Transcript     []eval.Line `json:"transcript"`
 	Failures       []string    `json:"failures"` // failed assertions
+	Scores         []ScoreLine `json:"scores"`   // one line per built-in scorer (added to schema v1; the rest is unchanged)
 }
 
-// OK reports whether the run had no harness error and no failed assertion.
+// ScoreLine is one scorer's verdict on a run: pass, fail, skipped or error.
+type ScoreLine struct {
+	Scorer  string  `json:"scorer"`
+	Outcome string  `json:"outcome"`
+	Score   float64 `json:"score"`
+	Reason  string  `json:"reason"`
+}
+
+// OK reports whether the run had no harness error and no scorer failed or errored (Failures is
+// the reasons of exactly those results).
 func (r RunResult) OK() bool { return len(r.Errors) == 0 && len(r.Failures) == 0 }
 
 // view returns a copy sorted by case name, with nil lists made empty and transcript lines bounded.
@@ -61,6 +71,9 @@ func (r Report) view() Report {
 			run := &out.Results[i].Runs[j]
 			run.Path, run.Tools = nonNil(run.Path), nonNil(run.Tools)
 			run.Errors, run.Failures = nonNil(run.Errors), nonNil(run.Failures)
+			if run.Scores == nil {
+				run.Scores = []ScoreLine{}
+			}
 			tr := make([]eval.Line, len(run.Transcript))
 			for k, l := range run.Transcript {
 				tr[k] = eval.Line{Who: l.Who, Text: eval.Truncate(l.Text, maxReportLine)}

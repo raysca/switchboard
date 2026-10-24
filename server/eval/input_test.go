@@ -1,8 +1,10 @@
 package eval
 
 import (
+	"context"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -111,10 +113,21 @@ func baseCase() Case {
 	}}
 }
 
+// failLines runs the built-in scorers with no judge and returns the failure reasons, one per check.
+func failLines(c Case, in Input) (out []string) {
+	in.Case = &c
+	for _, r := range RunScorers(context.Background(), in, nil, nil) {
+		if r.Outcome == Fail || r.Outcome == Errored {
+			out = append(out, strings.Split(r.Reason, "; ")...)
+		}
+	}
+	return out
+}
+
 func inputFor(st Stored) Input { return BuildInput(testAgent, observed(st), nil) }
 
-func TestScore(t *testing.T) {
-	if f := Score(baseCase(), inputFor(storedCall(true, "succeeded"))); len(f) != 0 {
+func TestFailLines(t *testing.T) {
+	if f := failLines(baseCase(), inputFor(storedCall(true, "succeeded"))); len(f) != 0 {
 		t.Fatalf("passing call failed: %v", f)
 	}
 	for _, tc := range []struct {
@@ -141,14 +154,14 @@ func TestScore(t *testing.T) {
 	} {
 		c, in := baseCase(), inputFor(tc.st)
 		tc.mutate(&c, &in)
-		if got := Score(c, in); !reflect.DeepEqual(got, []string{tc.want}) {
+		if got := failLines(c, in); !reflect.DeepEqual(got, []string{tc.want}) {
 			t.Errorf("%s: failures = %q, want [%q]", tc.name, got, tc.want)
 		}
 	}
 	// step names are accepted in expect.path
 	c := baseCase()
 	c.Expect.Path = []string{"Front desk", "sales"}
-	if f := Score(c, inputFor(storedCall(true, "succeeded"))); len(f) != 0 {
+	if f := failLines(c, inputFor(storedCall(true, "succeeded"))); len(f) != 0 {
 		t.Errorf("names in path: %v", f)
 	}
 }

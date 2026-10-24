@@ -19,12 +19,18 @@ import (
 	"govoice/tools/internal/stack"
 )
 
+const (
+	judgeNone    = "none"
+	judgeOffline = "offline"
+)
+
 const defaultMaxTurns = 40 // caller turns per run (not calls: a call has up to one per typed line); paid runs stay bounded
 
 // config is the parsed command line.
 type config struct {
 	Dir, Only, Mode, JSON, Admin, Public string
 	CallerLLM, CallerURL, CallerModel    string
+	Judge                                string
 	Version, Runs, MinPass, MaxTurns     int
 	Opts                                 eval.Opts
 	Selftest                             bool
@@ -50,6 +56,7 @@ func parseFlags(args []string, usage io.Writer) (config, error) {
 	fs.StringVar(&c.CallerLLM, "caller-llm", callerOffline, "model that plays persona callers: offline (Ollama, free) or xai (paid, XAI_API_KEY, needs GOVOICE_LIVE=1)")
 	fs.StringVar(&c.CallerURL, "caller-url", "", "persona model endpoint for -caller-llm offline (default Ollama on 127.0.0.1:11434; a non-loopback host counts as paid)")
 	fs.StringVar(&c.CallerModel, "caller-model", "", "persona model name (default govoice-test, or the xAI default)")
+	fs.StringVar(&c.Judge, "judge", judgeNone, "model that grades correctness, answer_relevancy and toxicity: none (they are skipped) or offline (Ollama, free)")
 	fs.BoolVar(&c.Selftest, "selftest", false, "prove the harness on a server child and the echo provider, with deliberately broken agents (free)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -70,6 +77,8 @@ func parseFlags(args []string, usage io.Writer) (config, error) {
 		return c, fmt.Errorf("-caller-llm %q: want offline or xai", c.CallerLLM)
 	case c.CallerLLM == callerXAI && c.CallerURL != "":
 		return c, errors.New("-caller-url is for -caller-llm offline: the xAI key is sent only to the xAI endpoint")
+	case c.Judge != judgeNone && c.Judge != judgeOffline:
+		return c, fmt.Errorf("-judge %q: want none or offline", c.Judge)
 	case c.MaxTurns < 1 || c.Version < 0 || c.Opts.TurnTimeout <= 0 || c.Opts.Quiet <= 0:
 		return c, errors.New("-max-turns must be at least 1, -version not negative, -turn-timeout and -quiet positive")
 	}
@@ -140,13 +149,13 @@ func prepare(srv *stack.Server, cases []eval.Case, c config) (refs map[string]ev
 }
 
 // execute runs every case c.Runs times and builds the report.
-func execute(ctx context.Context, srv *stack.Server, cases []eval.Case, refs map[string]eval.Agent, c config, ask eval.AskFunc) Report {
+func execute(ctx context.Context, srv *stack.Server, cases []eval.Case, refs map[string]eval.Agent, c config, ask eval.AskFunc, judge *eval.Judge) Report {
 	rep := Report{Schema: reportSchema, Mode: c.Mode}
 	for _, cs := range cases {
 		res := CaseResult{Case: cs.Name}
 		ok := 0
 		for range c.Runs {
-			run := runCase(ctx, srv, refs[cs.Agent], cs, c.Opts, ask)
+			run := runCase(ctx, srv, refs[cs.Agent], cs, c.Opts, ask, judge)
 			if run.OK() {
 				ok++
 			}
@@ -164,7 +173,7 @@ func execute(ctx context.Context, srv *stack.Server, cases []eval.Case, refs map
 	return rep
 }
 
-func runCase(ctx context.Context, srv *stack.Server, ref eval.Agent, cs eval.Case, o eval.Opts, ask eval.AskFunc) RunResult {
+func runCase(ctx context.Context, srv *stack.Server, ref eval.Agent, cs eval.Case, o eval.Opts, ask eval.AskFunc, judge *eval.Judge) RunResult {
 	next := eval.ScriptCaller(cs.Caller.Script)
 	if p := cs.Caller.Persona; p != nil {
 		next = eval.PersonaCaller(*p, ref.Name, ask)
@@ -178,8 +187,34 @@ func runCase(ctx context.Context, srv *stack.Server, ref eval.Agent, cs eval.Cas
 	if err != nil {
 		run.Errors = strings.Split(err.Error(), "\n")
 	}
-	run.Failures = eval.Score(cs, in)
+	run.Scores, run.Failures = scoreCall(ctx, in, judge)
 	return run
+}
+
+// scoreCall runs the built-in scorers; the failure lines are the reasons of every result that failed
+// or errored, one per check. The deterministic scorers' reasons carry their own prefixes (path:, say:,
+// tools_called: ...); a judged scorer's are prefixed with its name.
+func scoreCall(ctx context.Context, in eval.Input, judge *eval.Judge) (scores []ScoreLine, failures []string) {
+	rs := eval.RunScorers(ctx, in, func(string) *eval.Judge { return judge }, nil)
+	for _, r := range rs {
+		scores = append(scores, ScoreLine{Scorer: r.Scorer, Outcome: string(r.Outcome), Score: r.Score, Reason: r.Reason})
+	}
+	if eval.CaseRunPassed(rs) {
+		return scores, nil
+	}
+	for _, r := range rs {
+		if r.Outcome != eval.Fail && r.Outcome != eval.Errored {
+			continue
+		}
+		prefix := ""
+		if s, _ := eval.Lookup(r.Scorer); r.Outcome == eval.Errored || s.Judged() {
+			prefix = r.Scorer + ": "
+		}
+		for l := range strings.SplitSeq(r.Reason, "; ") {
+			failures = append(failures, prefix+l)
+		}
+	}
+	return scores, failures
 }
 
 func main() { os.Exit(realMain(os.Args[1:], os.Stdout, os.Stderr)) }
@@ -220,6 +255,15 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 		return setup(err)
 	}
 	var ask eval.AskFunc
+	var judge *eval.Judge
+	if c.Judge == judgeOffline {
+		jask, closeJudge, err := newAsk(config{CallerLLM: callerOffline}) // the same offline client recipe as the persona
+		if err != nil {
+			return setup(err)
+		}
+		defer closeJudge()
+		judge = &eval.Judge{Ask: jask, Model: defaultCallerLLM}
+	}
 	if hasPersona(cases) {
 		needsLive = needsLive || callerNeedsLive(c.CallerLLM, c.CallerURL)
 	}
@@ -235,7 +279,7 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	rep := execute(ctx, srv, cases, refs, c, ask)
+	rep := execute(ctx, srv, cases, refs, c, ask, judge)
 	WriteText(stdout, rep)
 	if c.JSON != "" {
 		if err := WriteJSON(c.JSON, rep); err != nil {
