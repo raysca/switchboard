@@ -129,6 +129,32 @@ them so SQLite's write lock is released and concurrent trace inserts are not
 stalled. A large backlog drains over many short transactions rather than one
 large one.
 
+### Seeing what retention does
+
+`GET /api/v1/retention` (management key) reports the policy in effect and the last run:
+
+```json
+{ "data": { "enabled": true, "interval_seconds": 3600,
+  "content_retention_days": 7, "metadata_retention_days": 30, "batch_size": 500,
+  "recording_retention_days": 3,
+  "last_run": { "started_at": "2026-10-24T11:00:00Z", "duration_ms": 41, "turns_purged": 12,
+                "sessions_deleted": 4, "turns_deleted": 9, "tool_calls_deleted": 2,
+                "spans_deleted": 31, "events_deleted": 70 } } }
+```
+
+`last_run` is `null` until the first run since the server started, and carries `error` when the run failed. With
+`?dry_run=true` the response adds `dry_run`: what a run started now would remove, counted without removing
+anything (`content_sessions`, `content_turns`, `metadata_sessions`, `metadata_turns`, `metadata_tool_calls`,
+`metadata_spans`, `metadata_events`). The numbers are the ones the run then reports; a call that ends in between
+can move them by one session. With `retention.enabled` off the endpoint still shows the configured lifetimes, and a
+dry run answers 409 `retention_disabled`.
+
+Metrics: `voice_retention_enabled`, `voice_retention_runs_total{result}`, `voice_retention_turns_purged_total`,
+`voice_retention_sessions_deleted_total` and `voice_retention_last_success_age_seconds` (the uptime until the first
+completed run). The `GovoiceRetentionStalled` alert fires when the job is on and has not completed a run for three
+hours. A configuration that keeps content longer than metadata, or recordings longer than content, is refused at
+start-up with a message naming both values.
+
 ## Call recording
 
 Off by default. A call is recorded only when **both** the server enables it

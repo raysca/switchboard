@@ -234,3 +234,56 @@ LIMIT ?`
 
 	return stats, err
 }
+
+// RetentionPreview is what one retention run would remove right now, counted without removing anything. A zero cutoff
+// leaves that pass out. The counts are the ones a run reports: ContentTurns is RunResult.TurnsPurged, and the Metadata
+// fields are the rows PurgeMetadata deletes (sessions and everything of theirs, plus standalone spans and events).
+type RetentionPreview struct {
+	ContentSessions   int64
+	ContentTurns      int64
+	MetadataSessions  int64
+	MetadataTurns     int64
+	MetadataToolCalls int64
+	MetadataSpans     int64
+	MetadataEvents    int64
+}
+
+// Preview counts what PurgeContent (contentCutoff) and PurgeMetadata (metadataCutoff) would remove. It reads in
+// separate queries, so a call ending between them can shift a count by one session.
+func (r RetentionRepository) Preview(ctx context.Context, contentCutoff, metadataCutoff time.Time) (RetentionPreview, error) {
+	var p RetentionPreview
+	count := func(dst *int64, query string, args ...any) error {
+		return r.s.db.QueryRowContext(ctx, r.s.bind(query), args...).Scan(dst)
+	}
+	if !contentCutoff.IsZero() {
+		c := utc(contentCutoff)
+		if err := count(&p.ContentSessions, `SELECT count(*) FROM sessions WHERE status='ended' AND ended_at IS NOT NULL AND ended_at <= ?
+AND EXISTS (SELECT 1 FROM turns WHERE session_id = sessions.id AND (transcript IS NOT NULL OR assistant_text IS NOT NULL))`, c); err != nil {
+			return p, err
+		}
+		if err := count(&p.ContentTurns, `SELECT count(*) FROM turns t JOIN sessions s ON s.id = t.session_id
+WHERE s.status='ended' AND s.ended_at IS NOT NULL AND s.ended_at <= ? AND (t.transcript IS NOT NULL OR t.assistant_text IS NOT NULL)`, c); err != nil {
+			return p, err
+		}
+	}
+	if !metadataCutoff.IsZero() {
+		c := utc(metadataCutoff)
+		const old = "(SELECT id FROM sessions WHERE status='ended' AND ended_at IS NOT NULL AND ended_at <= ?)"
+		for _, q := range []struct {
+			dst   *int64
+			query string
+			args  []any
+		}{
+			{&p.MetadataSessions, "SELECT count(*) FROM sessions WHERE status='ended' AND ended_at IS NOT NULL AND ended_at <= ?", []any{c}},
+			{&p.MetadataTurns, "SELECT count(*) FROM turns WHERE session_id IN " + old, []any{c}},
+			{&p.MetadataToolCalls, "SELECT count(*) FROM tool_calls WHERE session_id IN " + old, []any{c}},
+			{&p.MetadataSpans, "SELECT (SELECT count(*) FROM trace_spans WHERE session_id IN " + old + ") + (SELECT count(*) FROM trace_spans WHERE session_id IS NULL AND started_at <= ?)", []any{c, c}},
+			{&p.MetadataEvents, "SELECT (SELECT count(*) FROM trace_events WHERE session_id IN " + old + ") + (SELECT count(*) FROM trace_events WHERE session_id IS NULL AND occurred_at <= ?)", []any{c, c}},
+		} {
+			if err := count(q.dst, q.query, q.args...); err != nil {
+				return p, err
+			}
+		}
+	}
+	return p, nil
+}

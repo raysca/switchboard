@@ -260,7 +260,7 @@ func validateRetentionAndRecording(cfg *Config) error {
 			return errors.New("retention.content_retention_days must be >= 0")
 		}
 		if cfg.Retention.MetadataRetentionDays > 0 && cfg.Retention.ContentRetentionDays > cfg.Retention.MetadataRetentionDays {
-			return errors.New("retention.content_retention_days cannot exceed retention.metadata_retention_days")
+			return fmt.Errorf("retention.content_retention_days (%d) cannot exceed retention.metadata_retention_days (%d): content must not outlive the metadata that describes it", cfg.Retention.ContentRetentionDays, cfg.Retention.MetadataRetentionDays)
 		}
 		if cfg.Retention.BatchSize < 0 {
 			return errors.New("retention.batch_size must be >= 0")
@@ -279,7 +279,7 @@ func validateRetentionAndRecording(cfg *Config) error {
 		}
 		// Recordings and their transcripts are conversation content.
 		if r := cfg.Retention; r.Enabled && r.ContentRetentionDays > 0 && rc.RetentionDays > r.ContentRetentionDays {
-			return errors.New("recording.retention_days cannot exceed retention.content_retention_days")
+			return fmt.Errorf("recording.retention_days (%d) cannot exceed retention.content_retention_days (%d): a recording is conversation content", rc.RetentionDays, r.ContentRetentionDays)
 		}
 	}
 	return nil

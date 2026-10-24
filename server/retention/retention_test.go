@@ -589,6 +589,10 @@ func (b blockingStore) PurgeMetadata(ctx context.Context, _ time.Time, _ int) (s
 	return storage.PurgeMetadataStats{}, ctx.Err()
 }
 
+func (b blockingStore) Preview(context.Context, time.Time, time.Time) (storage.RetentionPreview, error) {
+	return storage.RetentionPreview{}, nil
+}
+
 // Stop must end an in-flight run instead of waiting up to its 15 minute budget.
 func TestJobStopCancelsInFlightRun(t *testing.T) {
 	store := blockingStore{entered: make(chan struct{})}

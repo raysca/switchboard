@@ -152,6 +152,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			{"/api/v1/providers", "provider_management_unavailable", "provider management storage is unavailable", s.providerManagementAPI},
 			{"/api/v1/mcp-servers", "mcp_management_unavailable", "MCP management storage is unavailable", s.mcpManagementAPI},
 			{"/api/v1/http-tools", "http_tools_management_unavailable", "HTTP tools management storage is unavailable", s.httpToolsManagementAPI},
+			{"/api/v1/retention", "retention_management_unavailable", "retention status is unavailable", s.retentionManagementAPI},
 			{"/api/v1/secrets", "secrets_management_unavailable", "secrets management storage is unavailable", s.secretsManagementAPI},
 			{"/api/v1/sessions", "session_management_unavailable", "session management storage is unavailable", s.sessionManagementAPI},
 		} {

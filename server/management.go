@@ -148,11 +148,13 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	s.setSessionManagementAPI(api.NewTracesHandler(store.Sessions(), store.Traces()))
 
 	if policy != nil {
-		m.retention = retention.NewJob(store.Retention(), *policy, retention.WithInterval(s.cfg.Retention.Interval), retention.WithLogger(s.logger))
+		m.retention = retention.NewJob(store.Retention(), *policy, retention.WithInterval(s.cfg.Retention.Interval), retention.WithLogger(s.logger), retention.WithObserver(s.metrics.ObserveRetention))
+		s.metrics.RetentionEnabled.Store(true)
 		m.retention.Start(context.Background())
 	} else {
 		s.logger.Warn("retention disabled: stored transcripts and traces are kept indefinitely")
 	}
+	s.setRetentionManagementAPI(retention.Handler(s.retentionSettings(policy), m.retention))
 	if d := s.cfg.MCP.SyncInterval; d > 0 {
 		m.mcpSync = mcp.NewSyncer(mcpService, d, s.logger, func(ok bool) {
 			if ok {
@@ -275,4 +277,26 @@ func (s *Server) providersRoutes() http.Handler {
 	mux.Handle("/api/v1/providers", api.ProvidersHandler{Catalog: s.catalog, Resolver: s.resolver, Supports: s.registry.Supports})
 	mux.HandleFunc("/api/v1/providers/{id}/test", s.handleProviderTest)
 	return mux
+}
+
+// retentionSettings is the retention configuration the status endpoint reports: the policy in force when the job
+// runs, otherwise the configured values (nothing is purged).
+func (s *Server) retentionSettings(policy *retention.Policy) retention.Settings {
+	rc := s.cfg.Retention
+	interval := rc.Interval
+	if interval <= 0 {
+		interval = time.Hour
+	}
+	settings := retention.Settings{Enabled: policy != nil, Interval: interval, Policy: retention.Policy{
+		ContentRetention:  time.Duration(rc.ContentRetentionDays) * 24 * time.Hour,
+		MetadataRetention: time.Duration(rc.MetadataRetentionDays) * 24 * time.Hour,
+		BatchSize:         rc.BatchSize,
+	}}
+	if policy != nil {
+		settings.Policy = *policy
+	}
+	if s.cfg.Recording.Enabled {
+		settings.RecordingRetentionDays = s.cfg.Recording.RetentionDays
+	}
+	return settings
 }

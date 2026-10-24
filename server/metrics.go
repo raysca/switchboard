@@ -13,6 +13,7 @@ import (
 
 	"govoice/core"
 	"govoice/core/netpool"
+	"govoice/server/retention"
 	"govoice/smartturn"
 )
 
@@ -125,6 +126,12 @@ type Metrics struct {
 
 	// MCPSyncOKTotal / MCPSyncFailedTotal count background MCP server syncs.
 	MCPSyncOKTotal, MCPSyncFailedTotal atomic.Uint64
+
+	// Retention job: whether it runs, runs by result, what it removed, and when it last completed.
+	RetentionEnabled                                    atomic.Bool
+	RetentionRunsOK, RetentionRunsFailed                atomic.Uint64
+	RetentionTurnsPurgedTotal, RetentionSessionsDeleted atomic.Uint64
+	retentionLastOK                                     atomic.Pointer[time.Time] // monotonic reading kept: ages are durations
 
 	filters filterMetrics
 	summary summaryMetrics
@@ -348,6 +355,23 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "voice_mcp_sync_total{result=\"ok\"} %d\n", m.MCPSyncOKTotal.Load())
 	fmt.Fprintf(w, "voice_mcp_sync_total{result=\"failed\"} %d\n", m.MCPSyncFailedTotal.Load())
 
+	enabled := 0
+	if m.RetentionEnabled.Load() {
+		enabled = 1
+	}
+	// Without a completed run the age is the uptime: a job that never completes ages like one that stopped.
+	age := time.Since(m.StartTime)
+	if last := m.retentionLastOK.Load(); last != nil {
+		age = time.Since(*last)
+	}
+	fmt.Fprintf(w, "# HELP voice_retention_enabled 1 when the automatic retention job runs.\n# TYPE voice_retention_enabled gauge\nvoice_retention_enabled %d\n", enabled)
+	fmt.Fprintf(w, "# HELP voice_retention_runs_total Retention job runs by result.\n# TYPE voice_retention_runs_total counter\n")
+	fmt.Fprintf(w, "voice_retention_runs_total{result=\"ok\"} %d\n", m.RetentionRunsOK.Load())
+	fmt.Fprintf(w, "voice_retention_runs_total{result=\"failed\"} %d\n", m.RetentionRunsFailed.Load())
+	fmt.Fprintf(w, "# HELP voice_retention_turns_purged_total Turns whose transcript and assistant text the retention job blanked.\n# TYPE voice_retention_turns_purged_total counter\nvoice_retention_turns_purged_total %d\n", m.RetentionTurnsPurgedTotal.Load())
+	fmt.Fprintf(w, "# HELP voice_retention_sessions_deleted_total Sessions (with their turns, spans and tool calls) the retention job deleted.\n# TYPE voice_retention_sessions_deleted_total counter\nvoice_retention_sessions_deleted_total %d\n", m.RetentionSessionsDeleted.Load())
+	fmt.Fprintf(w, "# HELP voice_retention_last_success_age_seconds Seconds since the retention job last completed a run (the uptime before the first one).\n# TYPE voice_retention_last_success_age_seconds gauge\nvoice_retention_last_success_age_seconds %.0f\n", age.Seconds())
+
 	for _, c := range []struct {
 		name, help string
 		v          *atomic.Uint64
@@ -522,4 +546,17 @@ func (p *providerErrors) write(w io.Writer) {
 	for _, k := range keys {
 		fmt.Fprintf(w, "voice_provider_errors_total{provider=%q,stage=%q} %d\n", k[0], k[1], vals[k])
 	}
+}
+
+// ObserveRetention records a finished retention run.
+func (m *Metrics) ObserveRetention(rec retention.RunRecord) {
+	if rec.Err != "" {
+		m.RetentionRunsFailed.Add(1)
+		return
+	}
+	now := time.Now()
+	m.retentionLastOK.Store(&now)
+	m.RetentionRunsOK.Add(1)
+	m.RetentionTurnsPurgedTotal.Add(uint64(rec.Result.TurnsPurged))
+	m.RetentionSessionsDeleted.Add(uint64(rec.Result.SessionsDeleted))
 }

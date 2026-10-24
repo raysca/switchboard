@@ -108,3 +108,10 @@ groups:
         labels: {severity: info}
         annotations:
           summary: "OTel export is losing spans on {{ $labels.instance }}"
+      - alert: GovoiceRetentionStalled
+        expr: voice_retention_enabled == 1 and voice_retention_last_success_age_seconds > 10800
+        for: 15m
+        labels: {severity: warn}
+        annotations:
+          summary: "The retention job has not completed a run on {{ $labels.instance }} for over 3 hours"
+          description: "Transcripts and call records are not being purged on schedule. See GET /api/v1/retention (last_run.error) and the server log ('retention run failed')."

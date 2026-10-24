@@ -229,8 +229,17 @@ func TestConfig_Retention(t *testing.T) {
 	invalidContent.Retention.Enabled = true
 	invalidContent.Retention.MetadataRetentionDays = 7
 	invalidContent.Retention.ContentRetentionDays = 30
-	if err := ValidateConfig(invalidContent); err == nil {
-		t.Errorf("expected error when content retention exceeds metadata retention")
+	if err := ValidateConfig(invalidContent); err == nil || !strings.Contains(err.Error(), "(30)") || !strings.Contains(err.Error(), "(7)") {
+		t.Errorf("content retention above metadata retention must be refused naming both values: %v", err)
+	}
+
+	invalidRecording := DefaultConfig(ProfileDevelopment)
+	invalidRecording.Retention.Enabled = true
+	invalidRecording.Retention.MetadataRetentionDays = 30
+	invalidRecording.Retention.ContentRetentionDays = 7
+	invalidRecording.Recording = RecordingConfig{Enabled: true, Dir: t.TempDir(), RetentionDays: 14}
+	if err := ValidateConfig(invalidRecording); err == nil || !strings.Contains(err.Error(), "(14)") || !strings.Contains(err.Error(), "(7)") {
+		t.Errorf("recordings kept longer than content must be refused naming both values: %v", err)
 	}
 }
 

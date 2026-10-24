@@ -65,6 +65,7 @@ type Server struct {
 	agentManagementAPI     http.Handler
 	mcpManagementAPI       http.Handler
 	secretsManagementAPI   http.Handler
+	retentionManagementAPI http.Handler
 	httpToolsManagementAPI http.Handler
 	sessionManagementAPI   http.Handler
 	store                  *storage.Store
@@ -317,6 +318,12 @@ func (s *Server) setMCPManagementAPI(handler http.Handler) {
 // authentication boundary. Configure it before serving requests.
 func (s *Server) setHTTPToolsManagementAPI(handler http.Handler) {
 	s.httpToolsManagementAPI = handler
+}
+
+// setRetentionManagementAPI installs the retention status handler behind the management listener
+// authentication boundary. Configure it before serving requests.
+func (s *Server) setRetentionManagementAPI(handler http.Handler) {
+	s.retentionManagementAPI = handler
 }
 
 // setSecretsManagementAPI installs the secrets handler behind the management

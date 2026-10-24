@@ -14,6 +14,7 @@ import (
 type Store interface {
 	PurgeContent(ctx context.Context, cutoff time.Time, limit int) (storage.ContentPurgeResult, error)
 	PurgeMetadata(ctx context.Context, cutoff time.Time, limit int) (stats storage.PurgeMetadataStats, err error)
+	Preview(ctx context.Context, contentCutoff, metadataCutoff time.Time) (storage.RetentionPreview, error)
 }
 
 // RunResult summarizes the outcome of a retention execution.
@@ -26,6 +27,14 @@ type RunResult struct {
 	TurnsPurged      int64
 }
 
+// RunRecord is one finished run, successful or not, as the status endpoint and the metrics report it.
+type RunRecord struct {
+	StartedAt time.Time
+	Duration  time.Duration
+	Result    RunResult
+	Err       string // empty when the run completed
+}
+
 // Option configures a Job.
 type Option func(*Job)
 
@@ -36,6 +45,11 @@ func WithInterval(d time.Duration) Option {
 			j.interval = d
 		}
 	}
+}
+
+// WithObserver is called with every finished run (the metrics hook). It must not block.
+func WithObserver(f func(RunRecord)) Option {
+	return func(j *Job) { j.observe = f }
 }
 
 // WithLogger sets the structured logger for retention operations.
@@ -54,6 +68,8 @@ type Job struct {
 	clock    func() time.Time
 	interval time.Duration
 	logger   *slog.Logger
+	observe  func(RunRecord)
+	last     atomic.Pointer[RunRecord]
 
 	running  atomic.Bool
 	cancel   context.CancelFunc // ends an in-flight run on Stop
@@ -79,8 +95,49 @@ func NewJob(store Store, policy Policy, opts ...Option) *Job {
 	return j
 }
 
-// RunOnce performs one pass of content and metadata purges across all bounded batches.
+// RunOnce performs one pass of content and metadata purges across all bounded batches and records it (Last).
 func (j *Job) RunOnce(ctx context.Context) (RunResult, error) {
+	started := j.clock()
+	began := time.Now()
+	res, err := j.run(ctx)
+	rec := RunRecord{StartedAt: started, Duration: time.Since(began), Result: res}
+	if err != nil {
+		rec.Err = err.Error()
+	}
+	j.last.Store(&rec)
+	if j.observe != nil {
+		j.observe(rec)
+	}
+	return res, err
+}
+
+// Last is the most recent finished run, if there has been one since the job was built.
+func (j *Job) Last() (RunRecord, bool) {
+	if rec := j.last.Load(); rec != nil {
+		return *rec, true
+	}
+	return RunRecord{}, false
+}
+
+// Cutoffs are the times before which a run would purge content and metadata now; zero means that pass is off.
+func (j *Job) Cutoffs() (content, metadata time.Time) {
+	now := j.clock()
+	if j.policy.ContentRetention > 0 {
+		content = now.Add(-j.policy.ContentRetention)
+	}
+	if j.policy.MetadataRetention > 0 {
+		metadata = now.Add(-j.policy.MetadataRetention)
+	}
+	return content, metadata
+}
+
+// Preview counts what a run started now would remove, without removing anything.
+func (j *Job) Preview(ctx context.Context) (storage.RetentionPreview, error) {
+	content, metadata := j.Cutoffs()
+	return j.store.Preview(ctx, content, metadata)
+}
+
+func (j *Job) run(ctx context.Context) (RunResult, error) {
 	if err := j.policy.Validate(); err != nil {
 		return RunResult{}, err
 	}

@@ -2,6 +2,7 @@ package retention
 
 import (
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -21,7 +22,7 @@ func (p Policy) Validate() error {
 		return errors.New("content retention must be non-negative")
 	}
 	if p.MetadataRetention > 0 && p.ContentRetention > p.MetadataRetention {
-		return errors.New("content retention cannot exceed metadata retention")
+		return fmt.Errorf("content retention (%s) cannot exceed metadata retention (%s)", p.ContentRetention, p.MetadataRetention)
 	}
 	if p.BatchSize < 0 {
 		return errors.New("batch size must be non-negative")
