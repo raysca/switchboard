@@ -173,9 +173,8 @@ e2e-fake: ui-embed ## free|Playwright browser e2e for agents with handoffs and t
 e2e-echo: test-e2e-go eval-agents-echo e2e-fake ## free|Every end-to-end test on the echo provider: Go (test-e2e-go), the agent eval self-test, then browser (e2e-fake)
 
 # The agent eval harness (tools/eval/agents) proven on the echo provider: plumbing cases must pass and
-# each deliberately broken agent must fail its case. Skips when the Silero model is missing.
+# each deliberately broken agent must fail its case. Skips (loudly) when the Silero model is missing, fails when CI is set.
 eval-agents-echo: ## free|Agent eval harness self-test on the echo provider, with mutation checks (about 30 s)
-	@test -f third_party/silero_vad.onnx || { echo "eval-agents-echo: SKIPPED: third_party/silero_vad.onnx missing"; exit 0; }
 	@go run ./tools/eval/agents -selftest
 
 # The same specs against LIVE xAI (STT, Grok, TTS): the model itself must call the transfer tool. Needs
