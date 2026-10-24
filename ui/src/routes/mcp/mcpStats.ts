@@ -96,7 +96,7 @@ export function referencedAgents(details: unknown): { id: string; name: string }
 const REASONS: Record<string, string> = {
   invalid_endpoint: "Enter a full server address, such as https://mcp.example.com/mcp.",
   destination_denied: "That address is not allowed: MCP servers must be public HTTPS addresses.",
-  invalid_auth_env: "The token variable must be named MCP_TOKEN_ followed by A-Z, 0-9 or _ (max 48).",
+  invalid_auth_env: "The secret must be an MCP_TOKEN_ variable name or a lower-case name such as crm-api.",
   invalid_metadata: "The name is required (up to 128 characters) and the description can be up to 1024 characters.",
   transport_unsupported: "Only streamable HTTP servers are supported.",
 };

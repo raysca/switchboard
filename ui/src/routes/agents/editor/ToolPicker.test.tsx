@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 import { useState } from "react";
-import { ApiError, type ApiClient, type MCPServerDTO, type MCPServerDetailDTO, type ToolSelection } from "../../../api/client";
+import { ApiError, type ApiClient, type HTTPToolDTO, type MCPServerDTO, type MCPServerDetailDTO, type ToolSelection } from "../../../api/client";
 import { ToolPicker } from "./ToolPicker";
 
 const server = (over: Partial<MCPServerDTO> = {}): MCPServerDTO => ({
@@ -72,8 +72,21 @@ function setup(client: Partial<ApiClient>, initial: ToolSelection[] = [], onChan
 const api = (over: Partial<ApiClient> = {}): Partial<ApiClient> => ({
   getMCPServers: vi.fn().mockResolvedValue([server()]),
   getMCPServer: vi.fn().mockResolvedValue(detail()),
+  getHTTPTools: vi.fn().mockResolvedValue([]),
   ...over,
 });
+const httpTool = (over: Partial<HTTPToolDTO> = {}): HTTPToolDTO => ({
+  id: "t1",
+  name: "get_order",
+  enabled: true,
+  hash: "hh-1",
+  definition: { name: "get_order", description: "Look up an order.", method: "GET", url: "https://api.example.com/orders/{order_id}", input_schema: {}, auth: { secret: "crm-api" } },
+  auth_secret_set: true,
+  created_at: "",
+  updated_at: "",
+  ...over,
+});
+const httpSel = (hash = "hh-1", required = false): ToolSelection => ({ mcp_server_id: "http:t1", remote_name: "get_order", schema_hash: hash, required });
 
 describe("ToolPicker", () => {
   it("lists a server's tools by name, with what the model sees", async () => {
@@ -158,8 +171,43 @@ describe("ToolPicker", () => {
 
   it("says how to get a server when none is connected", async () => {
     setup(api({ getMCPServers: vi.fn().mockResolvedValue([]) }));
-    expect(await screen.findByText(/No MCP server is connected\./)).toBeVisible();
-    expect(screen.getByRole("link", { name: "Connect a server" })).toHaveAttribute("href", "/mcp-servers");
+    expect(await screen.findByText(/No tools yet\./)).toBeVisible();
+    expect(screen.getByRole("link", { name: "Connect an MCP server" })).toHaveAttribute("href", "/mcp-servers");
+    expect(screen.getByRole("link", { name: "add an HTTP tool" })).toHaveAttribute("href", "/http-tools/new");
+  });
+
+  describe("HTTP tools", () => {
+    it("chooses an HTTP tool with its current hash and takes it off again", async () => {
+      const { user, onChange } = setup(api({ getHTTPTools: vi.fn().mockResolvedValue([httpTool()]) }));
+      const group = await screen.findByRole("group", { name: "HTTP tools" });
+      await user.click(within(group).getByRole("checkbox", { name: /^get_order/ }));
+      expect(onChange).toHaveBeenLastCalledWith([httpSel()]);
+      await user.click(within(group).getByRole("checkbox", { name: /^get_order/ }));
+      expect(onChange).toHaveBeenLastCalledWith([]);
+    });
+
+    it("does not offer a background run, and an HTTP choice is not listed as a removed MCP server", async () => {
+      setup(api({ getHTTPTools: vi.fn().mockResolvedValue([httpTool()]) }), [httpSel()]);
+      await screen.findByRole("checkbox", { name: "Required: get_order" });
+      expect(screen.queryByRole("checkbox", { name: "Background: get_order" })).toBeNull();
+      expect(screen.queryByRole("group", { name: "Removed servers" })).toBeNull();
+    });
+
+    it("says an edited tool is no longer the one chosen and chooses the latest on request", async () => {
+      const { user, onChange } = setup(api({ getHTTPTools: vi.fn().mockResolvedValue([httpTool({ hash: "hh-2" })]) }), [httpSel("hh-1", true)]);
+      expect(await screen.findByText("Edited since you chose it")).toBeVisible();
+      await user.click(screen.getByRole("button", { name: "Use the latest definition" }));
+      expect(onChange).toHaveBeenLastCalledWith([httpSel("hh-2", true)]);
+    });
+
+    it("explains a disabled tool or a missing secret, and lets a deleted tool be taken off", async () => {
+      const { user, onChange } = setup(api({ getHTTPTools: vi.fn().mockResolvedValue([httpTool({ id: "t2", name: "other", enabled: false, definition: { name: "other", description: "", method: "GET", url: "https://a.example/x", input_schema: {} } }), httpTool({ auth_secret_set: false })]) }), [{ ...httpSel(), mcp_server_id: "http:gone", remote_name: "gone" }]);
+      expect(await screen.findByText("Disabled")).toBeVisible();
+      expect(screen.getByText("Secret crm-api is not set")).toBeVisible();
+      expect(screen.getByRole("checkbox", { name: /^other/ })).toBeDisabled();
+      await user.click(screen.getByRole("checkbox", { name: /^gone/ }));
+      expect(onChange).toHaveBeenLastCalledWith([]);
+    });
   });
 
   it("makes no request until it is shown, and says it is loading while it waits", async () => {

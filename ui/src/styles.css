@@ -2617,6 +2617,16 @@ main:has(.mcp-page) {
     border-right: 0;
   }
 }
+.http-tool {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 760px;
+}
+textarea.mono {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.85rem;
+}
 .mcp-main {
   flex: 999 1 520px;
   min-width: 0;

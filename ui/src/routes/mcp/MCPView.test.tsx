@@ -216,7 +216,7 @@ describe("MCPView", () => {
     await user.type(screen.getByLabelText("Name"), "x");
     await user.type(screen.getByLabelText("Endpoint URL"), "https://a.example.com");
     await user.click(screen.getByRole("button", { name: "Connect" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/token variable/i);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/secret must be an MCP_TOKEN_/i);
   });
 
   it("lists the tools with what the model sees, the schema and how many agents use each", async () => {

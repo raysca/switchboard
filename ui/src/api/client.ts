@@ -288,6 +288,47 @@ export type CreateMCPServerInput = {
 /** PATCH body: a field left out is unchanged; `auth_env: ""` clears the token variable. */
 export type UpdateMCPServerInput = Partial<Pick<CreateMCPServerInput, "name" | "description" | "endpoint" | "auth_env">>;
 
+// HTTP tools: one endpoint a step can call. A definition carries a secret's name, never its value.
+export const httpToolDefinitionSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  method: z.string(),
+  url: z.string(),
+  headers: z.record(z.string(), z.string()).nullish(),
+  auth: z.object({ header: z.string().optional(), secret: z.string() }).nullish(),
+  input_schema: z.unknown(),
+  timeout_ms: z.number().optional(),
+  max_response_bytes: z.number().optional(),
+  response_pick: z.array(z.string()).nullish(),
+});
+export type HTTPToolDefinition = z.infer<typeof httpToolDefinitionSchema>;
+export const httpToolSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  enabled: z.boolean(),
+  hash: z.string(),
+  definition: httpToolDefinitionSchema,
+  auth_secret_set: z.boolean().optional(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+export type HTTPToolDTO = z.infer<typeof httpToolSchema>;
+export const httpToolTestSchema = z.object({
+  status: z.string(),
+  duration_ms: z.number(),
+  result: z.unknown().optional(),
+  error_category: z.string().optional(),
+  message: z.string().optional(),
+});
+export type HTTPToolTestDTO = z.infer<typeof httpToolTestSchema>;
+const httpToolsEnvelope = z.object({ data: z.array(httpToolSchema) });
+const httpToolEnvelope = z.object({ data: httpToolSchema });
+const httpToolTestEnvelope = z.object({ data: httpToolTestSchema });
+
+/** The id an agent's tool selection carries for an HTTP tool, in the place of an MCP server id. */
+export const httpToolServerId = (toolId: string) => `http:${toolId}`;
+export const isHTTPToolSelection = (t: { mcp_server_id: string }) => t.mcp_server_id.startsWith("http:");
+
 // Secrets: names and where they live; a value is only ever sent, never received.
 export const secretSchema = z.object({
   name: z.string(),
@@ -622,6 +663,17 @@ export function createApiClient(
           },
         )
       ).data,
+
+    // HTTP tools endpoints
+    getHTTPTools: async () => (await request("/http-tools", httpToolsEnvelope)).data,
+    getHTTPTool: async (id: string) => (await request(`/http-tools/${encodeURIComponent(id)}`, httpToolEnvelope)).data,
+    createHTTPTool: async (definition: HTTPToolDefinition) => (await request("/http-tools", httpToolEnvelope, { method: "POST", body: definition })).data,
+    updateHTTPTool: async (id: string, definition: HTTPToolDefinition) => (await request(`/http-tools/${encodeURIComponent(id)}`, httpToolEnvelope, { method: "PUT", body: definition })).data,
+    setHTTPToolEnabled: async (id: string, enabled: boolean) => (await request(`/http-tools/${encodeURIComponent(id)}/${enabled ? "enable" : "disable"}`, httpToolEnvelope, { method: "POST" })).data,
+    deleteHTTPTool: async (id: string) => {
+      await request(`/http-tools/${encodeURIComponent(id)}`, z.unknown(), { method: "DELETE" });
+    },
+    testHTTPTool: async (id: string, args: unknown) => (await request(`/http-tools/${encodeURIComponent(id)}/test`, httpToolTestEnvelope, { method: "POST", body: { arguments: args } })).data,
 
     // Secrets endpoints
     getSecrets: async () => (await request("/secrets", secretListEnvelope)).data,
