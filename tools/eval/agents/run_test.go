@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"govoice/server/api"
 	"govoice/tools/internal/stack"
 )
 
@@ -48,5 +49,25 @@ func TestTurnState(t *testing.T) {
 	}
 	if _, text, _ := turnState(ev("bot-llm-text"), t0.Add(time.Second)); text {
 		t.Error("events before the mark counted")
+	}
+}
+
+func TestTracesComplete(t *testing.T) {
+	span := func(n string) api.TraceSpanDTO { return api.TraceSpanDTO{Name: n} }
+	call := func(n string) api.ToolCallDTO { return api.ToolCallDTO{RemoteName: n} }
+	for _, c := range []struct {
+		name string
+		tr   api.SessionTracesDTO
+		want bool
+	}{
+		{"no transfers", api.SessionTracesDTO{ToolCalls: []api.ToolCallDTO{call("end_call")}}, true},
+		{"transfer, span late", api.SessionTracesDTO{ToolCalls: []api.ToolCallDTO{call("transfer_to_sales")}}, false},
+		{"transfer, active span", api.SessionTracesDTO{ToolCalls: []api.ToolCallDTO{call("transfer_to_sales")}, Spans: []api.TraceSpanDTO{span("handoff.active")}}, true},
+		{"transfer, failed span", api.SessionTracesDTO{ToolCalls: []api.ToolCallDTO{call("transfer_to_sales")}, Spans: []api.TraceSpanDTO{span("handoff.failed")}}, true},
+		{"two transfers, one span", api.SessionTracesDTO{ToolCalls: []api.ToolCallDTO{call("transfer_to_a"), call("transfer_to_b")}, Spans: []api.TraceSpanDTO{span("handoff.active")}}, false},
+	} {
+		if got := tracesComplete(c.tr); got != c.want {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
 	}
 }

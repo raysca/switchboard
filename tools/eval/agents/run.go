@@ -20,6 +20,7 @@ const (
 	agentPageSize  = 100
 	sessionEndWait = 15 * time.Second
 	rowsSettleWait = 500 * time.Millisecond // tool rows are written by a per-call goroutine
+	tracesWait     = 5 * time.Second        // handoff spans arrive through the async trace queue
 )
 
 // opts bounds one call.
@@ -305,12 +306,41 @@ func fetchCall(ctx context.Context, srv *stack.Server, id string) (api.SessionDT
 	if err := sleepCtx(ctx, rowsSettleWait); err != nil {
 		return sess, tr, err
 	}
-	d, err := srv.Call("GET", "sessions/"+id+"/traces", nil)
-	if err == nil {
-		err = json.Unmarshal(d, &tr)
+	// Handoff spans go through the asynchronous trace queue and may land after the tool rows: poll
+	// until every transfer tool has its span, or give up loudly.
+	for end := time.Now().Add(tracesWait); ; {
+		d, err := srv.Call("GET", "sessions/"+id+"/traces", nil)
+		if err == nil {
+			tr = api.SessionTracesDTO{}
+			err = json.Unmarshal(d, &tr)
+		}
+		if err != nil {
+			return sess, tr, fmt.Errorf("session %s traces: %w", id, err)
+		}
+		if tracesComplete(tr) {
+			return sess, tr, nil
+		}
+		if time.Now().After(end) {
+			return sess, tr, fmt.Errorf("session %s: traces incomplete: a transfer tool has no handoff span after %s", id, tracesWait)
+		}
+		if err := sleepCtx(ctx, 200*time.Millisecond); err != nil {
+			return sess, tr, err
+		}
 	}
-	if err != nil {
-		return sess, tr, fmt.Errorf("session %s traces: %w", id, err)
+}
+
+// tracesComplete reports whether every transfer_to_* tool call has its handoff span (active or failed).
+func tracesComplete(tr api.SessionTracesDTO) bool {
+	transfers, spans := 0, 0
+	for _, c := range tr.ToolCalls {
+		if strings.HasPrefix(c.RemoteName, "transfer_to_") {
+			transfers++
+		}
 	}
-	return sess, tr, nil
+	for _, sp := range tr.Spans {
+		if sp.Name == "handoff.active" || sp.Name == "handoff.failed" {
+			spans++
+		}
+	}
+	return spans >= transfers
 }
