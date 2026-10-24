@@ -36,7 +36,3 @@ func ValidateArguments(ctx context.Context, schema, args []byte) error {
 func SanitizeResult(raw []byte, credential string, maxBytes int) (json.RawMessage, error) {
 	return sanitizeResult(raw, credential, maxBytes)
 }
-
-// CleanToolMessage makes a tool's message safe to hand to the model (control characters out, credential redacted, cut
-// to a short length).
-func CleanToolMessage(message, token string) string { return cleanToolMessage(message, token) }

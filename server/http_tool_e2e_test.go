@@ -114,7 +114,10 @@ func TestHTTPToolCallEndToEnd(t *testing.T) {
 	}
 
 	// a pinned tool cannot be deleted, and its secret cannot be deleted either
-	r.apiJSON(http.MethodDelete, "/api/v1/http-tools/"+id, "", http.StatusConflict)
+	w := apiRequest(r.s, http.MethodDelete, "/api/v1/http-tools/"+id, e2eMgmtKey, "")
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"agent_name"`) {
+		t.Fatalf("delete while pinned: %d %s", w.Code, w.Body)
+	}
 	r.apiJSON(http.MethodDelete, "/api/v1/secrets/crm-api", "", http.StatusConflict)
 
 	// test calls use the same path and report what a model would see
@@ -125,6 +128,13 @@ func TestHTTPToolCallEndToEnd(t *testing.T) {
 	bad := r.apiJSON(http.MethodPost, "/api/v1/http-tools/"+id+"/test", `{"arguments":{}}`, 200)
 	if !strings.Contains(string(bad), `"error_category":"invalid_arguments"`) {
 		t.Fatalf("invalid arguments: %s", bad)
+	}
+
+	// a tool's name is fixed: agents and steps refer to it by name
+	renamed := strings.Replace(strings.Replace(orderToolBody, "%s", f.srv.URL, 1), "%s", "crm-api", 1)
+	renamed = strings.Replace(renamed, `"name":"get_order"`, `"name":"renamed"`, 1)
+	if w := apiRequest(r.s, http.MethodPut, "/api/v1/http-tools/"+id, e2eMgmtKey, renamed); w.Code != 400 {
+		t.Fatalf("rename: %d %s", w.Code, w.Body)
 	}
 
 	// editing the tool leaves the agent pinned to the reviewed definition, so it needs a review

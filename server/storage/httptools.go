@@ -26,8 +26,10 @@ type HTTPTool struct {
 
 // HTTPToolReference is a current agent version that pins the tool.
 type HTTPToolReference struct {
-	AgentID, AgentName, AgentVersionID string
-	Required                           bool
+	AgentID        string `json:"agent_id"`
+	AgentName      string `json:"agent_name"`
+	AgentVersionID string `json:"agent_version_id"`
+	Required       bool   `json:"required"`
 }
 
 type HTTPToolRepository struct{ s *Store }
@@ -39,7 +41,7 @@ func (r HTTPToolRepository) Create(ctx context.Context, t HTTPTool, definition [
 	if err := validID(t.ID); err != nil {
 		return err
 	}
-	return r.s.WithTx(ctx, func(tx *sql.Tx) error {
+	err := r.s.WithTx(ctx, func(tx *sql.Tx) error {
 		if err := r.nameFree(ctx, tx, t.Name, t.ID); err != nil {
 			return err
 		}
@@ -50,12 +52,26 @@ func (r HTTPToolRepository) Create(ctx context.Context, t HTTPTool, definition [
 		_, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO http_tool_definitions(tool_id,hash,definition_json,created_at) VALUES(?,?,?,?)"), t.ID, t.CurrentHash, string(definition), now)
 		return err
 	})
+	return r.nameTakenAfter(ctx, err, t.Name, t.ID)
+}
+
+// nameTakenAfter turns a failed write into ErrHTTPToolNameTaken when a concurrent request took the name first (the
+// UNIQUE constraint's driver error says nothing portable).
+func (r HTTPToolRepository) nameTakenAfter(ctx context.Context, err error, name, id string) error {
+	if err == nil || errors.Is(err, ErrHTTPToolNameTaken) {
+		return err
+	}
+	var other string
+	if r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id FROM http_tools WHERE name=? AND id<>?"), name, id).Scan(&other) == nil {
+		return ErrHTTPToolNameTaken
+	}
+	return err
 }
 
 // NewDefinition makes a definition the tool's current one (an edit). A definition that was seen before is reused.
 // sql.ErrNoRows: the tool does not exist.
 func (r HTTPToolRepository) NewDefinition(ctx context.Context, id, name, hash string, definition []byte) error {
-	return r.s.WithTx(ctx, func(tx *sql.Tx) error {
+	err := r.s.WithTx(ctx, func(tx *sql.Tx) error {
 		if err := r.nameFree(ctx, tx, name, id); err != nil {
 			return err
 		}
@@ -70,6 +86,7 @@ func (r HTTPToolRepository) NewDefinition(ctx context.Context, id, name, hash st
 		_, err = tx.ExecContext(ctx, r.s.bind("INSERT INTO http_tool_definitions(tool_id,hash,definition_json,created_at) VALUES(?,?,?,?) ON CONFLICT(tool_id,hash) DO NOTHING"), id, hash, string(definition), now)
 		return err
 	})
+	return r.nameTakenAfter(ctx, err, name, id)
 }
 
 func (r HTTPToolRepository) nameFree(ctx context.Context, tx *sql.Tx, name, id string) error {
@@ -129,6 +146,32 @@ func (r HTTPToolRepository) Definition(ctx context.Context, id, hash string) ([]
 	return []byte(raw), err
 }
 
+// StoredDefinition is one definition row with its tool's name.
+type StoredDefinition struct {
+	ToolID, Name, Hash string
+	JSON               []byte
+}
+
+// AllDefinitions returns every stored definition of every tool, current or not.
+func (r HTTPToolRepository) AllDefinitions(ctx context.Context) ([]StoredDefinition, error) {
+	rows, err := r.s.db.QueryContext(ctx, "SELECT t.id,t.name,d.hash,d.definition_json FROM http_tool_definitions d JOIN http_tools t ON t.id=d.tool_id ORDER BY t.name,d.created_at")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []StoredDefinition
+	for rows.Next() {
+		var d StoredDefinition
+		var raw string
+		if err := rows.Scan(&d.ToolID, &d.Name, &d.Hash, &raw); err != nil {
+			return nil, err
+		}
+		d.JSON = []byte(raw)
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 // SetEnabled returns sql.ErrNoRows when the tool does not exist.
 func (r HTTPToolRepository) SetEnabled(ctx context.Context, id string, enabled bool) error {
 	res, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE http_tools SET enabled=?,updated_at=? WHERE id=?"), boolValue(r.s.dialect, enabled), utc(time.Now()), id)
@@ -167,15 +210,23 @@ func (r HTTPToolRepository) references(ctx context.Context, q rowQuerier, id str
 	return out, rows.Err()
 }
 
-// Delete removes a tool nothing current uses, with its definitions. ErrHTTPToolReferenced: a current agent pins it.
-// sql.ErrNoRows: the tool does not exist.
+// Delete removes a tool no agent version has ever pinned, with its definitions; a tool with history is disabled
+// instead, so every pinned definition stays readable. ErrHTTPToolReferenced: a version pins it (CurrentReferences
+// lists the current ones). sql.ErrNoRows: the tool does not exist.
 func (r HTTPToolRepository) Delete(ctx context.Context, id string) error {
 	return r.s.WithTx(ctx, func(tx *sql.Tx) error {
-		refs, err := r.references(ctx, tx, id)
-		if err != nil {
+		if r.s.dialect == Postgres {
+			// A publish takes the row FOR SHARE, so this waits for it and then sees its pin.
+			var locked string
+			if err := tx.QueryRowContext(ctx, "SELECT id FROM http_tools WHERE id=$1 FOR UPDATE", id).Scan(&locked); err != nil {
+				return err
+			}
+		}
+		var pins int
+		if err := tx.QueryRowContext(ctx, r.s.bind("SELECT count(*) FROM agent_mcp_tools WHERE mcp_server_id=?"), HTTPToolRefPrefix+id).Scan(&pins); err != nil {
 			return err
 		}
-		if len(refs) > 0 {
+		if pins > 0 {
 			return ErrHTTPToolReferenced
 		}
 		if _, err := tx.ExecContext(ctx, r.s.bind("DELETE FROM http_tool_definitions WHERE tool_id=?"), id); err != nil {

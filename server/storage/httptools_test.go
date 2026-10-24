@@ -109,11 +109,23 @@ func TestHTTPToolSelectionsPinTheCurrentDefinition(t *testing.T) {
 		if _, _, err := r.publish(t, AgentMutation{Tools: &none}); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.HTTPTools().Delete(ctx, tool.ID); err != nil {
-			t.Fatalf("delete once unpinned: %v", err)
+		// no current agent pins it now, but an older version does: its definitions stay readable
+		if refs, _ := s.HTTPTools().CurrentReferences(ctx, tool.ID); len(refs) != 0 {
+			t.Fatalf("current references = %+v", refs)
 		}
-		if _, err := s.HTTPTools().Get(ctx, tool.ID); !errors.Is(err, sql.ErrNoRows) {
+		if err := s.HTTPTools().Delete(ctx, tool.ID); !errors.Is(err, ErrHTTPToolReferenced) {
+			t.Fatalf("delete with history: %v", err)
+		}
+		// a tool nothing ever pinned can go, with its definitions
+		fresh := newHTTPTool(t, s, "never_used", "hx")
+		if err := s.HTTPTools().Delete(ctx, fresh.ID); err != nil {
+			t.Fatalf("delete never used: %v", err)
+		}
+		if _, err := s.HTTPTools().Get(ctx, fresh.ID); !errors.Is(err, sql.ErrNoRows) {
 			t.Fatalf("deleted tool: %v", err)
+		}
+		if err := s.HTTPTools().Delete(ctx, fresh.ID); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("delete twice: %v", err)
 		}
 	})
 }

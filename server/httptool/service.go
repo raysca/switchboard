@@ -157,6 +157,14 @@ func (s *Service) Create(ctx context.Context, d Definition) (View, error) {
 // Update makes d the tool's new current definition. Agents that pinned an older one keep working until they are
 // reviewed against the new one.
 func (s *Service) Update(ctx context.Context, id string, d Definition) (View, error) {
+	current, err := s.store.HTTPTools().Get(ctx, id)
+	if err != nil {
+		return View{}, mapNotFound(err)
+	}
+	// Agents and their steps refer to the tool by name, so a name is fixed once chosen.
+	if strings.TrimSpace(d.Name) != current.Name {
+		return View{}, invalid("the name of a tool cannot be changed; create a new tool instead")
+	}
 	d, hash, canonical, err := s.prepare(ctx, d)
 	if err != nil {
 		return View{}, err
@@ -274,12 +282,10 @@ func (s *Service) Capture(ctx context.Context, id, hash string) (*Captured, erro
 	return &Captured{svc: s, id: id, hash: hash, def: def}, nil
 }
 
-func (c *Captured) ToolID() string          { return c.id }
 func (c *Captured) Name() string            { return c.def.Name }
 func (c *Captured) Description() string     { return c.def.Description }
 func (c *Captured) Schema() json.RawMessage { return c.def.InputSchema }
 func (c *Captured) Hash() string            { return c.hash }
-func (c *Captured) Method() string          { return c.def.Method }
 
 // Endpoint is the URL template, which carries no credential (the definition forbids userinfo and query).
 func (c *Captured) Endpoint() string { return c.def.URL }
@@ -313,21 +319,22 @@ func (c *Captured) ExecuteCall(ctx context.Context, args json.RawMessage, callID
 	return out, err
 }
 
-// SecretUses lists what currently uses a secret by name, for the secrets API's delete guard.
+// SecretUses lists the tools that use a secret by name in any stored definition, current or older: an agent may still
+// pin an older one, and deleting the secret would break it.
 func (s *Service) SecretUses(ctx context.Context, name string) ([]storage.SecretUse, error) {
-	tools, err := s.store.HTTPTools().List(ctx)
+	defs, err := s.store.HTTPTools().AllDefinitions(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var out []storage.SecretUse
-	for _, t := range tools {
-		def, err := s.definition(ctx, t.ID, t.CurrentHash)
-		if err != nil {
+	seen := map[string]bool{}
+	for _, d := range defs {
+		var def Definition
+		if json.Unmarshal(d.JSON, &def) != nil || def.Auth == nil || def.Auth.Secret != name || seen[d.ToolID] {
 			continue
 		}
-		if def.Auth != nil && def.Auth.Secret == name {
-			out = append(out, storage.SecretUse{Kind: "http_tool", ID: t.ID, Name: t.Name})
-		}
+		seen[d.ToolID] = true
+		out = append(out, storage.SecretUse{Kind: "http_tool", ID: d.ToolID, Name: d.Name})
 	}
 	return out, nil
 }

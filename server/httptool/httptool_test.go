@@ -300,6 +300,26 @@ func TestResultHasTheCredentialRedactedAndPickKeepsOnlyNamedParts(t *testing.T) 
 	}
 }
 
+func TestEscapedCharactersDoNotCountAgainstTheResponseLimit(t *testing.T) {
+	body := `{"t":"` + strings.Repeat("<", 150) + `"}` // 158 bytes on the wire, 6 bytes each once escaped
+	f := newFixture(t, jsonReply(body))
+	d := def(f.srv.URL)
+	d.MaxResponseBytes = 256
+	if _, err := exec(t, d, `{"order_id":"1"}`, nil); err != nil {
+		t.Fatalf("an answer under the limit failed: %v", err)
+	}
+}
+
+func TestAnMCPSecretIsNeverSentEvenFromAnOldRow(t *testing.T) {
+	f := newFixture(t, jsonReply(`{}`))
+	d := normalized(t, def(f.srv.URL))
+	d.Auth = &Auth{Header: "Authorization", Secret: "MCP_TOKEN_CRM"} // as if written without Normalize
+	e := &Executor{Client: egress.NewClient(true), Secret: func(context.Context, string) (string, bool) { return "tok", true }}
+	if _, err := e.Execute(t.Context(), d, []byte(`{"order_id":"1"}`)); !errors.Is(err, ErrSecretUnavailable) || f.last != nil {
+		t.Fatalf("err = %v, request made = %v", err, f.last != nil)
+	}
+}
+
 func TestTextBodiesAndEmptyBodies(t *testing.T) {
 	f := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/orders/empty" {

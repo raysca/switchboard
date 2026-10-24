@@ -152,7 +152,8 @@ function ToolEditor({ client, tool, secretNames, waiting }: { client: ApiClient;
     },
     onError: (err) => {
       const agents = err instanceof ApiError && err.code === "http_tool_in_use" ? referencedAgents(err.details) : [];
-      setDeleteError(agents.length ? `Still used by: ${agents.map((a) => a.name).join(", ")}. Remove it from those agents first.` : apiMessage(err, "Could not delete the tool"));
+      const inUse = err instanceof ApiError && err.code === "http_tool_in_use";
+      setDeleteError(agents.length ? `Still used by: ${agents.map((a) => a.name).join(", ")}. Remove it from those agents first.` : inUse ? "Older versions of an agent still use this tool. Disable it instead." : apiMessage(err, "Could not delete the tool"));
     },
   });
 
@@ -160,10 +161,10 @@ function ToolEditor({ client, tool, secretNames, waiting }: { client: ApiClient;
     e.preventDefault();
     save.mutate();
   }
-  const field = (label: string, key: keyof HTTPToolForm, extra?: { placeholder?: string; hint?: ReactNode; list?: string }) => (
+  const field = (label: string, key: keyof HTTPToolForm, extra?: { placeholder?: string; hint?: ReactNode; list?: string; disabled?: boolean }) => (
     <div className="form-field">
       <label htmlFor={`${uid}-${key}`}>{label}</label>
-      <input id={`${uid}-${key}`} type="text" value={form[key]} placeholder={extra?.placeholder} list={extra?.list} autoComplete="off" onChange={(e) => set({ [key]: e.target.value })} />
+      <input id={`${uid}-${key}`} type="text" value={form[key]} placeholder={extra?.placeholder} list={extra?.list} disabled={extra?.disabled} autoComplete="off" onChange={(e) => set({ [key]: e.target.value })} />
       {extra?.hint && <small>{extra.hint}</small>}
     </div>
   );
@@ -188,7 +189,7 @@ function ToolEditor({ client, tool, secretNames, waiting }: { client: ApiClient;
             {problem}
           </p>
         )}
-        {field("Name", "name", { placeholder: "get_order", hint: "What the model calls the tool: lower-case letters, digits and _." })}
+        {field("Name", "name", { placeholder: "get_order", disabled: !!tool, hint: tool ? "A tool's name cannot be changed: agents refer to it by name." : "What the model calls the tool: lower-case letters, digits and _." })}
         {area("Description", "description", 2, "Tells the model when to use the tool.")}
         <div className="form-field">
           <label htmlFor={`${uid}-method`}>Method</label>
@@ -228,7 +229,7 @@ function ToolEditor({ client, tool, secretNames, waiting }: { client: ApiClient;
           </button>
         </div>
       </form>
-      {tool && <TestConsole client={client} tool={tool} />}
+      {tool && <TestConsole key={tool.hash} client={client} tool={tool} />}
       {deleting && tool && (
         <Modal title={`Delete ${tool.name}?`} onCancel={() => setDeleting(false)}>
           <div className="dialog__form">
@@ -237,7 +238,7 @@ function ToolEditor({ client, tool, secretNames, waiting }: { client: ApiClient;
                 {deleteError}
               </p>
             )}
-            <p>A tool an agent still uses cannot be deleted.</p>
+            <p>A tool that any agent version has used cannot be deleted; disable it instead.</p>
             <div className="dialog__actions">
               <button type="button" className="action-button-small" onClick={() => setDeleting(false)}>
                 Cancel

@@ -14,7 +14,7 @@ An HTTP tool makes the server call a URL that someone with the management key ch
 
 - A definition holds a secret *name*. The value is resolved at each call from the environment (`HTTP_TOKEN_*`), the secrets directory or the encrypted store ([credentials](credentials.md#tool-and-mcp-secrets)), and sent in one header: `Authorization: Bearer <value>`, or the raw value in another header you name.
 - `MCP_TOKEN_*` names are refused for HTTP tools, and `HTTP_TOKEN_*` names are refused for MCP servers, so one kind of credential is not sent to the other kind of endpoint. Provider keys and the management key can never be named.
-- Static headers cannot carry `Authorization`, `Cookie` or other credentials, so a stored definition (which is readable through the API) holds no secret.
+- Static headers cannot carry `Authorization`, `Cookie` or other credentials, so a stored definition (which is readable through the API) holds no secret. The URL is stored and shown too: never put a credential in its path (some services want `/bot<token>/`); use the secret header, or a service that accepts one.
 - The value never appears in an API response, log, span or error. It is removed from results (as MCP results are), and the test endpoint reports the same sanitised errors.
 - Whoever holds the management key can create a tool that sends any resolvable secret to a public host they control. The secret store's controls do not change that: protect the management key, and keep `secrets.dir` for tool secrets only.
 
@@ -22,17 +22,17 @@ An HTTP tool makes the server call a URL that someone with the management key ch
 
 | Limit | Value |
 |---|---|
-| Arguments from the model | 64 KiB, and the loop's own argument limit |
+| Arguments from the model | 64 KiB, and the model loop's own argument limit (32 KiB) |
 | Input schema | 16 KiB, with the MCP schema depth, node and reference limits |
 | Time | 100 ms to 30 s per call (default 10 s), ended with the call's own cancellation |
 | Response | 256 B to 256 KiB (default 64 KiB); a larger answer fails instead of being cut |
 | Headers | 16 static headers, 512 bytes each |
 
-A call reads at most the response limit plus one byte, so a hostile endpoint cannot make the server buffer more. Concurrency is the model loop's: a call runs at most `max_parallel` tool calls at once.
+A call reads at most the response limit plus one byte, so a hostile endpoint cannot make the server buffer more. The result handed to the model is bounded by the model loop's own result limit. Concurrency is the model loop's: a call runs at most `max_parallel` tool calls at once.
 
 ## What is recorded
 
-A tool call stores its tool id and name, status, error category and duration, like an MCP call; the span `http_tool.execute` has the tool id, name and duration. Arguments, results, the URL and secrets are never stored or traced. The agent's runtime snapshot holds the URL template and the secret's name (needed to show which tool a call used), never a value.
+A tool call stores its tool id and name, status, error category and duration, like an MCP call; the span `http_tool.execute` has the tool id, name and duration. Arguments, results and secrets are never stored or traced, and spans carry no URL. The agent's runtime snapshot holds the URL template and the secret's name (needed to show which tool a call used), never a value.
 
 ## Known limits
 

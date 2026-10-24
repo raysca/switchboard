@@ -86,9 +86,6 @@ func Reason(err error) string {
 	return strings.TrimPrefix(err.Error(), ErrInvalid.Error()+": ")
 }
 
-// Ref is the pseudo server id of a tool selection.
-func Ref(toolID string) string { return RefPrefix + toolID }
-
 // IDFromRef returns the tool id of an HTTP tool selection's server id.
 func IDFromRef(serverID string) (string, bool) {
 	id, ok := strings.CutPrefix(serverID, RefPrefix)

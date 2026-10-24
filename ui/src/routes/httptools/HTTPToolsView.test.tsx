@@ -98,6 +98,19 @@ describe("HTTPToolsView", () => {
     expect(client.createHTTPTool).not.toHaveBeenCalled();
   });
 
+  it("does not let a saved tool be renamed", async () => {
+    setup();
+    expect(await screen.findByLabelText("Name")).toBeDisabled();
+  });
+
+  it("says to disable a tool that only history uses", async () => {
+    const deleteHTTPTool = vi.fn().mockRejectedValue(new ApiError("the tool is pinned", "http_tool_in_use", 409, "r3", null));
+    const { user } = setup({ deleteHTTPTool });
+    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete tool" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Older versions of an agent still use this tool. Disable it instead.");
+  });
+
   it("saves edits to the selected tool", async () => {
     const { user, client } = setup();
     const desc = await screen.findByLabelText("Description");
@@ -124,11 +137,11 @@ describe("HTTPToolsView", () => {
   });
 
   it("names the agents that block a delete", async () => {
-    const deleteHTTPTool = vi.fn().mockRejectedValue(new ApiError("the tool is pinned", "http_tool_in_use", 409, "r2", [{ AgentID: "a1", AgentName: "Front desk" }]));
+    const deleteHTTPTool = vi.fn().mockRejectedValue(new ApiError("the tool is pinned", "http_tool_in_use", 409, "r2", [{ agent_id: "a1", agent_name: "Front desk" }]));
     const { user } = setup({ deleteHTTPTool });
     await user.click(await screen.findByRole("button", { name: "Delete" }));
     await user.click(screen.getByRole("button", { name: "Delete tool" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/Still used by|the tool is pinned/);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Still used by: Front desk");
   });
 
   it("tells which agents are waiting to choose an edited tool again", async () => {

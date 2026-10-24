@@ -56,6 +56,9 @@ func (e *Executor) Execute(ctx context.Context, def Definition, args []byte) (js
 	}
 	var token string
 	if def.Auth != nil {
+		if strings.HasPrefix(def.Auth.Secret, "MCP_TOKEN_") { // refused at save time; a row written another way still never sends one
+			return nil, ErrSecretUnavailable
+		}
 		var ok bool
 		if token, ok = e.Secret(ctx, def.Auth.Secret); !ok {
 			return nil, ErrSecretUnavailable
@@ -130,7 +133,8 @@ func (e *Executor) Execute(ctx context.Context, def Definition, args []byte) (js
 	if err != nil {
 		return nil, ErrUnavailable
 	}
-	clean, err := mcp.SanitizeResult(out, token, def.MaxResponseBytes+1024)
+	// The limit is on the endpoint's bytes; JSON escaping of <, > and & can grow them (up to six times).
+	clean, err := mcp.SanitizeResult(out, token, def.MaxResponseBytes*6+1024)
 	if err != nil {
 		return nil, mcp.ErrResultTooLarge
 	}
