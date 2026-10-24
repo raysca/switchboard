@@ -135,11 +135,12 @@ large one.
 
 ```json
 { "data": { "enabled": true, "interval_seconds": 3600,
-  "content_retention_days": 7, "metadata_retention_days": 30, "batch_size": 500,
-  "recording_retention_days": 3,
+  "content_retention_days": 7, "metadata_retention_days": 30, "eval_retention_days": 180,
+  "batch_size": 500, "recording_retention_days": 3,
   "last_run": { "started_at": "2026-10-24T11:00:00Z", "duration_ms": 41, "turns_purged": 12,
                 "sessions_deleted": 4, "turns_deleted": 9, "tool_calls_deleted": 2,
-                "spans_deleted": 31, "events_deleted": 70 } } }
+                "spans_deleted": 31, "events_deleted": 70,
+                "eval_jobs_deleted": 0, "eval_results_deleted": 0, "eval_runs_deleted": 0 } } }
 ```
 
 `last_run` is `null` until the first run since the server started, and carries `error` when the run failed. With

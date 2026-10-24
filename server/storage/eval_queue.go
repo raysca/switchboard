@@ -24,6 +24,9 @@ var (
 	// ErrLeaseLost: the job is no longer running under this claim (its lease expired and another worker took it, or it finished).
 	ErrLeaseLost = errors.New("eval job lease lost")
 	ErrQueueFull = errors.New("too many pending eval jobs for the agent")
+	// ErrNoJobs: CreateRun was given no job, or only jobs whose idempotency key already exists. Such a run would stay
+	// pending forever.
+	ErrNoJobs = errors.New("eval run has no jobs")
 	// ErrResultRunMismatch: a result handed to Complete names a run other than the job's.
 	ErrResultRunMismatch = errors.New("eval result belongs to another run")
 )
@@ -134,7 +137,8 @@ func scanEvalJob(r rowScanner) (EvalJob, error) {
 // CreateRun stores the run and its jobs in one transaction. A job whose idempotency key already exists is skipped
 // (ON CONFLICT DO NOTHING). The jobs inherit the run's agent, version and id; zero MaxAttempts becomes 3 and a zero
 // RunAfter means due now. ErrQueueFull: the agent's pending and running jobs plus these would exceed
-// MaxPendingJobsPerAgent, and nothing is written.
+// MaxPendingJobsPerAgent, and nothing is written. ErrNoJobs: no job was inserted (none given, or every key already
+// exists), and nothing is written.
 func (r EvalRepository) CreateRun(ctx context.Context, run EvalRun, jobs []EvalJob) (EvalRun, error) {
 	now := time.Now()
 	if run.ID == "" {
@@ -157,6 +161,7 @@ func (r EvalRepository) CreateRun(ctx context.Context, run EvalRun, jobs []EvalJ
 			run.Scope, nullable(run.CaseID), run.Providers, run.Runs, run.MinPass, run.TriggeredBy, utc(now)); err != nil {
 			return fmt.Errorf("insert eval run: %w", err)
 		}
+		inserted := 0
 		for _, j := range jobs {
 			if j.ID == "" {
 				j.ID = NewID()
@@ -167,10 +172,16 @@ func (r EvalRepository) CreateRun(ctx context.Context, run EvalRun, jobs []EvalJ
 			if j.RunAfter.IsZero() {
 				j.RunAfter = now
 			}
-			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO eval_jobs(id,kind,agent_id,agent_version_id,run_id,subject,scorer,idempotency_key,status,attempts,max_attempts,run_after,payload,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,'pending',0,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING"),
-				j.ID, j.Kind, run.AgentID, nullable(run.AgentVersionID), run.ID, j.Subject, nullable(j.Scorer), j.IdempotencyKey, j.MaxAttempts, utc(j.RunAfter), string(j.Payload), utc(now), utc(now)); err != nil {
+			res, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO eval_jobs(id,kind,agent_id,agent_version_id,run_id,subject,scorer,idempotency_key,status,attempts,max_attempts,run_after,payload,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,'pending',0,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING"),
+				j.ID, j.Kind, run.AgentID, nullable(run.AgentVersionID), run.ID, j.Subject, nullable(j.Scorer), j.IdempotencyKey, j.MaxAttempts, utc(j.RunAfter), string(j.Payload), utc(now), utc(now))
+			if err != nil {
 				return fmt.Errorf("insert eval job: %w", err)
 			}
+			n, _ := res.RowsAffected()
+			inserted += int(n)
+		}
+		if inserted == 0 {
+			return ErrNoJobs
 		}
 		return nil
 	})

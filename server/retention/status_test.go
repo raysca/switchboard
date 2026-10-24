@@ -110,7 +110,7 @@ func TestEveryRunIsRecordedAndObserved(t *testing.T) {
 func TestStatusEndpoint(t *testing.T) {
 	s := newTestStore(t)
 	seed(t, s)
-	settings := retention.Settings{Enabled: true, Interval: time.Hour, Policy: retention.Policy{ContentRetention: 7 * day, MetadataRetention: 30 * day, BatchSize: 500}, RecordingRetentionDays: 3}
+	settings := retention.Settings{Enabled: true, Interval: time.Hour, Policy: retention.Policy{ContentRetention: 7 * day, MetadataRetention: 30 * day, EvalRetention: 180 * day, BatchSize: 500}, RecordingRetentionDays: 3}
 	job := retention.NewJob(s.Retention(), settings.Policy)
 	h := retention.Handler(settings, job)
 	get := func(h http.Handler, path string) (*httptest.ResponseRecorder, retention.Status) {
@@ -124,7 +124,7 @@ func TestStatusEndpoint(t *testing.T) {
 	}
 
 	w, st := get(h, "/api/v1/retention")
-	if w.Code != 200 || !st.Enabled || st.ContentRetentionDays != 7 || st.MetadataRetentionDays != 30 || st.RecordingRetentionDays != 3 || st.IntervalSeconds != 3600 || st.LastRun != nil || st.DryRun != nil {
+	if w.Code != 200 || !st.Enabled || st.ContentRetentionDays != 7 || st.MetadataRetentionDays != 30 || st.EvalRetentionDays != 180 || st.RecordingRetentionDays != 3 || st.IntervalSeconds != 3600 || st.LastRun != nil || st.DryRun != nil {
 		t.Fatalf("before any run: %d %s", w.Code, w.Body)
 	}
 	w, st = get(h, "/api/v1/retention?dry_run=true")
@@ -137,6 +137,11 @@ func TestStatusEndpoint(t *testing.T) {
 	w, st = get(h, "/api/v1/retention")
 	if st.LastRun == nil || st.LastRun.SessionsDeleted != 2 || st.LastRun.Error != "" {
 		t.Fatalf("after a run: %s", w.Body)
+	}
+	for _, want := range []string{`"eval_retention_days":180`, `"eval_jobs_deleted":0`, `"eval_results_deleted":0`, `"eval_runs_deleted":0`} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Fatalf("status lacks %s: %s", want, w.Body)
+		}
 	}
 
 	// off: the configured values are shown, and there is nothing to preview

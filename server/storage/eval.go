@@ -5,8 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // MaxEvalCases bounds the saved cases of one agent.
@@ -47,13 +50,15 @@ type EvalRepository struct{ s *Store }
 
 func (s *Store) Eval() EvalRepository { return EvalRepository{s} }
 
-// isUniqueViolation reports a UNIQUE or primary key violation in either dialect (pgx SQLSTATE 23505, SQLite's message).
+// isUniqueViolation reports a UNIQUE or primary key violation in either dialect: Postgres SQLSTATE 23505, SQLite's
+// SQLITE_CONSTRAINT_UNIQUE or SQLITE_CONSTRAINT_PRIMARYKEY extended result codes.
 func isUniqueViolation(err error) bool {
-	if err == nil {
-		return false
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) {
+		return pg.Code == "23505"
 	}
-	msg := err.Error()
-	return strings.Contains(msg, "SQLSTATE 23505") || strings.Contains(msg, "UNIQUE constraint failed")
+	var lite *sqlite.Error
+	return errors.As(err, &lite) && (lite.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE || lite.Code() == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY)
 }
 
 func scanTime(s string) time.Time {

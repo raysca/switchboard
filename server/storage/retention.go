@@ -292,9 +292,10 @@ WHERE s.status='ended' AND s.ended_at IS NOT NULL AND s.ended_at <= ? AND (t.tra
 // PurgeEvalStats counts the rows one PurgeEval call deleted.
 type PurgeEvalStats struct{ Jobs, Results, Runs int64 }
 
-// PurgeEval deletes, at most limit rows per kind: finished (done or dead) jobs last updated at or before jobsCutoff,
-// results created at or before resultsCutoff, and then done runs that ended at or before resultsCutoff and have no job
-// or result left. A zero cutoff leaves that kind out (a zero resultsCutoff also leaves the runs). Pending and running
+// PurgeEval deletes, at most limit rows per kind: finished (done or dead) jobs last updated at or before jobsCutoff
+// (resultsCutoff when jobsCutoff is zero, so that finished jobs are purged even with no metadata lifetime), results
+// created at or before resultsCutoff, and then done runs that ended at or before resultsCutoff and have no job or
+// result left. A zero cutoff leaves that kind out (a zero resultsCutoff also leaves the runs). Pending and running
 // jobs are never touched. A result is not tied to a session (no foreign key), so purging sessions and purging results
 // are independent.
 func (r RetentionRepository) PurgeEval(ctx context.Context, resultsCutoff, jobsCutoff time.Time, limit int) (PurgeEvalStats, error) {
@@ -306,6 +307,9 @@ func (r RetentionRepository) PurgeEval(ctx context.Context, resultsCutoff, jobsC
 		}
 		*dst, _ = res.RowsAffected()
 		return nil
+	}
+	if jobsCutoff.IsZero() {
+		jobsCutoff = resultsCutoff
 	}
 	if !jobsCutoff.IsZero() {
 		if err := del(&st.Jobs, "DELETE FROM eval_jobs WHERE id IN (SELECT id FROM eval_jobs WHERE status IN ('done','dead') AND updated_at <= ? ORDER BY updated_at LIMIT ?)", utc(jobsCutoff), limit); err != nil {

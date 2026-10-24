@@ -27,6 +27,10 @@ type RunResult struct {
 	EventsDeleted    int64
 	ToolCallsDeleted int64
 	TurnsPurged      int64
+
+	EvalJobsDeleted    int64
+	EvalResultsDeleted int64
+	EvalRunsDeleted    int64
 }
 
 // RunRecord is one finished run, successful or not, as the status endpoint and the metrics report it.
@@ -199,8 +203,8 @@ func (j *Job) run(ctx context.Context) (RunResult, error) {
 		}
 	}
 
-	// 3. Eval pass: results and runs at their own lifetime, finished jobs at the metadata lifetime. A zero cutoff leaves
-	// that part out.
+	// 3. Eval pass: results and runs at their own lifetime, finished jobs at the metadata lifetime (or with the results
+	// when there is none). A zero cutoff leaves that part out.
 	var resultsCutoff, jobsCutoff time.Time
 	if j.policy.EvalRetention > 0 {
 		resultsCutoff = now.Add(-j.policy.EvalRetention)
@@ -216,6 +220,9 @@ func (j *Job) run(ctx context.Context) (RunResult, error) {
 		if err != nil {
 			return res, err
 		}
+		res.EvalJobsDeleted += stats.Jobs
+		res.EvalResultsDeleted += stats.Results
+		res.EvalRunsDeleted += stats.Runs
 		if stats.Jobs < int64(batchSize) && stats.Results < int64(batchSize) && stats.Runs < int64(batchSize) {
 			break
 		}

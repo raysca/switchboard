@@ -508,11 +508,21 @@ func TestCreateRunIdempotencyKey(t *testing.T) {
 		// A second run reusing the first run's key does not get a job of its own.
 		run2 := run
 		run2.ID = NewID()
-		if _, err := e.CreateRun(ctx, run2, []EvalJob{job}); err != nil {
+		if _, err := e.CreateRun(ctx, run2, []EvalJob{job}); !errors.Is(err, ErrNoJobs) {
+			t.Fatalf("a run whose only job repeats a key must be refused: %v", err)
+		}
+		if _, err := e.GetRun(ctx, agentID, run2.ID); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("a refused run left its row behind: %v", err)
+		}
+		// A run with one new job and one repeated key keeps the new one.
+		run3 := run
+		run3.ID = NewID()
+		fresh := EvalJob{Kind: "run_case", Subject: "d#0", IdempotencyKey: "run:" + run3.ID + ":d#0", Payload: []byte(`{}`)}
+		if _, err := e.CreateRun(ctx, run3, []EvalJob{job, fresh}); err != nil {
 			t.Fatal(err)
 		}
-		if got, _ := e.RunJobs(ctx, run2.ID); len(got) != 0 {
-			t.Fatalf("a repeated key made a job for the second run: %d", len(got))
+		if got, _ := e.RunJobs(ctx, run3.ID); len(got) != 1 {
+			t.Fatalf("a repeated key made a job for the third run: %d", len(got))
 		}
 	})
 }
@@ -531,7 +541,7 @@ func TestEvalRunListingAndStart(t *testing.T) {
 			if draft {
 				r.DraftConfigJSON, r.DraftToolsJSON = []byte(`{"a":1}`), []byte(`[]`)
 			}
-			got, err := e.CreateRun(ctx, r, nil)
+			got, err := e.CreateRun(ctx, r, []EvalJob{{Kind: "run_case", Subject: "c#0", IdempotencyKey: "run:" + r.ID, Payload: []byte(`{}`)}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -935,10 +945,14 @@ func TestEvalQueueStress(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for !runDone.Load() && time.Now().Before(deadline) {
-					j, ok, err := e.Claim(ctx, owner, now(), testLease)
+					at := now()
+					j, ok, err := e.Claim(ctx, owner, at, testLease)
 					if err != nil {
 						t.Errorf("claim: %v", err)
 						return
+					}
+					if ok && j.RunAfter.After(at.Add(time.Millisecond)) { // stored with microsecond precision
+						t.Errorf("job %s claimed at %v before its run_after %v", j.ID, at, j.RunAfter)
 					}
 					if !ok {
 						advance(time.Second)
@@ -1053,6 +1067,331 @@ func TestEvalQueueStress(t *testing.T) {
 		}
 		if done < njobs/2 {
 			t.Errorf("only %d of %d jobs done: the schedule is mostly dead ends", done, njobs)
+		}
+	})
+}
+
+// A run with no job would stay pending forever, so CreateRun refuses it and leaves no row.
+func TestCreateRunRefusesNoJobs(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		agentID, versionID := evalAgent(t, s)
+		run, _ := queueRun(agentID, versionID, 0)
+		if _, err := s.Eval().CreateRun(ctx, run, nil); !errors.Is(err, ErrNoJobs) {
+			t.Fatalf("no jobs: %v", err)
+		}
+		if _, err := s.Eval().GetRun(ctx, agentID, run.ID); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("a refused run left its row behind: %v", err)
+		}
+	})
+}
+
+// Nothing ships with the old schema, so the table itself refuses a job that could never be claimed.
+func TestEvalJobsRefuseZeroMaxAttempts(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		agentID, _ := evalAgent(t, s)
+		now := utc(time.Now())
+		for _, n := range []int{0, -1} {
+			_, err := s.DB().ExecContext(context.Background(), s.bind("INSERT INTO eval_jobs(id,kind,agent_id,subject,idempotency_key,status,attempts,max_attempts,run_after,payload,created_at,updated_at) VALUES(?,?,?,?,?,'pending',0,?,?,?,?,?)"),
+				NewID(), "run_case", agentID, "c#0", NewID(), n, now, "{}", now, now)
+			if err == nil {
+				t.Fatalf("max_attempts %d accepted", n)
+			}
+		}
+	})
+}
+
+// setJobAge backdates the job's updated_at.
+func setJobAge(t *testing.T, s *Store, id string, at time.Time) {
+	t.Helper()
+	if _, err := s.DB().ExecContext(context.Background(), s.bind("UPDATE eval_jobs SET updated_at=? WHERE id=?"), utc(at), id); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Only finished jobs go, whatever their age: an old pending or running job is work still to do.
+func TestPurgeEvalKeepsUnfinishedJobsAndRuns(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		old := time.Now().Add(-400 * 24 * time.Hour)
+		cutoff := time.Now().Add(-time.Hour)
+
+		pendRun, pendJobs, _ := seedRun(t, s, 1, old)
+		runRun, runJobs, _ := seedRun(t, s, 1, old)
+		if _, ok, err := s.Eval().Claim(ctx, "w", time.Now(), testLease); err != nil || !ok { // claims the oldest due job: one of the two
+			t.Fatalf("claim: %v %v", err, ok)
+		}
+		setJobAge(t, s, pendJobs[0].ID, old)
+		setJobAge(t, s, runJobs[0].ID, old)
+
+		// A run row that is not done but has an old ended_at and nothing under it.
+		emptyRun, emptyJobs, _ := seedRun(t, s, 1, old)
+		if _, err := s.DB().ExecContext(ctx, s.bind("DELETE FROM eval_jobs WHERE id=?"), emptyJobs[0].ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.DB().ExecContext(ctx, s.bind("UPDATE eval_runs SET status='running', ended_at=? WHERE id=?"), utc(old), emptyRun.ID); err != nil {
+			t.Fatal(err)
+		}
+
+		st, err := s.Retention().PurgeEval(ctx, cutoff, cutoff, 100)
+		if err != nil || st != (PurgeEvalStats{}) {
+			t.Fatalf("purge: %v %+v", err, st)
+		}
+		if countRows(t, s, "eval_jobs") != 2 {
+			t.Fatalf("an unfinished job was purged: %d left", countRows(t, s, "eval_jobs"))
+		}
+		for _, r := range []EvalRun{pendRun, runRun, emptyRun} {
+			if _, err := s.Eval().GetRun(ctx, r.AgentID, r.ID); err != nil {
+				t.Fatalf("a run that is not done was purged: %v", err)
+			}
+		}
+	})
+}
+
+// A done run stays while any of its jobs does: the jobs cutoff holds the run back even after its results are gone.
+func TestPurgeEvalKeepsRunWhileJobsRemain(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		day := 24 * time.Hour
+		run, job := finishedRun(t, s, time.Now().Add(-100*day))
+		setJobAge(t, s, job.ID, time.Now().Add(-time.Hour)) // inside the jobs cutoff
+		st, err := s.Retention().PurgeEval(ctx, time.Now().Add(-50*day), time.Now().Add(-30*day), 100)
+		if err != nil || st != (PurgeEvalStats{Results: 1}) {
+			t.Fatalf("purge: %v %+v", err, st)
+		}
+		if _, err := s.Eval().GetRun(ctx, run.AgentID, run.ID); err != nil {
+			t.Fatalf("a run with a job left was purged: %v", err)
+		}
+	})
+}
+
+// With no metadata lifetime the jobs have no cutoff of their own; finished ones then go with the results, or they
+// would never be purged.
+func TestPurgeEvalFinishedJobsFollowResultsWithoutMetadataCutoff(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		day := 24 * time.Hour
+		oldRun, _ := finishedRun(t, s, time.Now().Add(-100*day))
+		newRun, _ := finishedRun(t, s, time.Now().Add(-time.Hour))
+		st, err := s.Retention().PurgeEval(ctx, time.Now().Add(-50*day), time.Time{}, 100)
+		if err != nil || st != (PurgeEvalStats{Jobs: 1, Results: 1, Runs: 1}) {
+			t.Fatalf("purge: %v %+v", err, st)
+		}
+		if _, err := s.Eval().GetRun(ctx, oldRun.AgentID, oldRun.ID); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("old run: %v", err)
+		}
+		if got, _ := s.Eval().RunJobs(ctx, newRun.ID); len(got) != 1 {
+			t.Fatal("a recent finished job was purged")
+		}
+	})
+}
+
+// A row exactly at its cutoff is purged ("at or before").
+func TestPurgeEvalCutoffIsInclusive(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		cutoff := time.Now().Add(-48 * time.Hour).Truncate(time.Second)
+		run, job := finishedRun(t, s, cutoff)
+		setJobAge(t, s, job.ID, cutoff)
+		if _, err := s.DB().ExecContext(ctx, s.bind("UPDATE eval_results SET created_at=? WHERE run_id=?"), utc(cutoff), run.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.DB().ExecContext(ctx, s.bind("UPDATE eval_runs SET ended_at=? WHERE id=?"), utc(cutoff), run.ID); err != nil {
+			t.Fatal(err)
+		}
+		st, err := s.Retention().PurgeEval(ctx, cutoff, cutoff, 100)
+		if err != nil || st != (PurgeEvalStats{Jobs: 1, Results: 1, Runs: 1}) {
+			t.Fatalf("rows exactly at the cutoff must go: %v %+v", err, st)
+		}
+	})
+}
+
+// runOfCase makes a run of `repeats` case-runs of one case with the given min_pass, all due, and returns the claimed
+// jobs in claim order.
+func runOfCase(t *testing.T, s *Store, repeats, minPass int, t0 time.Time) (EvalRun, []EvalJob, string) {
+	t.Helper()
+	ctx := context.Background()
+	agentID, versionID := evalAgent(t, s)
+	run := EvalRun{ID: NewID(), AgentID: agentID, AgentVersionID: versionID, ConfigHash: "h", Scope: "case", Providers: "offline", Runs: repeats, MinPass: minPass, TriggeredBy: "console"}
+	caseID := NewID()
+	var jobs []EvalJob
+	for i := 0; i < repeats; i++ {
+		sub := fmt.Sprintf("%s#%d", caseID, i)
+		jobs = append(jobs, EvalJob{Kind: "run_case", Subject: sub, IdempotencyKey: "run:" + run.ID + ":" + sub, RunAfter: t0.Add(-time.Second), Payload: []byte(`{}`)})
+	}
+	run, err := s.Eval().CreateRun(ctx, run, jobs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claimed []EvalJob
+	for range jobs {
+		j, ok, err := s.Eval().Claim(ctx, "w", t0, testLease)
+		if err != nil || !ok {
+			t.Fatalf("claim: %v %v", err, ok)
+		}
+		claimed = append(claimed, j)
+	}
+	return run, claimed, versionID
+}
+
+// One passing case-run of three with min_pass 2 fails the case (a threshold of one would pass it); an `error` outcome
+// fails its case-run just as `fail` does.
+func TestFinishRunThresholdAndErrorOutcome(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		e := s.Eval()
+		t0 := time.Now()
+		run, claimed, versionID := runOfCase(t, s, 3, 2, t0)
+		for i, outcome := range []string{"pass", "fail", "fail"} {
+			if _, err := e.Complete(ctx, claimed[i], t0, []EvalResult{resultFor(run, claimed[i], versionID, "expectations", outcome)}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if r, _ := e.GetRun(ctx, run.AgentID, run.ID); r.Status != "done" || *r.PassedCases != 0 || *r.TotalCases != 1 {
+			t.Fatalf("1 of 3 with min_pass 2 must fail the case: %+v", r)
+		}
+
+		run, claimed, versionID = runOfCase(t, s, 1, 1, t0)
+		if _, err := e.Complete(ctx, claimed[0], t0, []EvalResult{resultFor(run, claimed[0], versionID, "expectations", "pass"), resultFor(run, claimed[0], versionID, "tool_call_accuracy", "error")}); err != nil {
+			t.Fatal(err)
+		}
+		if r, _ := e.GetRun(ctx, run.AgentID, run.ID); *r.PassedCases != 0 {
+			t.Fatalf("an error outcome must fail the case-run: %+v", r)
+		}
+		// skipped does not fail it
+		run, claimed, versionID = runOfCase(t, s, 1, 1, t0)
+		if _, err := e.Complete(ctx, claimed[0], t0, []EvalResult{resultFor(run, claimed[0], versionID, "expectations", "pass"), resultFor(run, claimed[0], versionID, "correctness", "skipped")}); err != nil {
+			t.Fatal(err)
+		}
+		if r, _ := e.GetRun(ctx, run.AgentID, run.ID); *r.PassedCases != 1 {
+			t.Fatalf("a skipped scorer must not fail the case-run: %+v", r)
+		}
+	})
+}
+
+// deadExhausted only ends a job whose lease has expired AND whose attempts are used up.
+func TestDeadExhaustedGuards(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		e := s.Eval()
+		t0 := time.Now()
+		run, jobs, _ := seedRun(t, s, 1, t0.Add(-time.Second))
+		var j EvalJob
+		now := t0
+		for i := 0; i < 3; i++ { // third attempt left running
+			var ok bool
+			var err error
+			if j, ok, err = e.Claim(ctx, "w", now, testLease); err != nil || !ok {
+				t.Fatalf("claim %d: %v %v", i, err, ok)
+			}
+			if i < 2 {
+				now = now.Add(3 * time.Minute)
+			}
+		}
+		if err := e.deadExhausted(ctx, j.ID, now.Add(time.Minute)); err != nil { // lease (2 min) still live
+			t.Fatal(err)
+		}
+		if got := jobByID(t, s, run, jobs[0].ID); got.Status != "running" || got.LeaseOwner != "w" {
+			t.Fatalf("a live third-attempt lease was dead-ended: %+v", got)
+		}
+		// expired lease but attempts left: not dead either
+		if _, err := s.DB().ExecContext(ctx, s.bind("UPDATE eval_jobs SET attempts=1 WHERE id=?"), j.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.deadExhausted(ctx, j.ID, now.Add(10*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		if got := jobByID(t, s, run, jobs[0].ID); got.Status != "running" {
+			t.Fatalf("a job with attempts left was dead-ended: %+v", got)
+		}
+	})
+}
+
+// The queue counts only unfinished jobs: after a run's jobs are done the agent can enqueue a full queue again.
+func TestCreateRunCountsOnlyUnfinishedJobs(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		e := s.Eval()
+		agentID, versionID := evalAgent(t, s)
+		run, jobs := queueRun(agentID, versionID, MaxPendingJobsPerAgent)
+		if _, err := e.CreateRun(ctx, run, jobs); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.DB().ExecContext(ctx, s.bind("UPDATE eval_jobs SET status='done' WHERE agent_id=?"), agentID); err != nil {
+			t.Fatal(err)
+		}
+		run2, jobs2 := queueRun(agentID, versionID, MaxPendingJobsPerAgent)
+		if _, err := e.CreateRun(ctx, run2, jobs2); err != nil {
+			t.Fatalf("done jobs must not count toward the cap: %v", err)
+		}
+		run3, jobs3 := queueRun(agentID, versionID, 1)
+		if _, err := e.CreateRun(ctx, run3, jobs3); !errors.Is(err, ErrQueueFull) {
+			t.Fatalf("a full queue of pending jobs takes no more: %v", err)
+		}
+	})
+}
+
+// A write needs the job to be running: a row that kept its owner and attempts but is no longer running (forced here,
+// as a bug elsewhere might leave it) is not written to.
+func TestQueueWritesNeedRunningStatus(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		ctx := context.Background()
+		e := s.Eval()
+		t0 := time.Now()
+		for _, status := range []string{"pending", "done", "dead"} {
+			resetEval(t, s)
+			run, jobs, versionID := seedRun(t, s, 1, t0.Add(-time.Second))
+			j, ok, err := e.Claim(ctx, "w", t0, testLease)
+			if err != nil || !ok {
+				t.Fatalf("claim: %v %v", err, ok)
+			}
+			if _, err := s.DB().ExecContext(ctx, s.bind("UPDATE eval_jobs SET status=? WHERE id=?"), status, j.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.Heartbeat(ctx, j, t0, testLease); !errors.Is(err, ErrLeaseLost) {
+				t.Fatalf("%s: heartbeat: %v", status, err)
+			}
+			if _, err := e.Complete(ctx, j, t0, []EvalResult{resultFor(run, jobs[0], versionID, "expectations", "pass")}); !errors.Is(err, ErrLeaseLost) {
+				t.Fatalf("%s: complete: %v", status, err)
+			}
+			if _, _, err := e.Fail(ctx, j, t0, "x", 0, true); !errors.Is(err, ErrLeaseLost) {
+				t.Fatalf("%s: fail: %v", status, err)
+			}
+			if got := jobByID(t, s, run, j.ID); got.Status != status || got.LeaseOwner != "w" || got.LastErrorCategory != "" {
+				t.Fatalf("%s: a refused write changed the job: %+v", status, got)
+			}
+		}
+	})
+}
+
+// Finishing a run twice reports it once and leaves the first end time.
+func TestFinishRunIfDoneIsOnce(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		e := s.Eval()
+		t0 := time.Now()
+		run, _ := finishedRun(t, s, t0)
+		first, _ := e.GetRun(ctx, run.AgentID, run.ID)
+		var again bool
+		err := s.WithTx(ctx, func(tx *sql.Tx) error {
+			var err error
+			again, err = e.finishRunIfDone(ctx, tx, run.ID, t0.Add(time.Hour))
+			return err
+		})
+		if err != nil || again {
+			t.Fatalf("second finish: %v %v", err, again)
+		}
+		if got, _ := e.GetRun(ctx, run.AgentID, run.ID); !got.EndedAt.Equal(*first.EndedAt) {
+			t.Fatal("a second finish moved ended_at")
 		}
 	})
 }

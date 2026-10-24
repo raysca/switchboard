@@ -17,6 +17,7 @@ func TestRetentionStatusEndpointAndMetrics(t *testing.T) {
 	s.cfg.Retention.Enabled = true
 	s.cfg.Retention.ContentRetentionDays = 7
 	s.cfg.Retention.MetadataRetentionDays = 30
+	s.cfg.Retention.EvalRetentionDays = 180
 
 	if code := apiRequest(s, http.MethodGet, "/api/v1/retention", key, "").Code; code != http.StatusServiceUnavailable {
 		t.Fatalf("before management is enabled: %d", code)
@@ -30,7 +31,7 @@ func TestRetentionStatusEndpointAndMetrics(t *testing.T) {
 		t.Fatalf("without the key: %d", code)
 	}
 	w := apiRequest(s, http.MethodGet, "/api/v1/retention?dry_run=true", key, "")
-	for _, want := range []string{`"enabled":true`, `"content_retention_days":7`, `"metadata_retention_days":30`, `"last_run":null`, `"dry_run":{`} {
+	for _, want := range []string{`"enabled":true`, `"content_retention_days":7`, `"metadata_retention_days":30`, `"eval_retention_days":180`, `"last_run":null`, `"dry_run":{`} {
 		if !strings.Contains(w.Body.String(), want) {
 			t.Fatalf("status lacks %s: %d %s", want, w.Code, w.Body)
 		}

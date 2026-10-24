@@ -636,6 +636,7 @@ type evalRecorder struct {
 	calls []string
 	evalR time.Time
 	evalJ time.Time
+	stats []storage.PurgeEvalStats // returned by successive PurgeEval calls, then zeros
 }
 
 func (e *evalRecorder) PurgeContent(context.Context, time.Time, int) (storage.ContentPurgeResult, error) {
@@ -651,7 +652,12 @@ func (e *evalRecorder) PurgeMetadata(context.Context, time.Time, int) (storage.P
 func (e *evalRecorder) PurgeEval(_ context.Context, results, jobs time.Time, _ int) (storage.PurgeEvalStats, error) {
 	e.calls = append(e.calls, "eval")
 	e.evalR, e.evalJ = results, jobs
-	return storage.PurgeEvalStats{}, nil
+	if len(e.stats) == 0 {
+		return storage.PurgeEvalStats{}, nil
+	}
+	st := e.stats[0]
+	e.stats = e.stats[1:]
+	return st, nil
 }
 
 // A run purges eval rows after the metadata pass: results at eval_retention, finished jobs at the metadata lifetime.
@@ -677,6 +683,19 @@ func TestRunOncePurgesEval(t *testing.T) {
 	}
 	if rec.evalR.IsZero() == false {
 		t.Fatal("results purged without an eval retention")
+	}
+}
+
+// The eval counts of every batch add up in the run result, and a full batch means another call.
+func TestRunOnceReportsEvalPurge(t *testing.T) {
+	rec := &evalRecorder{stats: []storage.PurgeEvalStats{{Jobs: 10, Results: 4, Runs: 1}, {Jobs: 3, Results: 2, Runs: 2}}}
+	job := retention.NewJob(rec, retention.Policy{EvalRetention: 180 * 24 * time.Hour, BatchSize: 10})
+	res, err := job.RunOnce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.EvalJobsDeleted != 13 || res.EvalResultsDeleted != 6 || res.EvalRunsDeleted != 3 {
+		t.Fatalf("eval counts: %+v", res)
 	}
 }
 

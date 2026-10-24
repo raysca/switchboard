@@ -23,6 +23,7 @@ type Status struct {
 	IntervalSeconds        int                       `json:"interval_seconds"`
 	ContentRetentionDays   int                       `json:"content_retention_days"`
 	MetadataRetentionDays  int                       `json:"metadata_retention_days"`
+	EvalRetentionDays      int                       `json:"eval_retention_days"`
 	BatchSize              int                       `json:"batch_size"`
 	RecordingRetentionDays int                       `json:"recording_retention_days"`
 	LastRun                *RunStatus                `json:"last_run"`
@@ -40,6 +41,10 @@ type RunStatus struct {
 	ToolCallsDeleted int64     `json:"tool_calls_deleted"`
 	SpansDeleted     int64     `json:"spans_deleted"`
 	EventsDeleted    int64     `json:"events_deleted"`
+
+	EvalJobsDeleted    int64 `json:"eval_jobs_deleted"`
+	EvalResultsDeleted int64 `json:"eval_results_deleted"`
+	EvalRunsDeleted    int64 `json:"eval_runs_deleted"`
 }
 
 const day = 24 * time.Hour
@@ -63,12 +68,13 @@ func Handler(settings Settings, job *Job) http.Handler {
 			IntervalSeconds:        int(settings.Interval / time.Second),
 			ContentRetentionDays:   int(settings.Policy.ContentRetention / day),
 			MetadataRetentionDays:  int(settings.Policy.MetadataRetention / day),
+			EvalRetentionDays:      int(settings.Policy.EvalRetention / day),
 			BatchSize:              settings.Policy.BatchSize,
 			RecordingRetentionDays: settings.RecordingRetentionDays,
 		}
 		if job != nil {
 			if rec, ok := job.Last(); ok {
-				st.LastRun = &RunStatus{StartedAt: rec.StartedAt, DurationMS: rec.Duration.Milliseconds(), Error: rec.Err, TurnsPurged: rec.Result.TurnsPurged, SessionsDeleted: rec.Result.SessionsDeleted, TurnsDeleted: rec.Result.TurnsDeleted, ToolCallsDeleted: rec.Result.ToolCallsDeleted, SpansDeleted: rec.Result.SpansDeleted, EventsDeleted: rec.Result.EventsDeleted}
+				st.LastRun = &RunStatus{StartedAt: rec.StartedAt, DurationMS: rec.Duration.Milliseconds(), Error: rec.Err, TurnsPurged: rec.Result.TurnsPurged, SessionsDeleted: rec.Result.SessionsDeleted, TurnsDeleted: rec.Result.TurnsDeleted, ToolCallsDeleted: rec.Result.ToolCallsDeleted, SpansDeleted: rec.Result.SpansDeleted, EventsDeleted: rec.Result.EventsDeleted, EvalJobsDeleted: rec.Result.EvalJobsDeleted, EvalResultsDeleted: rec.Result.EvalResultsDeleted, EvalRunsDeleted: rec.Result.EvalRunsDeleted}
 			}
 			if r.URL.Query().Get("dry_run") == "true" {
 				ctx, cancel := context.WithTimeout(r.Context(), dryRunTimeout)

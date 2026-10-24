@@ -149,6 +149,7 @@ tests use Playwright (`e2e/playwright.agents.config.ts`).
 - **S8 Job fan-out at enqueue.** `POST .../runs` inserts the run and one `run_case` job per (case, repeat) in one
   transaction. The `run_suite` kind is allowed by the CHECK but unused in slice 1, and `score_call` is slice 2.
   - Subject is `<caseID>#<repeat>`. The idempotency key is `run:<runID>:<caseID>#<repeat>`.
+  - The result subject is derived by storage (`Complete` sets `EvalCaseRunSubject(run, job.Subject)`), not by the worker.
 - **S9 Harness errors** (token, dial, turn timeout, stored rows missing) fail the job with a category. Backoff then
   retries it; after `max_attempts` it is `dead`. A dead case-run counts as failed in the run summary and shows its
   category, never content.
@@ -182,6 +183,9 @@ tests use Playwright (`e2e/playwright.agents.config.ts`).
 - **S16 Retention.** New `retention.eval_retention_days` (default 180) for runs and results. Finished jobs
   (`done`/`dead`) are purged at `metadata_retention_days`. Both run in the existing retention job, which is off by
   default (`config_defaults.go:95`).
+  - **Slice 2 privacy note.** A judge `reason` can quote call content, and it lives `eval_retention_days` (180), far past
+    `content_retention_days` (7). Slice 2 must blank `reason` (and any quoted evidence) of live results in
+    `PurgeContent`, or document the longer lifetime.
 - **S17 Fleet without live scores.** Slice 1 has no live results, so the fleet endpoint and dashboard show the suite
   columns only, with no "live" column (adding it now would be dead code until slice 2). The banner counts agents below
   their suite threshold.
@@ -422,7 +426,10 @@ tests use Playwright (`e2e/playwright.agents.config.ts`).
   `updated_at`.
 
 **Indexes** (`002_indexes.sql`): `idx_eval_jobs_claim(status, run_after)`, `idx_eval_jobs_run(run_id)`,
-`idx_eval_results_run(run_id)`, `idx_eval_runs_agent(agent_id, ended_at)`.
+`idx_eval_results_run(run_id)`, `idx_eval_runs_agent(agent_id, ended_at)`, plus the retention and listing indexes
+`idx_eval_runs_agent_created(agent_id, created_at)` (ListRuns), `idx_eval_runs_purge(status, ended_at)`,
+`idx_eval_jobs_purge(status, updated_at)` and `idx_eval_results_created(created_at)` (PurgeEval).
+`eval_jobs.max_attempts` has `CHECK(max_attempts >= 1)` (a job with none could never be claimed).
 
 **Interfaces**
 - **Consumes:** `s.bind` (`storage.go:243`), `WithTx` (`:259`), `utc`/`parseTime`/`nullable`/`boolValue`
@@ -477,39 +484,51 @@ result types).
   - `type EvalRun struct{ID, AgentID, AgentVersionID, ConfigHash string; Draft bool; DraftConfigJSON, DraftToolsJSON []byte; Scope, CaseID, Providers string; Runs, MinPass int; Status, TriggeredBy string; PassedCases, TotalCases *int; CreatedAt time.Time; StartedAt, EndedAt *time.Time}`
   - `type EvalJob struct{ID, Kind, AgentID, AgentVersionID, RunID, Subject, Scorer, IdempotencyKey, Status string; Attempts, MaxAttempts int; RunAfter time.Time; LeaseOwner string; LeaseExpiresAt time.Time; Payload []byte; LastErrorCategory string}`
   - `type EvalResult struct{SubjectKind, SubjectID, Scorer string; ScorerVersion int; VersionKey, AgentID, AgentVersionID, ConfigHash, RunID, CaseID, CaseHash, SessionID string; Score float64; Outcome, Reason, JudgeModel string; CreatedAt time.Time}`
-- **Errors:** `var ErrLeaseLost`, `ErrQueueFull`. `const MaxPendingJobsPerAgent = 200`.
+- **Errors:** `var ErrLeaseLost`, `ErrQueueFull`, `ErrNoJobs`, `ErrResultRunMismatch`. `const MaxPendingJobsPerAgent = 200`.
 - **Runs:**
-  - `CreateRun(ctx, r EvalRun, jobs []EvalJob) (EvalRun, error)`, one tx. It counts the agent's pending and running
-    jobs; if that count plus `len(jobs)` exceeds 200 it returns `ErrQueueFull`. Jobs are inserted with
-    `ON CONFLICT(idempotency_key) DO NOTHING`.
+  - `CreateRun(ctx, r EvalRun, jobs []EvalJob) (EvalRun, error)`, one tx. Its first statement is
+    `UPDATE agents SET updated_at=updated_at WHERE id=?` (the agent row lock; `CreateCases` does the same), so two
+    concurrent enqueues are counted one after the other and the cap is exact on READ COMMITTED Postgres. It then
+    counts the agent's pending and running jobs; if that count plus `len(jobs)` exceeds 200 it returns
+    `ErrQueueFull`. Jobs are inserted with `ON CONFLICT(idempotency_key) DO NOTHING`; if none was inserted (no jobs
+    given, or every key exists) it returns `ErrNoJobs` and writes nothing, so no run stays `pending` forever.
   - `GetRun(ctx, agentID, id string) (EvalRun, error)`
   - `ListRuns(ctx, agentID string, includeDrafts bool, limit, offset int) ([]EvalRun, error)`, newest first.
   - `RunJobs(ctx, runID string) ([]EvalJob, error)`; `RunResults(ctx, runID string) ([]EvalResult, error)`
   - `MarkRunStarted(ctx, runID string, now time.Time) error`, conditional `WHERE status='pending'`.
 - **Queue:**
   - `Claim(ctx, owner string, now time.Time, lease time.Duration) (EvalJob, bool, error)`
-  - `Heartbeat(ctx, id, owner string, now time.Time, lease time.Duration) error`
-  - `Complete(ctx, id, owner string, now time.Time, results []EvalResult) (runFinished bool, err error)`
-  - `Fail(ctx, id, owner string, now time.Time, category string, retryAfter time.Duration, final bool) (dead, runFinished bool, err error)`
+  - `Heartbeat(ctx, job EvalJob, now time.Time, lease time.Duration) error`
+  - `Complete(ctx, job EvalJob, now time.Time, results []EvalResult) (runFinished bool, err error)`
+  - `Fail(ctx, job EvalJob, now time.Time, category string, retryAfter time.Duration, final bool) (dead, runFinished bool, err error)`
+  - `job` is the `EvalJob` that `Claim` returned. The three writes are fenced by `AND lease_owner=? AND attempts=?`
+    taken from it, not by the owner alone: an owner string can be reused (a restart, a shared slot name) and a stale
+    holder of attempt 1 must not pass for attempt 2 of the same owner.
 
 **Algorithms (exact SQL shape; spec "Jobs: database-agnostic claiming")**
 - **Claim:**
   - `SELECT id FROM eval_jobs WHERE (status='pending' AND run_after<=?) OR (status='running' AND lease_expires_at<=?) ORDER BY run_after, id LIMIT 8`.
   - For each candidate:
     `UPDATE eval_jobs SET status='running', lease_owner=?, lease_expires_at=?, attempts=attempts+1, updated_at=? WHERE id=? AND attempts<max_attempts AND ((status='pending' AND run_after<=?) OR (status='running' AND lease_expires_at<=?))`.
-    `RowsAffected()==1` means it won; re-read the row and return it. Zero means try the next candidate.
+    It is one statement ending in `RETURNING <evalJobCols>` (both dialects support it), read with `QueryRow`: a row
+    back means it won and is the row that statement wrote, never a later re-read (a re-read could return a row another
+    worker had already reclaimed or finished). `sql.ErrNoRows` means it lost: try the next candidate.
   - An expired `running` row with `attempts>=max_attempts` is set to `dead`, `last_error_category='lease_expired'`,
     with the same conditional guard, and runs `finishRunIfDone`.
   - No `FOR UPDATE` and no `SKIP LOCKED` (spec: an optimisation for later).
-- **Heartbeat:** `UPDATE ... SET lease_expires_at=?, updated_at=? WHERE id=? AND status='running' AND lease_owner=?`;
+- **Heartbeat:** `UPDATE ... SET lease_expires_at=?, updated_at=? WHERE id=? AND status='running' AND lease_owner=? AND attempts=?`;
   zero rows returns `ErrLeaseLost`.
 - **Complete:** in one tx:
-  1. `UPDATE ... SET status='done', lease_owner=NULL, lease_expires_at=NULL, updated_at=? WHERE id=? AND status='running' AND lease_owner=?`.
+  1. `UPDATE ... SET status='done', lease_owner=NULL, lease_expires_at=NULL, updated_at=? WHERE id=? AND status='running' AND lease_owner=? AND attempts=? RETURNING run_id, subject, kind`.
      Zero rows means rollback and `ErrLeaseLost`.
-  2. Insert results with `ON CONFLICT(subject_id, scorer, version_key) DO NOTHING`.
+  2. Insert results with `ON CONFLICT(subject_id, scorer, version_key) DO NOTHING`. For a `run_case` job the storage
+     layer overwrites each result's `SubjectID` with `EvalCaseRunSubject(run, subject)` and its `RunID` with the
+     job's run (read in step 1), and refuses a result that names another run (`ErrResultRunMismatch`). The worker
+     therefore does not need to know the scheme (T8 writes any subject; storage derives it), and `finishRunIfDone`,
+     which looks for failures under that subject, cannot miss one.
   3. `finishRunIfDone`.
-- **Fail:** with the same ownership guard. If `final` or `attempts>=max_attempts`, set `status='dead'`; otherwise set
-  `status='pending', run_after=now+retryAfter, lease_owner=NULL`. Always set `last_error_category` (a category, never
+- **Fail:** with the same ownership-and-attempt guard, in one `UPDATE ... RETURNING status, run_id`. If `final` or
+  `attempts>=max_attempts`, set `status='dead'`; otherwise set `status='pending', run_after=now+retryAfter, lease_owner=NULL`. Always set `last_error_category` (a category, never
   content). When dead, run `finishRunIfDone` in the same tx.
 - **finishRunIfDone(tx, runID, now):**
   - If no job of the run is `pending` or `running`: group its jobs by case (the subject before `#`).
@@ -529,6 +548,11 @@ result types).
     finished.
   - `TestEvalResultsInsertIdempotent`: `Complete` is replayed by a new claim after a forced expiry → still one row per
     (subject, scorer, version_key).
+  - `TestEvalLeaseExpiryFencesOldOwner` also has a same-owner case: owner `S` reclaims its own expired job, and the
+    stale attempt-1 `Heartbeat`/`Complete`/`Fail` are rejected.
+  - `TestCreateRunCapHoldsUnderConcurrency` and `TestCreateCasesCapHoldsUnderConcurrency` (Postgres: two enqueues of
+    150 jobs leave exactly 150); `TestCompleteDerivesCaseRunSubject`; `TestCreateRunRefusesNoJobs`;
+    `TestEvalQueueStress` (8 workers, 200 jobs, virtual clock, stalls past the lease).
   - `TestFinishRunCountsDeadCaseRunAsFailed`; `TestCreateRunQueueFull`; `TestCreateRunIdempotencyKey`.
   - Run `cd server && go test ./storage/ -run 'EvalClaim|EvalLease|EvalFail|EvalResults|FinishRun|CreateRun'`.
     Expected: FAIL (undefined).
@@ -552,12 +576,14 @@ result types).
 - `func (r RetentionRepository) PurgeEval(ctx context.Context, resultsCutoff, jobsCutoff time.Time, limit int) (PurgeEvalStats, error)`
   - `type PurgeEvalStats struct{Jobs, Results, Runs int64}`
   - Deletes in order:
-    1. Finished jobs (`done`/`dead`) with `updated_at<=jobsCutoff`.
+    1. Finished jobs (`done`/`dead`) with `updated_at<=jobsCutoff`; a zero `jobsCutoff` (no metadata lifetime) falls
+       back to `resultsCutoff`, so finished jobs are never kept forever.
     2. Results with `created_at<=resultsCutoff`.
     3. Runs that are `done`, have `ended_at<=resultsCutoff` and have no remaining job or result.
   - Batches with `limit`, like `PurgeMetadata`.
 - `retention.Policy` gains `EvalRetention time.Duration`. The `retention.Store` interface (`job.go:14`) gains
-  `PurgeEval`. `RunOnce` calls it after `PurgeMetadata`, with `jobsCutoff = now - MetadataRetention`.
+  `PurgeEval`. `RunOnce` calls it after `PurgeMetadata`, with `jobsCutoff = now - MetadataRetention`. The status endpoint reports
+  `eval_retention_days` and the last run's `eval_jobs_deleted`, `eval_results_deleted`, `eval_runs_deleted`.
 - Config `RetentionConfig.EvalRetentionDays int yaml:"eval_retention_days"`, default 180, validated ≥1 when retention
   is enabled.
 
@@ -633,7 +659,10 @@ needed), `docs/observability.md`.
 
 **Interfaces**
 - `type evalWorker struct{...}`:
-  - owner `hostname+":"+storage.NewID()[:8]`, a `cancel context.CancelFunc` (`// owner lifetime`), a
+  - a per-slot unique owner `hostname+":"+<full storage.NewID() UUID>+"/"+<slot>`: the whole UUID, not a prefix
+    (the first 8 hex characters of a UUIDv7 are the top 32 bits of its millisecond timestamp and repeat within about
+    65 s). Storage fences by attempt as well, so a reused owner string is safe, but unique owners keep the logs and
+    `lease_owner` readable. A `cancel context.CancelFunc` (`// owner lifetime`), a
     `sync.WaitGroup` and a `sync.Once`.
   - `func (s *Server) startEvalWorker(m *management)` returns immediately when `cfg.Evaluation.MaxConcurrentCalls==0`.
     Otherwise it stores into `m.eval atomic.Pointer[evalWorker]` and starts N slot goroutines.
@@ -655,7 +684,9 @@ needed), `docs/observability.md`.
    `ctx.Done()`.
 2. Derive `jctx, jcancel` from ctx and `defer jcancel()`. Start a heartbeat goroutine (joined before step 5): a ticker
    every `evalHeartbeat`; on `ErrLeaseLost` it cancels jctx and counts `lease_lost`.
-3. `MarkRunStarted`. Then `runCaseJob(jctx, job)` under `defer recover()`; a panic becomes category `panic`.
+3. Skip jobs of archived or disabled agents: `Claim` does not look at the agent, so the worker loads the agent first and
+   ends such a job with `Fail(..., final=true)` category `agent_unavailable` instead of running it.
+   `MarkRunStarted`. Then `runCaseJob(jctx, job)` under `defer recover()`; a panic becomes category `panic`.
 4. `runCaseJob`:
    - Load the run (`GetRun`) and the version or draft (`agents.VersionByNumber` / the run's draft JSON).
    - Build `eval.Agent`: `Start`, `StepNames` and `Prompts` from `agent.Decode`, and `Draft = eval.Rewrite(config,
@@ -667,11 +698,13 @@ needed), `docs/observability.md`.
    - Harness error → category from a fixed set (`token`, `dial`, `turn_timeout`, `stored_rows`, `caller`).
    - `eval.BuildInput`, then `eval.RunScorers` with `JudgeFor` resolved per scorer: the setting override, else the
      suite default judge (`completer`), else nil. Thresholds come from the settings.
-   - Map the results to `storage.EvalResult`: `SubjectKind "case_run"`, `SubjectID job.Subject`,
+   - Map the results to `storage.EvalResult`: `SubjectKind "case_run"`, `SubjectID job.Subject` (bare; `Complete`
+     rewrites it to `EvalCaseRunSubject(run, subject)` and sets `RunID`, so a wrong value here cannot hide a failure),
      `VersionKey = run.AgentVersionID` or `"draft:"+run.ConfigHash` (S22).
 5. Write the outcome:
-   - Success: `Complete`; `runFinished` increments `evalRunsFinished`.
-   - Error with ctx not cancelled: `Fail(..., evalBackoff(job.Attempts), final)`.
+   - Success: `Complete(ctx, job, ...)`; `runFinished` increments `evalRunsFinished`.
+   - Error with ctx not cancelled: `Fail(ctx, job, ..., evalBackoff(job.Attempts), final)`. `job` is the claimed row, and
+     the heartbeat goroutine passes the same `job`.
    - ctx cancelled by shutdown: write nothing (the lease expires, S10).
 
 **Steps**
@@ -737,7 +770,8 @@ needed), `docs/observability.md`.
   - Readiness must be `agent.ReadinessReady` or `agent.ReadinessWithToolWarning` (the rule of `agentCallable`,
     `api_routes.go:190`, which lives in package `server`; move it to `server/agent` as `agent.Callable(state)` and
     use it from both).
-  - Cases: all, or `case_id`. Fan out jobs per S8, with payload `eval.CaseJob` (T8) and `MaxAttempts=3`.
+  - Cases: all, or `case_id`. Fan out jobs per S8, with payload `eval.CaseJob` (T8) and `MaxAttempts=3`. An empty suite
+    is refused (400, `no_cases`) before `CreateRun`, which itself returns `storage.ErrNoJobs` for a run with no jobs.
   - `triggered_by` = `console` when `X-Switchboard-UI: 1` (sent by the UI client, `ui/src/api/client.ts:536-609`),
     else `api`.
   - Persist the case snapshot in the payload so later edits do not change a queued run.
