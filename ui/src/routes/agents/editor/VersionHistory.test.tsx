@@ -54,6 +54,20 @@ describe("VersionHistory", () => {
     expect(screen.getByRole("button", { name: "Restore v2…" })).toBeVisible();
   });
 
+  it("reads the history again after a refused restore, so it shows what is there now", async () => {
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce(three)
+      .mockResolvedValueOnce([v(4, true), ...three.map((x) => ({ ...x, current: false }))]);
+    const { user } = setup(load, vi.fn().mockRejectedValue(new Error("that is already the current version")));
+    await user.click(screen.getByRole("button", { name: "Version history" }));
+    await user.click(await screen.findByRole("button", { name: "Restore v2…" }));
+    await user.click(screen.getByRole("button", { name: "Restore v2" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("already the current version");
+    expect(await screen.findByText("v4")).toBeVisible();
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
   it("says when the history could not be loaded", async () => {
     const { user } = setup(vi.fn().mockRejectedValue(new Error("Network down")));
     await user.click(screen.getByRole("button", { name: "Version history" }));

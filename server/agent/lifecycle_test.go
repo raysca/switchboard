@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"govoice/server/storage"
@@ -62,8 +63,8 @@ func TestRestoreRefusesTheCurrentVersionAnUnknownOneAndAnArchivedAgent(t *testin
 	if err := svc.Archive(ctx, a.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Restore(ctx, a.ID, 1); err == nil {
-		t.Fatal("an archived agent was restored")
+	if _, err := svc.Restore(ctx, a.ID, 1); err == nil || !strings.Contains(err.Error(), "unavailable") {
+		t.Fatalf("an archived agent was restored or refused for another reason: %v", err)
 	}
 }
 

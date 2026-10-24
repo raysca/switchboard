@@ -1,6 +1,7 @@
 package retention
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -43,6 +44,9 @@ type RunStatus struct {
 
 const day = 24 * time.Hour
 
+// dryRunTimeout bounds the counting queries of a dry run on a large database.
+const dryRunTimeout = 30 * time.Second
+
 // Handler serves GET /api/v1/retention: the policy in effect and the last run; with ?dry_run=true also what a run
 // started now would remove. job is nil when the job is off. It must only be mounted behind the management boundary.
 func Handler(settings Settings, job *Job) http.Handler {
@@ -67,7 +71,9 @@ func Handler(settings Settings, job *Job) http.Handler {
 				st.LastRun = &RunStatus{StartedAt: rec.StartedAt, DurationMS: rec.Duration.Milliseconds(), Error: rec.Err, TurnsPurged: rec.Result.TurnsPurged, SessionsDeleted: rec.Result.SessionsDeleted, TurnsDeleted: rec.Result.TurnsDeleted, ToolCallsDeleted: rec.Result.ToolCallsDeleted, SpansDeleted: rec.Result.SpansDeleted, EventsDeleted: rec.Result.EventsDeleted}
 			}
 			if r.URL.Query().Get("dry_run") == "true" {
-				preview, err := job.Preview(r.Context())
+				ctx, cancel := context.WithTimeout(r.Context(), dryRunTimeout)
+				defer cancel()
+				preview, err := job.Preview(ctx)
 				if err != nil {
 					api.WriteError(w, http.StatusInternalServerError, "internal_error", "the dry run could not be counted", id)
 					return

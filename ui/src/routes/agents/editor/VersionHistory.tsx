@@ -16,12 +16,13 @@ export function VersionHistory({ load, restore }: VersionHistoryProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const reload = () => load().then(setVersions, (e: unknown) => setError(e instanceof Error ? e.message : "The version history could not be loaded."));
   const toggle = () => {
     const next = !open;
     setOpen(next);
     if (next) {
       setError(null);
-      load().then(setVersions, (e: unknown) => setError(e instanceof Error ? e.message : "The version history could not be loaded."));
+      void reload();
     }
   };
   const latest = versions?.[0]?.number ?? 0;
@@ -64,6 +65,7 @@ export function VersionHistory({ load, restore }: VersionHistoryProps) {
                                 .catch((e: unknown) => {
                                   setConfirming(null);
                                   setError(e instanceof Error ? e.message : "That version could not be restored.");
+                                  void reload(); // someone else may have published meanwhile
                                 })
                                 .finally(() => setBusy(false));
                             }}

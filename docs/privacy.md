@@ -150,9 +150,9 @@ can move them by one session. With `retention.enabled` off the endpoint still sh
 dry run answers 409 `retention_disabled`.
 
 Metrics: `voice_retention_enabled`, `voice_retention_runs_total{result}`, `voice_retention_turns_purged_total`,
-`voice_retention_sessions_deleted_total` and `voice_retention_last_success_age_seconds` (the uptime until the first
-completed run). The `GovoiceRetentionStalled` alert fires when the job is on and has not completed a run for three
-hours. A configuration that keeps content longer than metadata, or recordings longer than content, is refused at
+`voice_retention_sessions_deleted_total`, `voice_retention_interval_seconds` and `voice_retention_last_success_age_seconds`
+(the uptime until the first completed run). The `GovoiceRetentionStalled` alert fires when the job is on and has not
+completed a run for three intervals. A configuration that keeps content longer than metadata, or recordings longer than content, is refused at
 start-up with a message naming both values.
 
 ## Call recording

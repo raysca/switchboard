@@ -639,8 +639,6 @@ export function createApiClient(
     getAgent: async (id: string) =>
       (await request(`/agents/${encodeURIComponent(id)}`, agentEnvelope)).data,
     /** One earlier publish of an agent (config and tools), read-only: a rollback publishes it again. */
-    getAgentVersion: async (id: string, number: number) =>
-      (await request(`/agents/${encodeURIComponent(id)}/versions/${number}`, agentVersionEnvelope)).data,
     getAgentVersions: async (id: string) => (await request(`/agents/${encodeURIComponent(id)}/versions`, agentVersionsEnvelope)).data,
     /** Publishes an earlier version's content as the next version and returns the agent. */
     restoreAgentVersion: async (id: string, number: number) =>

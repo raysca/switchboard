@@ -150,6 +150,7 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	if policy != nil {
 		m.retention = retention.NewJob(store.Retention(), *policy, retention.WithInterval(s.cfg.Retention.Interval), retention.WithLogger(s.logger), retention.WithObserver(s.metrics.ObserveRetention))
 		s.metrics.RetentionEnabled.Store(true)
+		s.metrics.RetentionIntervalSeconds.Store(int64(s.retentionSettings(policy).Interval / time.Second))
 		m.retention.Start(context.Background())
 	} else {
 		s.logger.Warn("retention disabled: stored transcripts and traces are kept indefinitely")

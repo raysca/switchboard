@@ -2,6 +2,7 @@ package retention
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -100,6 +101,9 @@ func (j *Job) RunOnce(ctx context.Context) (RunResult, error) {
 	started := j.clock()
 	began := time.Now()
 	res, err := j.run(ctx)
+	if err != nil && ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+		return res, err // the server is stopping: an interrupted run is neither a success nor a failure to report
+	}
 	rec := RunRecord{StartedAt: started, Duration: time.Since(began), Result: res}
 	if err != nil {
 		rec.Err = err.Error()
@@ -119,8 +123,8 @@ func (j *Job) Last() (RunRecord, bool) {
 	return RunRecord{}, false
 }
 
-// Cutoffs are the times before which a run would purge content and metadata now; zero means that pass is off.
-func (j *Job) Cutoffs() (content, metadata time.Time) {
+// cutoffs are the times before which a run would purge content and metadata now; zero means that pass is off.
+func (j *Job) cutoffs() (content, metadata time.Time) {
 	now := j.clock()
 	if j.policy.ContentRetention > 0 {
 		content = now.Add(-j.policy.ContentRetention)
@@ -133,7 +137,7 @@ func (j *Job) Cutoffs() (content, metadata time.Time) {
 
 // Preview counts what a run started now would remove, without removing anything.
 func (j *Job) Preview(ctx context.Context) (storage.RetentionPreview, error) {
-	content, metadata := j.Cutoffs()
+	content, metadata := j.cutoffs()
 	return j.store.Preview(ctx, content, metadata)
 }
 

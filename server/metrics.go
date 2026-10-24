@@ -129,6 +129,7 @@ type Metrics struct {
 
 	// Retention job: whether it runs, runs by result, what it removed, and when it last completed.
 	RetentionEnabled                                    atomic.Bool
+	RetentionIntervalSeconds                            atomic.Int64
 	RetentionRunsOK, RetentionRunsFailed                atomic.Uint64
 	RetentionTurnsPurgedTotal, RetentionSessionsDeleted atomic.Uint64
 	retentionLastOK                                     atomic.Pointer[time.Time] // monotonic reading kept: ages are durations
@@ -365,6 +366,7 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 		age = time.Since(*last)
 	}
 	fmt.Fprintf(w, "# HELP voice_retention_enabled 1 when the automatic retention job runs.\n# TYPE voice_retention_enabled gauge\nvoice_retention_enabled %d\n", enabled)
+	fmt.Fprintf(w, "# HELP voice_retention_interval_seconds How often the retention job runs.\n# TYPE voice_retention_interval_seconds gauge\nvoice_retention_interval_seconds %d\n", m.RetentionIntervalSeconds.Load())
 	fmt.Fprintf(w, "# HELP voice_retention_runs_total Retention job runs by result.\n# TYPE voice_retention_runs_total counter\n")
 	fmt.Fprintf(w, "voice_retention_runs_total{result=\"ok\"} %d\n", m.RetentionRunsOK.Load())
 	fmt.Fprintf(w, "voice_retention_runs_total{result=\"failed\"} %d\n", m.RetentionRunsFailed.Load())
@@ -550,6 +552,9 @@ func (p *providerErrors) write(w io.Writer) {
 
 // ObserveRetention records a finished retention run.
 func (m *Metrics) ObserveRetention(rec retention.RunRecord) {
+	// Batches that committed before a failure removed rows: count them either way.
+	m.RetentionTurnsPurgedTotal.Add(uint64(rec.Result.TurnsPurged))
+	m.RetentionSessionsDeleted.Add(uint64(rec.Result.SessionsDeleted))
 	if rec.Err != "" {
 		m.RetentionRunsFailed.Add(1)
 		return
@@ -557,6 +562,4 @@ func (m *Metrics) ObserveRetention(rec retention.RunRecord) {
 	now := time.Now()
 	m.retentionLastOK.Store(&now)
 	m.RetentionRunsOK.Add(1)
-	m.RetentionTurnsPurgedTotal.Add(uint64(rec.Result.TurnsPurged))
-	m.RetentionSessionsDeleted.Add(uint64(rec.Result.SessionsDeleted))
 }
