@@ -52,7 +52,7 @@ Then open the Admin UI URL printed by `make dev`, enter the management key, and 
 
 ## Limits
 
-- The Calls page shows the path, the step-labelled transcript and how the call ended. It does **not yet list individual MCP tool calls**: the server does not write tool-call rows, so only `mcp.tool.execute` trace spans exist. Listing them is a known follow-up.
+- The Calls page shows the path, the step-labelled transcript and how the call ended. The server also stores a row per tool call (name and status, never arguments or results): `GET /api/v1/sessions/{id}/traces` lists them, and [agent evals](../operations/agent-evals.md) assert on them.
 - An `end_call` turn with no spoken words at all waits the 15 s cap before hanging up on the Google, OpenAI and NVIDIA providers (xAI always sends a final reply frame, so it ends at once).
 - Speech-to-text is Google for the whole call; ElevenLabs STT is registered but unused in this agent.
 - Call history lives in the store. Cloud Run uses Cloud SQL (Postgres), so history survives restarts; `demo.auto_install` (or the button) adds the demo server and agent only when they are missing; a demo MCP server you disabled is switched back on at each start.
