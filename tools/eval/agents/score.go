@@ -59,9 +59,6 @@ func Observe(sess api.SessionDTO, tr api.SessionTracesDTO, start string, ev []st
 			if json.Unmarshal(sp.Attributes, &a) != nil || a.To == "" {
 				continue
 			}
-			if len(o.Path) == 1 && o.Path[0] == start && a.From != "" {
-				o.Path[0] = a.From
-			}
 			o.Path = append(o.Path, a.To)
 		}
 	}

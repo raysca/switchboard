@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"strings"
 	"testing"
 )
@@ -14,7 +16,7 @@ func TestPlanAndGate(t *testing.T) {
 	if err := checkPlan([]Case{script}, 3, 6); err != nil {
 		t.Errorf("exact cap refused: %v", err)
 	}
-	if err := checkPlan([]Case{script}, 3, 5); err == nil || !strings.Contains(err.Error(), "-max-calls") {
+	if err := checkPlan([]Case{script}, 3, 5); err == nil || !strings.Contains(err.Error(), "-max-turns") {
 		t.Errorf("over the cap accepted: %v", err)
 	}
 	if err := checkPlan([]Case{persona}, 1, 40); err == nil || !strings.Contains(err.Error(), "persona") {
@@ -30,13 +32,23 @@ func TestPlanAndGate(t *testing.T) {
 
 func TestParseFlagsRefusals(t *testing.T) {
 	for _, args := range [][]string{{"-providers", "live"}, {"-runs", "0"}, {"-runs", "2", "-min-pass", "3"}, {"-min-pass", "0"},
-		{"-max-calls", "0"}, {"-version", "-1"}, {"-turn-timeout", "0s"}, {"-bogus"}} {
-		if _, err := parseFlags(args); err == nil {
+		{"-max-turns", "0"}, {"-version", "-1"}, {"-turn-timeout", "0s"}, {"-bogus"}} {
+		if _, err := parseFlags(args, io.Discard); err == nil {
 			t.Errorf("parseFlags(%v) accepted", args)
 		}
 	}
-	cfg, err := parseFlags(nil)
-	if err != nil || cfg.Mode != modeKeep || cfg.Runs != 1 || cfg.MinPass != 1 || cfg.MaxCalls != 40 {
+	cfg, err := parseFlags(nil, io.Discard)
+	if err != nil || cfg.Mode != modeKeep || cfg.Runs != 1 || cfg.MinPass != 1 || cfg.MaxTurns != 40 {
 		t.Errorf("defaults: %+v, %v", cfg, err)
+	}
+}
+
+func TestHelpPrintsUsageAndSucceeds(t *testing.T) {
+	var out, errb bytes.Buffer
+	if rc := realMain([]string{"-h"}, &out, &errb); rc != 0 {
+		t.Errorf("-h exited %d", rc)
+	}
+	if got := errb.String(); !strings.Contains(got, "-max-turns") || !strings.Contains(got, "-providers") {
+		t.Errorf("-h usage:\n%s", got)
 	}
 }

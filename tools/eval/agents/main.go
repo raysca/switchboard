@@ -18,17 +18,18 @@ import (
 	"govoice/tools/internal/stack"
 )
 
-const defaultMaxCalls = 40 // caller turns per run; paid runs stay bounded
+const defaultMaxTurns = 40 // caller turns per run (not calls: a call has up to one per typed line); paid runs stay bounded
 
 // config is the parsed command line.
 type config struct {
 	Dir, Only, Mode, JSON, Admin, Public string
-	Version, Runs, MinPass, MaxCalls     int
+	Version, Runs, MinPass, MaxTurns     int
 	Opts                                 opts
 	Selftest                             bool
 }
 
-func parseFlags(args []string) (config, error) {
+// parseFlags parses the command line; -h prints the flag defaults to usage and returns flag.ErrHelp.
+func parseFlags(args []string, usage io.Writer) (config, error) {
 	var c config
 	fs := flag.NewFlagSet("agents", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -41,11 +42,16 @@ func parseFlags(args []string) (config, error) {
 	fs.StringVar(&c.JSON, "json", "", "also write the report as JSON to this file (mode 0600)")
 	fs.DurationVar(&c.Opts.TurnTimeout, "turn-timeout", 45*time.Second, "most time one typed turn may take")
 	fs.DurationVar(&c.Opts.Quiet, "quiet", 1500*time.Millisecond, "agent silence that ends a turn (tool rounds and handoffs restart it)")
-	fs.IntVar(&c.MaxCalls, "max-calls", defaultMaxCalls, "most caller turns in the whole run")
+	fs.IntVar(&c.MaxTurns, "max-turns", defaultMaxTurns, "most caller turns in the whole run")
 	fs.StringVar(&c.Admin, "admin", "http://127.0.0.1:9090", "management API base URL")
 	fs.StringVar(&c.Public, "public", "127.0.0.1:8080", "public listener host:port")
 	fs.BoolVar(&c.Selftest, "selftest", false, "prove the harness on a server child and the echo provider, with deliberately broken agents (free)")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fs.SetOutput(usage)
+			fmt.Fprintln(usage, "usage: go run ./tools/eval/agents [flags]")
+			fs.PrintDefaults()
+		}
 		return c, err
 	}
 	switch {
@@ -53,8 +59,8 @@ func parseFlags(args []string) (config, error) {
 		return c, fmt.Errorf("-providers %q: want keep, offline or echo", c.Mode)
 	case c.Runs < 1 || c.MinPass < 1 || c.MinPass > c.Runs:
 		return c, errors.New("-runs must be at least 1 and -min-pass between 1 and -runs")
-	case c.MaxCalls < 1 || c.Version < 0 || c.Opts.TurnTimeout <= 0 || c.Opts.Quiet <= 0:
-		return c, errors.New("-max-calls must be at least 1, -version not negative, -turn-timeout and -quiet positive")
+	case c.MaxTurns < 1 || c.Version < 0 || c.Opts.TurnTimeout <= 0 || c.Opts.Quiet <= 0:
+		return c, errors.New("-max-turns must be at least 1, -version not negative, -turn-timeout and -quiet positive")
 	}
 	return c, nil
 }
@@ -72,14 +78,14 @@ func plannedTurns(cases []Case, runs int) (n int) {
 }
 
 // checkPlan refuses a run before its first call: callers that do not exist yet, or more turns than the cap.
-func checkPlan(cases []Case, runs, maxCalls int) error {
+func checkPlan(cases []Case, runs, maxTurns int) error {
 	for _, c := range cases {
 		if c.Caller.Persona != nil {
 			return fmt.Errorf("case %s: persona callers are not available yet, use a script", c.Name)
 		}
 	}
-	if n := plannedTurns(cases, runs); n > maxCalls {
-		return fmt.Errorf("the run plans %d caller turns, more than -max-calls %d", n, maxCalls)
+	if n := plannedTurns(cases, runs); n > maxTurns {
+		return fmt.Errorf("the run plans %d caller turns, more than -max-turns %d", n, maxTurns)
 	}
 	return nil
 }
@@ -150,7 +156,10 @@ func runCase(ctx context.Context, srv *stack.Server, ref agentRef, cs Case, o op
 func main() { os.Exit(realMain(os.Args[1:], os.Stdout, os.Stderr)) }
 
 func realMain(args []string, stdout, stderr io.Writer) int {
-	c, err := parseFlags(args)
+	c, err := parseFlags(args, stderr)
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, "agent-eval:", err)
 		return 2
@@ -169,7 +178,7 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return setup(err)
 	}
-	if err := checkPlan(cases, c.Runs, c.MaxCalls); err != nil {
+	if err := checkPlan(cases, c.Runs, c.MaxTurns); err != nil {
 		return setup(err)
 	}
 	key := os.Getenv("GOVOICE_MANAGEMENT_API_KEY") // never printed

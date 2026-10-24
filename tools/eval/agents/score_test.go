@@ -156,3 +156,12 @@ func TestObserveIgnoresMappedEndMessages(t *testing.T) {
 		t.Errorf("user_idle under caller_hung_up not counted")
 	}
 }
+
+// The path starts at the agent's start step as given; a handoff from another step is not papered over.
+func TestObserveKeepsTheGivenStart(t *testing.T) {
+	ev, sent := callEvents()
+	o := Observe(fixture[api.SessionDTO](t, "session.json"), fixture[api.SessionTracesDTO](t, "traces-ok.json"), "other", ev, sent)
+	if want := []string{"other", "sales"}; !reflect.DeepEqual(o.Path, want) {
+		t.Errorf("path = %v, want %v", o.Path, want)
+	}
+}
