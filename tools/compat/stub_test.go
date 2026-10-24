@@ -303,6 +303,10 @@ func TestCompat_ConcurrentPacedWriteAndRead(t *testing.T) {
 	defer cancel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") { // a stray HTTP probe on the ephemeral port is not a test failure
+			http.NotFound(w, r)
+			return
+		}
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			t.Errorf("WebSocket Accept error: %v", err)
