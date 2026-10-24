@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"govoice/server/api"
-	"govoice/tools/internal/stack"
+	"govoice/transport/wsclient"
 )
 
 func fixture[T any](t *testing.T, name string) (v T) {
@@ -27,9 +27,9 @@ func fixture[T any](t *testing.T, name string) (v T) {
 var t0 = time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
 
 // two typed turns: 120 ms and 380 ms to the first reply text, after a greeting.
-func callEvents() ([]stack.Event, []Sent) {
+func callEvents() ([]wsclient.Event, []Sent) {
 	ms := func(n int) time.Time { return t0.Add(time.Duration(n) * time.Millisecond) }
-	ev := []stack.Event{
+	ev := []wsclient.Event{
 		{At: ms(10), Kind: "bot-llm-started"}, {At: ms(20), Kind: "bot-llm-text", Text: "Welcome to the desk."},
 		{At: ms(1120), Kind: "bot-llm-started"}, {At: ms(1120), Kind: "bot-llm-text", Text: "Sure, "}, {At: ms(1130), Kind: "bot-llm-text", Text: "connecting you."},
 		{At: ms(1500), Kind: "bot-llm-started"}, {At: ms(1500), Kind: "bot-llm-text", Text: "We sell hatchbacks."},
@@ -122,11 +122,11 @@ func TestObserveIgnoresTheEndReasonMessage(t *testing.T) {
 	sess.EndReason = "ended_by_agent"
 	tr := fixture[api.SessionTracesDTO](t, "traces-ok.json")
 	ev, sent := callEvents()
-	ev = append(ev, stack.Event{At: t0.Add(4 * time.Second), Kind: "error", Text: "ended_by_agent"})
+	ev = append(ev, wsclient.Event{At: t0.Add(4 * time.Second), Kind: "error", Text: "ended_by_agent"})
 	if o := Observe(sess, tr, "front", ev, sent); o.ErrorFrames != 0 {
 		t.Errorf("end-reason message counted: %d", o.ErrorFrames)
 	}
-	ev = append(ev, stack.Event{At: t0.Add(5 * time.Second), Kind: "error", Text: "provider_failed"})
+	ev = append(ev, wsclient.Event{At: t0.Add(5 * time.Second), Kind: "error", Text: "provider_failed"})
 	if o := Observe(sess, tr, "front", ev, sent); o.ErrorFrames != 1 {
 		t.Errorf("real error not counted: %d", o.ErrorFrames)
 	}
@@ -139,19 +139,19 @@ func TestObserveIgnoresMappedEndMessages(t *testing.T) {
 		sess := fixture[api.SessionDTO](t, "session.json")
 		sess.EndReason = stored
 		ev, sent := callEvents()
-		final := append(slices.Clone(ev), stack.Event{At: t0.Add(4 * time.Second), Kind: "error", Text: msg})
+		final := append(slices.Clone(ev), wsclient.Event{At: t0.Add(4 * time.Second), Kind: "error", Text: msg})
 		if o := Observe(sess, tr, "front", final, sent); o.ErrorFrames != 0 {
 			t.Errorf("%s: closing message %q counted", stored, msg)
 		}
 		// not the last event: a real fault that happens to use the word
-		early := slices.Insert(slices.Clone(ev), 2, stack.Event{At: t0.Add(30 * time.Millisecond), Kind: "error", Text: msg})
+		early := slices.Insert(slices.Clone(ev), 2, wsclient.Event{At: t0.Add(30 * time.Millisecond), Kind: "error", Text: msg})
 		if o := Observe(sess, tr, "front", early, sent); o.ErrorFrames != 1 {
 			t.Errorf("%s: mid-call %q not counted", stored, msg)
 		}
 	}
 	sess := fixture[api.SessionDTO](t, "session.json") // caller_hung_up: user_idle is a fault
 	ev, sent := callEvents()
-	ev = append(ev, stack.Event{At: t0.Add(4 * time.Second), Kind: "error", Text: "user_idle"})
+	ev = append(ev, wsclient.Event{At: t0.Add(4 * time.Second), Kind: "error", Text: "user_idle"})
 	if o := Observe(sess, tr, "front", ev, sent); o.ErrorFrames != 1 {
 		t.Errorf("user_idle under caller_hung_up not counted")
 	}

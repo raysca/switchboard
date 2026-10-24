@@ -13,8 +13,8 @@ import (
 	"github.com/coder/websocket"
 
 	"govoice/core"
-	"govoice/tools/internal/stack"
 	"govoice/transport/ws"
+	"govoice/transport/wsclient"
 )
 
 // lagBounds are the harness pacing-lag histogram bounds in ms.
@@ -242,7 +242,7 @@ func runCall(ctx context.Context, st *LoadState, p CallParams, principal string)
 
 	cctx := ctx
 	c := &call{conn: conn, st: st, audioCh: make(chan time.Time, 1), stopCh: make(chan struct{}, 1), errCh: make(chan error, 1)}
-	if err := stack.Handshake(ctx, conn, false); err != nil {
+	if err := wsclient.Handshake(ctx, conn, false); err != nil {
 		if ctx.Err() == nil {
 			st.callFailed("handshake")
 		}

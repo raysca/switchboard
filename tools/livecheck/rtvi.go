@@ -7,14 +7,14 @@ import (
 
 	"github.com/coder/websocket"
 
-	"govoice/tools/internal/stack"
 	"govoice/transport/ws"
+	"govoice/transport/wsclient"
 )
 
-// client adds audio pacing to the shared stack.Client. Its own wait streams silence while it
+// client adds audio pacing to the shared wsclient.Client. Its own wait streams silence while it
 // waits: the embedded Wait and Close do not, so use wait and keep audio calls on the paced helpers.
 type client struct {
-	*stack.Client
+	*wsclient.Client
 	next time.Time
 	n    int // server session number (1-based dial order)
 }
@@ -27,7 +27,7 @@ func dial(ctx context.Context, s *server, fl string, pushToTalk bool) (*client, 
 	if err != nil {
 		return nil, err
 	}
-	sc, err := stack.DialN(ctx, s.public, tok, pushToTalk, liveMaxEvents)
+	sc, err := wsclient.DialN(ctx, s.public, tok, pushToTalk, liveMaxEvents)
 	if err != nil {
 		return nil, err
 	}

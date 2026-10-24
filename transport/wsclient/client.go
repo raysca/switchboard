@@ -1,4 +1,6 @@
-package stack
+// Package wsclient is the RTVI test client used by the agent eval engine and the free harnesses
+// (livecheck, loadtest): it dials /ws, runs the handshake and records server events with arrival times.
+package wsclient
 
 import (
 	"context"
@@ -199,4 +201,29 @@ func (c *Client) Count(t time.Time, kind string) (n int) {
 func (c *Client) Close() {
 	_ = c.Conn.Close(websocket.StatusNormalClosure, "")
 	<-c.closed
+}
+
+// Handshake sends RTVI client-ready and waits up to 20 s for bot-ready.
+func Handshake(ctx context.Context, conn *websocket.Conn, pushToTalk bool) error {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	ptt := ""
+	if pushToTalk {
+		ptt = `,"push_to_talk":true`
+	}
+	ready, _ := ws.EncodeMessageFrame(`{"id":"1","label":"rtvi-ai","type":"client-ready","data":{"version":"2.1.0"` + ptt + `}}`)
+	if err := conn.Write(ctx, websocket.MessageBinary, ready); err != nil {
+		return fmt.Errorf("client-ready: %w", err)
+	}
+	for {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			return fmt.Errorf("no bot-ready: %w", err)
+		}
+		if f, err := ws.DecodeBinaryFrame(data, 1, time.Now()); err == nil {
+			if m, ok := f.(*ws.WireMessageFrame); ok && strings.Contains(m.Data, "bot-ready") {
+				return nil
+			}
+		}
+	}
 }

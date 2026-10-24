@@ -12,6 +12,7 @@ import (
 	"govoice/server/agent"
 	"govoice/server/api"
 	"govoice/tools/internal/stack"
+	"govoice/transport/wsclient"
 )
 
 const (
@@ -147,7 +148,7 @@ func activity(kind string) bool {
 // flight, and after a tool call ends until the reply that follows it (a transfer's greeting included)
 // stops. An RTVI error after a tool call ends closes that reply too: a model call that failed sends no
 // stop, and the turn must not wait out -turn-timeout for it.
-func turnState(ev []stack.Event, mark time.Time) (last time.Time, text, open bool) {
+func turnState(ev []wsclient.Event, mark time.Time) (last time.Time, text, open bool) {
 	last = mark
 	reply, calls, afterCall := false, 0, false
 	for _, e := range ev {
@@ -179,7 +180,7 @@ func turnState(ev []stack.Event, mark time.Time) (last time.Time, text, open boo
 // waitSettled returns once the agent has shown no activity for o.Quiet after mark, has no reply
 // open (see turnState) and, when needText, has said something since mark. It returns early (nil)
 // when the connection ends, e.g. after end_call, and fails at o.TurnTimeout.
-func waitSettled(ctx context.Context, cl *stack.Client, mark time.Time, needText bool, o opts) error {
+func waitSettled(ctx context.Context, cl *wsclient.Client, mark time.Time, needText bool, o opts) error {
 	deadline := time.Now().Add(o.TurnTimeout)
 	tick := time.NewTicker(25 * time.Millisecond)
 	defer tick.Stop()
@@ -224,7 +225,7 @@ func runOnce(ctx context.Context, srv *stack.Server, a agentRef, next NextFunc, 
 	if err != nil {
 		return Observed{}, err
 	}
-	cl, err := stack.Dial(ctx, srv.Public, tok, false)
+	cl, err := wsclient.Dial(ctx, srv.Public, tok, false)
 	if err != nil {
 		return Observed{}, fmt.Errorf("call %s: %w", id, err)
 	}

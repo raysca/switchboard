@@ -16,14 +16,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
-
-	"github.com/coder/websocket"
-
-	"govoice/transport/ws"
 )
 
 // Spec describes the child to start.
@@ -199,29 +194,4 @@ func (s *Server) Token(principal, agentID string) (string, error) {
 		return "", fmt.Errorf("token response: %v", err)
 	}
 	return t.Token, nil
-}
-
-// Handshake sends RTVI client-ready and waits up to 20 s for bot-ready.
-func Handshake(ctx context.Context, conn *websocket.Conn, pushToTalk bool) error {
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	ptt := ""
-	if pushToTalk {
-		ptt = `,"push_to_talk":true`
-	}
-	ready, _ := ws.EncodeMessageFrame(`{"id":"1","label":"rtvi-ai","type":"client-ready","data":{"version":"2.1.0"` + ptt + `}}`)
-	if err := conn.Write(ctx, websocket.MessageBinary, ready); err != nil {
-		return fmt.Errorf("client-ready: %w", err)
-	}
-	for {
-		_, data, err := conn.Read(ctx)
-		if err != nil {
-			return fmt.Errorf("no bot-ready: %w", err)
-		}
-		if f, err := ws.DecodeBinaryFrame(data, 1, time.Now()); err == nil {
-			if m, ok := f.(*ws.WireMessageFrame); ok && strings.Contains(m.Data, "bot-ready") {
-				return nil
-			}
-		}
-	}
 }

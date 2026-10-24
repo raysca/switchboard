@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"govoice/server/api"
-	"govoice/tools/internal/stack"
+	"govoice/transport/wsclient"
 )
 
 // Observed is everything one call showed: the server's stored view of it (session row, handoff
@@ -41,7 +41,7 @@ type Sent struct {
 
 // Observe combines the stored session and traces (API DTOs, so an API rename breaks the build)
 // with the client's events and typed turns. start is the agent's start step id.
-func Observe(sess api.SessionDTO, tr api.SessionTracesDTO, start string, ev []stack.Event, sent []Sent) Observed {
+func Observe(sess api.SessionDTO, tr api.SessionTracesDTO, start string, ev []wsclient.Event, sent []Sent) Observed {
 	o := Observed{SessionID: sess.ID, AgentVersionID: sess.AgentVersionID, ConfigHash: sess.ConfigHash,
 		EndReason: sess.EndReason, TurnCount: sess.TurnCount, Path: []string{start}}
 

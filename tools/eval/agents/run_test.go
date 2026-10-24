@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"govoice/server/api"
-	"govoice/tools/internal/stack"
+	"govoice/transport/wsclient"
 )
 
 func TestJTI(t *testing.T) {
@@ -24,9 +24,9 @@ func TestJTI(t *testing.T) {
 
 func TestTurnState(t *testing.T) {
 	t0 := time.Now()
-	ev := func(kinds ...string) (out []stack.Event) {
+	ev := func(kinds ...string) (out []wsclient.Event) {
 		for i, k := range kinds {
-			out = append(out, stack.Event{At: t0.Add(time.Duration(i+1) * time.Millisecond), Kind: k})
+			out = append(out, wsclient.Event{At: t0.Add(time.Duration(i+1) * time.Millisecond), Kind: k})
 		}
 		return out
 	}
