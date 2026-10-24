@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"govoice/server/storage"
 )
@@ -93,8 +95,10 @@ func (h tracesHandler) hold(w http.ResponseWriter, r *http.Request, id, requestI
 		return
 	}
 	rec, err := h.sessions.Get(r.Context(), id)
-	if err != nil {
-		WriteError(w, http.StatusInternalServerError, "internal_error", "failed to get session", requestID)
+	if err != nil { // erased between the change and this read
+		if !h.sessionNotFound(w, err, requestID) {
+			WriteError(w, http.StatusInternalServerError, "internal_error", "failed to get session", requestID)
+		}
 		return
 	}
 	WriteJSON(w, http.StatusOK, SuccessResponse[SessionDTO]{Data: toSessionDTO(rec)})
@@ -129,14 +133,18 @@ func (h tracesHandler) eraseCaller(w http.ResponseWriter, r *http.Request, reque
 	switch {
 	case strings.TrimSpace(body.Caller) == "":
 		WriteError(w, http.StatusBadRequest, "invalid_request", "caller is required", requestID)
-	case len(body.Caller) > storage.MaxCallerLabel:
+	case utf8.RuneCountInString(body.Caller) > storage.MaxCallerLabel: // the store keeps at most this many characters
 		WriteError(w, http.StatusBadRequest, "invalid_request", "caller is too long", requestID)
 	case body.ConfirmCaller != body.Caller:
 		WriteError(w, http.StatusBadRequest, "invalid_request", "confirm_caller must repeat caller exactly", requestID)
 	default:
 		out, err := h.lifecycle.EraseCaller(r.Context(), body.Caller, requestID, body.DryRun)
 		if err != nil {
-			WriteError(w, http.StatusInternalServerError, "internal_error", "failed to erase the caller's calls", requestID)
+			msg := "failed to erase the caller's calls"
+			if out.Erased > 0 { // earlier batches committed: say so, and repeat the request to continue
+				msg += "; " + strconv.Itoa(out.Erased) + " were erased before it failed, send the request again to continue"
+			}
+			WriteError(w, http.StatusInternalServerError, "internal_error", msg, requestID)
 			return
 		}
 		WriteJSON(w, http.StatusOK, SuccessResponse[CallerErasure]{Data: out})

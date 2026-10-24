@@ -88,7 +88,8 @@ LIMIT ?`
 			for _, sessID := range batch {
 				// Redact turns: set transcript and assistant_text to NULL
 				resTurns, err := tx.ExecContext(ctx, r.s.bind(
-					"UPDATE turns SET transcript = NULL, assistant_text = NULL WHERE session_id = ? AND (transcript IS NOT NULL OR assistant_text IS NOT NULL)",
+					// The session is checked again here: a hold placed since it was selected must still protect it.
+					"UPDATE turns SET transcript = NULL, assistant_text = NULL WHERE session_id = ? AND (transcript IS NOT NULL OR assistant_text IS NOT NULL) AND session_id IN (SELECT id FROM sessions WHERE status = 'ended' AND "+notHeld+")",
 				), sessID)
 				if err != nil {
 					return err

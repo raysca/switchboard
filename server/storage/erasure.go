@@ -308,8 +308,11 @@ func (r RetentionRepository) EraseCaller(ctx context.Context, label, requestID s
 		out.Remaining -= out.Erased
 		if out.Erased > 0 {
 			detail, _ := json.Marshal(map[string]int64{"erased": int64(out.Erased), "turns": out.Removed.Turns, "tool_calls": out.Removed.ToolCalls, "spans": out.Removed.Spans, "events": out.Removed.Events})
-			auditErr := r.s.WithTx(ctx, func(tx *sql.Tx) error {
-				return r.audit(ctx, tx, AuditEraseCaller, CallerHash(label), string(detail), requestID)
+			// The calls are gone whatever happened to the request, so the audit is written even if the client left.
+			actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancel()
+			auditErr := r.s.WithTx(actx, func(tx *sql.Tx) error {
+				return r.audit(actx, tx, AuditEraseCaller, CallerHash(label), string(detail), requestID)
 			})
 			if runErr == nil {
 				runErr = auditErr

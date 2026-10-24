@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"time"
 
 	"govoice/server/api"
 	"govoice/server/storage"
@@ -72,6 +73,13 @@ func (l *Lifecycle) Erase(ctx context.Context, id, requestID string) (api.Erasur
 	return out, nil
 }
 
+// audited writes an audit entry for files already touched, so it survives a client that has left.
+func (l *Lifecycle) audited(ctx context.Context, id, detail, requestID string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	return l.repo.RecordAction(ctx, storage.AuditEraseCall, id, detail, requestID)
+}
+
 func (l *Lifecycle) retryFiles(ctx context.Context, id, requestID string) (api.Erasure, error) {
 	n, err := l.removeFiles(id)
 	if err != nil {
@@ -82,7 +90,7 @@ func (l *Lifecycle) retryFiles(ctx context.Context, id, requestID string) (api.E
 		return api.Erasure{}, sql.ErrNoRows
 	}
 	detail, _ := json.Marshal(map[string]int{"recordings_removed": n})
-	if err := l.repo.RecordAction(ctx, storage.AuditEraseCall, id, string(detail), requestID); err != nil {
+	if err := l.audited(ctx, id, string(detail), requestID); err != nil {
 		l.log.Warn("retention: recording removal was not audited", slog.String("session", id), slog.String("err", err.Error()))
 	}
 	return api.Erasure{RecordingsRemoved: n}, nil
@@ -91,7 +99,7 @@ func (l *Lifecycle) retryFiles(ctx context.Context, id, requestID string) (api.E
 // noteFailure audits a recording that could not be removed. The error text may carry a path, so it is not recorded.
 func (l *Lifecycle) noteFailure(ctx context.Context, id, requestID string) {
 	l.log.Warn("retention: a recording file could not be removed", slog.String("session", id))
-	if err := l.repo.RecordAction(ctx, storage.AuditEraseCall, id, `{"recordings_failed":true}`, requestID); err != nil {
+	if err := l.audited(ctx, id, `{"recordings_failed":true}`, requestID); err != nil {
 		l.log.Warn("retention: the failed removal was not audited", slog.String("session", id), slog.String("err", err.Error()))
 	}
 }

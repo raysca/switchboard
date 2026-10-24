@@ -226,7 +226,7 @@ func TestPurgeAndPreviewSkipHeldCalls(t *testing.T) {
 			}
 		}
 		after, _ := s.Retention().Preview(ctx, content, metadata)
-		if after.MetadataSessions != 0 && after.ContentSessions != 0 { // only held calls remain, and they are not counted
+		if after.MetadataSessions != 0 || after.ContentSessions != 0 { // only held calls remain, and they are not counted
 			// held calls past the cutoff must not be counted
 			t.Fatalf("held calls are counted: %+v", after)
 		}
@@ -368,6 +368,30 @@ func TestHeldCallSurvivesOrphanCleanupAndAPurge(t *testing.T) {
 		}
 		if rec := sessionOf(t, s, id); rec.Status != "ended" || !rec.Held {
 			t.Fatalf("record = %+v", rec)
+		}
+	})
+}
+
+// The guard inside the delete is what makes a hold placed after a call was selected win: the delete then does nothing.
+func TestDeleteSessionDoesNothingToACallHeldAfterItWasSelected(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		ctx := context.Background()
+		id := seedCall(t, s, "late-"+NewID(), time.Hour)
+		if _, err := s.Retention().SetHold(ctx, id, true, "", "r"); err != nil {
+			t.Fatal(err)
+		}
+		err := s.WithTx(ctx, func(tx *sql.Tx) error {
+			_, deleted, err := s.Retention().deleteSession(ctx, tx, id)
+			if deleted {
+				t.Error("a held call was deleted")
+			}
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if count(t, s, "SELECT count(*) FROM turns WHERE session_id=?", id) != 1 || count(t, s, "SELECT count(*) FROM trace_events WHERE session_id=?", id) != 1 {
+			t.Fatal("the guarded delete changed a held call")
 		}
 	})
 }

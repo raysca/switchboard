@@ -388,3 +388,20 @@ func TestLifecycleWithoutRecordingsStillErasesRows(t *testing.T) {
 		t.Fatalf("second erase: %v", err)
 	}
 }
+
+// The store keeps up to 128 characters, so a label of 128 multibyte characters can be erased.
+func TestEraseByCallerAcceptsALabelOfMultibyteCharacters(t *testing.T) {
+	f := newFixture(t)
+	label := strings.Repeat("é", 128)
+	f.call(label, "ended")
+	var out api.CallerErasure
+	r := f.do(f.handler, http.MethodPost, "/api/v1/sessions/erase", `{"caller":"`+label+`","confirm_caller":"`+label+`"}`)
+	r.data(t, &out)
+	if r.Code != 200 || out.Erased != 1 {
+		t.Fatalf("%d %s", r.Code, r.Body)
+	}
+	long := label + "é"
+	if r := f.do(f.handler, http.MethodPost, "/api/v1/sessions/erase", `{"caller":"`+long+`","confirm_caller":"`+long+`"}`); r.Code != 400 {
+		t.Fatalf("129 characters: %d", r.Code)
+	}
+}
