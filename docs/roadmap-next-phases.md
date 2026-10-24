@@ -31,7 +31,7 @@ The product model is the **agent**: a stored, versioned configuration made of on
 | Observability | Partial | Prometheus (`server/metrics.go`, 14 alert rules in `deploy/alerts/govoice.rules.yml`); OTel export with one trace per call (`server/otelexport`); stored per-call spans, events and tool calls at `GET /sessions/{id}/traces`, shown by `TurnTimeline` and `ReplyWaterfall`; and an in-memory timeline at `/debug/timeline` (admin listener only, lost on restart, no UI). Missing: a trace explorer, the OTel `trace_id` stored on the session (so there is no call-to-trace link), and any "trace unavailable" reporting. |
 | Language configuration | Partial | Only STT has a language setting (start step), shown as a dropdown. TTS has none; the model language is left to the prompt. Catalog `languages` lists are short and do not gate anything. No compatibility matrix and no publish-time check. |
 | MCP servers and tools | Present | Management API (`docs/api/mcp.md`): create, update, enable, validate, test a tool, `detach-delete`; background health sync; schema-hash-pinned tool selection per agent version and a per-step subset; drift review. UI at `/mcp-servers`. Credentials are environment variable names only (`MCP_TOKEN_*`) and never returned. Missing: an app catalog or one-click connectors, OAuth (static bearer over Streamable HTTP only), and a secret store beyond the environment. |
-| HTTP endpoint tools | Planned | Nothing outside MCP: no tool type with method, URL, headers, request schema or response mapping. |
+| HTTP endpoint tools | Present | `/api/v1/http-tools` ([api/http-tools.md](api/http-tools.md)): method, URL with path placeholders, static headers, one secret header, input schema, timeout, response cap and response pick; immutable definitions pinned by agent versions; test calls; an HTTP tools page and a section in the agent's tool picker. Missing: background (async) calls, several credentials per tool, OAuth. |
 | Knowledge service | Planned | No retrieval or embedding code. |
 | Skills integration | Planned | No code. The term still needs a definition (see Phase 2). |
 | Diarization | Planned | Only generated Riva protobuf fields. No configuration, transcript field or UI. |
@@ -45,6 +45,7 @@ The product model is the **agent**: a stored, versioned configuration made of on
 | Dashboard and call inspection | Partial | Dashboard with live calls, capacity, turns, errors, recent calls, readiness and the reply-time chart (axis, slow and typical lines, keyboard tooltip, table view; `main`). Calls list and detail with transcript, waterfall and timeline. The list filters on `status` and `agent_id` only. |
 | Cost, summaries, extraction | Planned | `core.UsageMetricsFrame` is not consumed by `server/`. `safe_summary` is a status string, not a generated summary. |
 | Alerts, exports | Planned | Prometheus rules are the only alerting. There is no webhook, notification or export feature. |
+| Secrets for tools and MCP servers | Present | Named secrets resolved at call time from `MCP_TOKEN_*` and `HTTP_TOKEN_*` variables, a secrets directory, or an AES-256-GCM encrypted store in the database ([api/secrets.md](api/secrets.md), [security/credentials.md](security/credentials.md)); a Secrets page; keyring rotation by restart. Missing: a persistent audit trail of secret writes, per-tenant scoping. |
 | Authentication and tenancy | Partial | One shared management key (at least 32 bytes), magic-link admin sign-in with `public_admin`, and a first-run onboarding wizard. No users, roles or tenants. |
 | Deployment profiles | Present | Cloud Run (Cloud SQL Postgres, or a SQLite demo on `/tmp`) and a Cloudflare container demo (one Durable Object container, two sessions, ephemeral SQLite). Both are demo-grade for storage: data and recordings are lost on restart; no multi-instance resume. |
 
@@ -77,7 +78,9 @@ Also present and not in the original roadmap: STT, TTS and model failover with c
 
 ## Phase 2 — Knowledge, tools, and skills integrations
 
-**Description:** Give agents access to business systems and knowledge while keeping setup manageable for demo users and safe for operators. MCP already works; add direct HTTP tools where they improve usability, and decide the knowledge and skills approach.
+**Status:** HTTP tools and cloud-agnostic secrets are built (design record: [decisions/http-tools.md](decisions/http-tools.md)). Knowledge and skills remain.
+
+**Description:** Give agents access to business systems and knowledge while keeping setup manageable for demo users and safe for operators. MCP and HTTP tools work; decide the knowledge and skills approach.
 
 **Outcome:** An agent can retrieve business knowledge and call external services using consistent, discoverable configuration.
 
@@ -257,7 +260,7 @@ Also present and not in the original roadmap: STT, TTS and model failover with c
 
 ## Suggested delivery order
 
-1. **Phase 2, HTTP tools first:** the largest gain for agent authors, builds on the existing MCP and tool-pinning work, and needs none of the open storage or tenancy decisions.
+1. **Phase 2:** HTTP tools and secrets are done; knowledge and skills follow.
 2. **Phase 6:** finish the eval work already under way on `feat/phase-11` (merge or rebase it onto `main` first).
 3. **Phase 1:** small lifecycle polish; can run alongside either.
 4. **Phase 7 (cost and trace link first)** and **Phase 4:** both want a decision on storage and access control; settle the tenancy and storage contracts before building either.

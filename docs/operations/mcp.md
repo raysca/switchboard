@@ -42,13 +42,12 @@ Use Sync to check now, for example after you fix the remote server or rotate a t
 
 ## Rotate a token
 
-Tokens are read only from the environment. A server stores the variable name (`MCP_TOKEN_*`), never the value.
+A server's token is a named secret: an `MCP_TOKEN_*` environment variable, a file in the secrets directory, or a secret in the encrypted store (the Secrets page; see [credentials](../security/credentials.md#tool-and-mcp-secrets)). A server stores the name, never the value.
 
-1. Set the new value in the server's environment under the same variable name.
-2. Restart the server.
-3. Run Sync on the MCP server.
+1. Put the new value where the secret lives: replace it on the Secrets page (or the file in the secrets directory), or set the environment variable under the same name and restart the server.
+2. Run Sync on the MCP server.
 
-The variable name stays the same. New calls use the new value. Calls already running keep the token they captured until they end; end them if the old token must stop at once. If the variable is unset or empty, the server shows that the token variable is not set, and agents that need its tools are not callable (`auth_env_missing`). Only the variable name is shown.
+The name stays the same. New calls use the new value. Calls already running keep the token they captured until they end; end them if the old token must stop at once. If the secret does not resolve, the server shows that the secret is not set, and agents that need its tools are not callable (`auth_env_missing`). Only the variable name is shown.
 
 ## Edit a server
 

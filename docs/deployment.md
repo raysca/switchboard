@@ -144,7 +144,7 @@ The variables an operator sets for the shipped server and scripts. Provider secr
 | `OPENAI_API_KEY`, `OPENAI_BASE_URL` | per provider | server | OpenAI or compatible LLM; a private base URL needs `providers.openai_llm.allow_private_base_url` |
 | `NVIDIA_API_KEY`, `NVIDIA_STT_FUNCTION_ID`, `NVIDIA_TTS_FUNCTION_ID` | per provider | server | Hosted NVIDIA only |
 | `DEEPGRAM_API_KEY`, `CARTESIA_API_KEY`, `ELEVENLABS_API_KEY` | per provider | server | STT and TTS providers |
-| `MCP_TOKEN_<NAME>` | per MCP server | server | Bearer token named by an MCP server's `auth_env`; the name must match `MCP_TOKEN_[A-Z0-9_]{1,48}` |
+| `MCP_TOKEN_<NAME>` | per MCP server | server | Bearer token named by an MCP server's `auth_env`; the name must match `MCP_TOKEN_[A-Z0-9_]{1,48}`. Tool and MCP secrets can instead live in `secrets.dir` or the encrypted store (enabled by `SWITCHBOARD_SECRETS_KEY`), which need no redeploy; see [security/credentials.md](security/credentials.md#tool-and-mcp-secrets) |
 | variables named in `otel.headers_env` | with OTel | server | Header values for the OTLP exporter; an empty one stops startup |
 | `DENTAL_MCP_URL` | demo only | server | Needed by `demo.auto_install: dental` |
 | `POSTGRES_PASSWORD` | Compose only | compose file | URL-safe (for example `openssl rand -hex 24`) |

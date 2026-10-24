@@ -70,6 +70,20 @@ func New(opts Options) *Server {
 		s.add(Record{Path: "/fail/auth", Method: "", Auth: s.auth(r), At: time.Now()})
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 	})
+	// A plain REST endpoint for the HTTP tools: GET /rest/orders/{id} needs the bearer token and answers JSON.
+	s.mux.HandleFunc("GET /rest/orders/{id}", func(w http.ResponseWriter, r *http.Request) {
+		auth := s.auth(r)
+		s.add(Record{Path: "/rest/orders/" + r.PathValue("id"), Method: "GET", Auth: auth, At: time.Now()})
+		switch {
+		case auth != "match":
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+		case r.PathValue("id") == "missing":
+			http.Error(w, "no such order", http.StatusNotFound)
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": r.PathValue("id"), "status": "shipped", "eta_days": 2, "verbose": r.URL.Query().Get("verbose") == "true"})
+		}
+	})
 	s.mux.HandleFunc("GET /_record", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		recs := s.Records()

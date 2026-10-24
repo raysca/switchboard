@@ -227,7 +227,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
             <ul className="call-tools">
               {s.runtime_tools.map((t) => (
                 <li key={`${t.mcp_server_id}/${t.remote_name}`}>
-                  <strong>{t.remote_name}</strong> <span className="subtext">on {t.mcp_server_id}</span> <code>{t.schema_hash.slice(0, 8)}</code> {t.required ? "Required" : "Optional"}
+                  <strong>{t.remote_name}</strong> <span className="subtext">on {t.mcp_server_id.startsWith("http:") ? "an HTTP tool" : t.mcp_server_id}</span> <code>{t.schema_hash.slice(0, 8)}</code> {t.required ? "Required" : "Optional"}
                 </li>
               ))}
             </ul>

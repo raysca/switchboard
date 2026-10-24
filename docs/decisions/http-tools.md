@@ -1,6 +1,13 @@
 # HTTP tools: plan
 
-Status: proposed. Phase 2 of [roadmap-next-phases.md](../roadmap-next-phases.md).
+Status: implemented (slices 0 to 5). Phase 2 of [roadmap-next-phases.md](../roadmap-next-phases.md). Reference: [api/http-tools.md](../api/http-tools.md), [security/http-tools.md](../security/http-tools.md). Where the build differs from the plan below:
+
+- An agent version pins an HTTP tool in the existing tool pin table with the pseudo server id `http:<tool id>` and the tool's name as `remote_name`, instead of new `agent_http_tools` and `session_http_tools` tables. Step references are `http:<id>/<name>`. Tool calls record the same pseudo id.
+- Error categories are the MCP ones; a non-2xx answer is `tool_error` with `the service answered HTTP <code>`, not a new `http_error` category.
+- The development switch is the existing `mcp.allow_local_http`, not a second one.
+- There is no per-tool in-flight cap; the model loop's `max_parallel` bounds concurrency.
+- Text bodies are `text/plain` only.
+- The delete guard looks at current agent versions only (an active call keeps its captured definition in memory).
 
 ## Goal
 

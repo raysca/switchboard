@@ -139,4 +139,34 @@ if (mcpURL) {
     }
   }
 }
+// An HTTP tool against the test server's REST endpoint, its secret in the encrypted store, and an agent that uses it.
+const httpBase = process.env.MCPTEST_URL;
+const httpToken = process.env.MCPTEST_TOKEN;
+if (httpBase && httpToken) {
+  try {
+    const tools = await api("GET", "/http-tools");
+    let tool = tools.find((t) => t.name === "lookup_order");
+    if (!tool) {
+      await api("PUT", "/secrets/mcptest-token", { value: httpToken });
+      tool = await api("POST", "/http-tools", {
+        name: "lookup_order",
+        description: "Look up an order by its id and report its status.",
+        method: "GET",
+        url: `${httpBase}/rest/orders/{order_id}`,
+        auth: { secret: "mcptest-token" },
+        input_schema: { type: "object", properties: { order_id: { type: "string" }, verbose: { type: "boolean" } }, required: ["order_id"] },
+      });
+      log(`created HTTP tool "lookup_order"`);
+    }
+    const HTTP_AGENT = "Order desk (HTTP tool)";
+    const base = !find(HTTP_AGENT) && (await defaults());
+    if (base) {
+      const config = { ...base, llm: { ...base.llm, system_prompt: "You help callers with their orders. Use lookup_order to check an order and answer in one short sentence." } };
+      await api("POST", "/agents", { name: HTTP_AGENT, description: "Calls the lookup_order HTTP tool", config, mcp_tools: [{ mcp_server_id: `http:${tool.id}`, remote_name: tool.name, schema_hash: tool.hash, required: true }] });
+      log(`created agent "${HTTP_AGENT}"`);
+    }
+  } catch (err) {
+    log(`could not set up the HTTP tool demo: ${err.message}`);
+  }
+}
 console.log(assistant.id);
