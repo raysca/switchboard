@@ -177,6 +177,17 @@ e2e-echo: test-e2e-go eval-agents-echo e2e-fake ## free|Every end-to-end test on
 eval-agents-echo: ## free|Agent eval harness self-test on the echo provider, with mutation checks (about 30 s)
 	@go run ./tools/eval/agents -selftest
 
+# Agent evals against a running server (make dev): export the management key first (the target never reads
+# or prints it): set -a; . .govoice-dev/dev.env; set +a. Cases: tools/eval/agents/cases, docs/operations/agent-evals.md.
+EVAL_ADMIN ?= http://127.0.0.1:9090
+EVAL_PUBLIC ?= 127.0.0.1:8080
+eval-agents: ## dev|Agent evals against make dev on the offline model (Ollama; CASES= dir, EVAL_ARGS=)
+	@go run ./tools/eval/agents -admin $(EVAL_ADMIN) -public $(EVAL_PUBLIC) -providers offline -cases $(or $(CASES),tools/eval/agents/cases) $(EVAL_ARGS)
+
+eval-agents-live: ## paid|Agent evals on each agent's own model (GOVOICE_LIVE=1; cap MAX_TURNS caller turns, default 40)
+	@test "$$GOVOICE_LIVE" = 1 || { echo "eval-agents-live runs the agents' own models and spends API credit: run GOVOICE_LIVE=1 make eval-agents-live"; exit 1; }
+	@go run ./tools/eval/agents -admin $(EVAL_ADMIN) -public $(EVAL_PUBLIC) -providers keep -max-turns $(or $(MAX_TURNS),$(DEFAULT_MAX_CALLS)) -cases $(or $(CASES),tools/eval/agents/cases) $(EVAL_ARGS)
+
 # The same specs against LIVE xAI (STT, Grok, TTS): the model itself must call the transfer tool. Needs
 # XAI_API_KEY (env or examples/.env; XAI_MODEL optional). Roughly 20 provider requests per run.
 e2e-xai: ## paid|Playwright browser e2e for agents with handoffs against REAL xAI (GOVOICE_LIVE=1; about 20 requests)
@@ -187,7 +198,7 @@ e2e-xai: ## paid|Playwright browser e2e for agents with handoffs against REAL xA
 e2e-oneport: ui-embed ## free|Playwright e2e of the one-port server (embedded UI, same-origin API and socket) on the echo provider
 	$(E2E_SETUP) && npx playwright test -c playwright.oneport.config.ts
 
-.PHONY: e2e e2e-fake e2e-oneport e2e-xai e2e-echo test-e2e-go eval-agents-echo
+.PHONY: e2e e2e-fake e2e-oneport e2e-xai e2e-echo test-e2e-go eval-agents-echo eval-agents eval-agents-live
 
 # Local development (scripts/dev.sh): `make dev` runs the server and admin UI with
 # generated secrets and a local SQLite store in .govoice-dev/, seeded with a
