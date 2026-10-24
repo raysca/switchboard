@@ -74,7 +74,7 @@ export function ConnectServerDialog(props: ConnectServerDialogProps) {
             ))}
           </datalist>
           <small>
-            The name of a secret on the <a href="/secrets">Secrets</a> page, or an <code>MCP_TOKEN_</code> environment variable. Its value is sent as the bearer token to this server only. Public HTTPS hosts only (development servers also reach local test servers).
+            The name of a secret on the <a href="/secrets">Secrets</a> page, or an <code>MCP_TOKEN_</code> environment variable. Its value is sent as the bearer token to this endpoint. Public HTTPS hosts only (development servers also reach local test servers).
           </small>
         </div>
         {!server && (

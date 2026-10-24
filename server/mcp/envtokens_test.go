@@ -3,11 +3,18 @@ package mcp
 import (
 	"strings"
 	"testing"
+
+	"govoice/server/secrets"
 )
 
+// EnvTokens serves tokens from environment variables only, for tests.
+func EnvTokens(getenv func(string) string) TokenSource {
+	return ResolverTokens(secrets.Env{Getenv: getenv})
+}
+
 func TestValidAuthEnv(t *testing.T) {
-	good := []string{"MCP_TOKEN_CRM", "MCP_TOKEN_A", "MCP_TOKEN_" + strings.Repeat("X", 48), "HTTP_TOKEN_CRM", "crm-api", "mcp_token_crm"}
-	bad := []string{"", "TOKEN_SECRET", "GOVOICE_MANAGEMENT_API_KEY", "XAI_API_KEY", "Crm-Api", "../x",
+	good := []string{"MCP_TOKEN_CRM", "MCP_TOKEN_A", "MCP_TOKEN_" + strings.Repeat("X", 48), "crm-api", "mcp_token_crm"}
+	bad := []string{"", "TOKEN_SECRET", "GOVOICE_MANAGEMENT_API_KEY", "XAI_API_KEY", "Crm-Api", "../x", "HTTP_TOKEN_CRM",
 		"MCP_TOKEN_", "MCP_TOKEN_A B", "MCP_TOKEN_a", "MCP_TOKEN_" + strings.Repeat("X", 49), "MCP_TOKEN_A\n", "XMCP_TOKEN_A"}
 	for _, n := range good {
 		if !ValidAuthEnv(n) {

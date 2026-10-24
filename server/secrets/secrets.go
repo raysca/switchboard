@@ -55,6 +55,14 @@ func ValidValue(v string) bool {
 	return v != "" && len(v) <= MaxValueBytes && strings.IndexFunc(v, func(c rune) bool { return c <= ' ' || c == 0x7f }) < 0
 }
 
+type noStampKey struct{}
+
+// WithoutUseStamp marks a lookup that only asks whether a secret resolves (readiness, server views): it must not
+// count as a use, so last_used_at reflects calls that really needed the value.
+func WithoutUseStamp(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noStampKey{}, true)
+}
+
 // Resolver turns a secret name into its value. ok is false when the name does not resolve for any reason; callers
 // report only "missing", never why, so a response cannot reveal which backend holds a name.
 type Resolver interface {
@@ -239,7 +247,9 @@ func (s Store) Resolve(ctx context.Context, name string) (string, bool) {
 	if err != nil || !ValidValue(v) {
 		return "", false
 	}
-	_ = s.Repo.Touch(ctx, name) // best effort: a failed use stamp must not fail the call
+	if ctx.Value(noStampKey{}) == nil {
+		_ = s.Repo.Touch(ctx, name) // best effort: a failed use stamp must not fail the call
+	}
 	return v, true
 }
 
@@ -278,7 +288,7 @@ func (s Store) List(ctx context.Context) ([]Info, error) {
 }
 
 // Reseal re-encrypts every secret under the first key and returns how many it rewrote. A secret that no key opens is
-// reported as an error and left alone.
+// left alone and reported in the error; the others are still resealed.
 func (s Store) Reseal(ctx context.Context) (int, error) {
 	if s.Keys == nil {
 		return 0, ErrNoKey
@@ -288,18 +298,20 @@ func (s Store) Reseal(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	n := 0
+	var errs []error
 	for _, r := range rows {
 		if r.KeyID == s.Keys.ids[0] {
 			continue
 		}
 		v, err := s.Keys.open(r.Name, r.KeyID, r.Nonce, r.Ciphertext)
 		if err != nil {
-			return n, fmt.Errorf("secret %q: no configured key opens it", r.Name)
+			errs = append(errs, fmt.Errorf("secret %q: no configured key opens it", r.Name))
+			continue
 		}
 		if err := s.Put(ctx, r.Name, v); err != nil {
 			return n, err
 		}
 		n++
 	}
-	return n, nil
+	return n, errors.Join(errs...)
 }

@@ -23,7 +23,7 @@ Environment values are server-wide: every agent on the server uses the same key 
 An MCP server names its credential with `auth_env`. The value is a secret name, and the server finds it, in this order, in:
 
 1. **The environment**: `MCP_TOKEN_[A-Z0-9_]{1,48}` and `HTTP_TOKEN_[A-Z0-9_]{1,48}`. Nothing else is ever read from the environment on behalf of a tool, so a management-key holder cannot make the server send a provider key or `GOVOICE_MANAGEMENT_API_KEY` to an endpoint they choose.
-2. **A directory of files** (`secrets.dir`): one file per secret, named in lower case (`crm-api`). It works on any platform that mounts secrets as files (Kubernetes, Docker and Compose, Nomad, systemd credentials, Cloud Run volumes). The file is read on every use, so a rotated file takes effect without a restart. Symbolic links are followed only while they stay inside the directory.
+2. **A directory of files** (`secrets.dir`): one file per secret, named in lower case (`crm-api`). Point it at a directory used only for tool and MCP secrets: every readable file in it can be named by an MCP server, so a shared mount such as `/run/secrets` would expose its other files. It works on any platform that mounts secrets as files (Kubernetes, Docker and Compose, Nomad, systemd credentials, Cloud Run volumes). The file is read on every use, so a rotated file takes effect without a restart. Symbolic links are followed only while they stay inside the directory.
 3. **The encrypted store** in the server's own database (SQLite or Postgres), written through [`/api/v1/secrets`](../api/secrets.md) or the dashboard. It is enabled by one master key in `SWITCHBOARD_SECRETS_KEY`, set once at deployment; adding a secret needs no redeploy.
 
 The names are checked when a server is created and again at every read. Responses carry the name and whether it resolves (`auth_env_set`), never the value. No API reads a secret back.
@@ -32,10 +32,11 @@ The names are checked when a server is created and again at every read. Response
 
 - **Sealing.** Each value is encrypted with AES-256-GCM, a random nonce, and the secret name and key id as associated data, so a row copied under another name does not open. The database holds only the sealed bytes.
 - **Master key.** `SWITCHBOARD_SECRETS_KEY` is `id:base64key` with a 32-byte key (for example `k1:` followed by the output of `openssl rand -base64 32`). With the variable unset the store is off: `PUT /secrets/{name}` answers 503 `secrets_store_disabled`, and the environment and directory backends still work. A malformed key stops the server at start.
-- **Rotation.** List several keys, newest first: `k2:<new>,k1:<old>`. New writes use the first key and every key can still open old rows. Re-sealing is `Store.Reseal`; once every row has been re-sealed, drop the old key. Losing every key that sealed a row makes that secret unrecoverable; set it again.
+- **Rotation.** List several keys, newest first: `k2:<new>,k1:<old>`, and restart. New writes use the first key, every key can still open old rows, and the server re-seals every row under the first key at start-up (it logs how many, and any row no configured key can open). Once nothing is left under the old key, drop it at the next restart. Losing every key that sealed a row makes that secret unrecoverable; set it again.
 - **What it protects against.** A database dump or backup alone does not reveal a secret. It does not protect against someone who can read both the database and the process environment, or who can call the management API with a tool that sends the secret to a host they control: the master key, the management key and the destination checks (HTTPS, public addresses, no redirects) are the controls.
 - **Audit.** Every write and delete is logged with the secret name and request id, never the value. `last_used_at` shows when a secret was last resolved.
-- **Deletion.** A secret an MCP server uses cannot be deleted (409 `secret_in_use`, with the servers listed).
+- **Deletion.** A secret an MCP server uses cannot be deleted (409 `secret_in_use`, with the servers listed). The check is best effort: a server created in the instant between the check and the delete shows `auth_env_set: false` and the agents using it report it in readiness.
+- **Names.** MCP servers may name `MCP_TOKEN_*` variables and lower-case secrets. `HTTP_TOKEN_*` variables are for HTTP tools only and are never sent to an MCP endpoint.
 
 ## Rotation
 

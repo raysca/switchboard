@@ -42,7 +42,7 @@ The name is 1 to 63 characters: lower-case letters, digits, `-` and `_`, startin
 
 ## Delete
 
-`204` on success, `404 not_found` when no stored secret has that name, and `409 secret_in_use` with the referencing servers in `error.details` (`kind`, `id`, `name`) while anything uses it. Environment and directory secrets are changed where they live, not here.
+`204` on success, `404 not_found` when no stored secret has that name, and `409 secret_in_use` with the referencing servers in `error.details` (`kind`, `id`, `name`) while anything uses it (a best-effort check). Environment and directory secrets are changed where they live, not here.
 
 ## Using a secret
 

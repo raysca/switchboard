@@ -261,7 +261,7 @@ type ExecutionView struct {
 func view(m storage.MCPServer, tokens TokenSource) ServerView {
 	authSet := false
 	if m.AuthEnv != "" && tokens != nil {
-		_, authSet = tokens.Token(m.AuthEnv)
+		authSet = tokens.Has(m.AuthEnv)
 	}
 	var connected, discovered, checked *time.Time
 	if !m.LastCheckedAt.IsZero() {

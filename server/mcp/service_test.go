@@ -45,6 +45,7 @@ func (r *testRemote) CallTool(ctx context.Context, endpoint, bearer, name string
 type testTokens map[string]string
 
 func (t testTokens) Token(name string) (string, bool) { v, ok := t[name]; return v, ok && v != "" }
+func (t testTokens) Has(name string) bool             { _, ok := t.Token(name); return ok }
 
 type allowHTTP struct{}
 

@@ -62,6 +62,15 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 		return fail(fmt.Errorf("SWITCHBOARD_SECRETS_KEY: %w", err))
 	}
 	m.secrets = secrets.Store{Repo: store.Secrets(), Keys: keys}
+	if m.secrets.Enabled() {
+		// Rotation is "put the new key first and restart": rows still sealed under an older key are re-sealed now.
+		switch n, err := m.secrets.Reseal(ctx); {
+		case err != nil:
+			s.logger.Warn("secrets: some stored secrets could not be re-sealed", slog.Int("resealed", n), slog.Any("error", err))
+		case n > 0:
+			s.logger.Info("secrets re-sealed under the first master key", slog.Int("count", n))
+		}
+	}
 	mcpTokens := mcp.ResolverTokens(secrets.Chain{
 		secrets.Env{Getenv: func(k string) string { return s.env(k) }},
 		secrets.Dir{Path: s.cfg.Secrets.Dir},
@@ -96,7 +105,7 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	// The production provider check and the recording sink can still fail:
 	// both run before anything points at the store fail() closes.
 	agents := agent.NewService(store, s.availability)
-	agents.SetTokenEnv(func(n string) bool { _, ok := mcpTokens.Token(n); return ok })
+	agents.SetTokenEnv(mcpTokens.Has)
 	if bad := s.unavailableAgentProviders(ctx, agents); len(bad) > 0 {
 		for _, b := range bad {
 			s.logger.Error("agent references a provider this build cannot run", slog.String("problem", b))

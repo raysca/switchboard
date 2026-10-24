@@ -112,6 +112,41 @@ func TestKeyRotation(t *testing.T) {
 	}
 }
 
+func TestOnlyRealUseStampsLastUsed(t *testing.T) {
+	s := newStore(t, "k1:"+key(1))
+	ctx := t.Context()
+	_ = s.Put(ctx, "tok-a", "value-a")
+	if _, ok := s.Resolve(secrets.WithoutUseStamp(ctx), "tok-a"); !ok {
+		t.Fatal("quiet resolve failed")
+	}
+	if row, _ := s.Repo.Get(ctx, "tok-a"); !row.LastUsedAt.IsZero() {
+		t.Fatal("a readiness check counted as a use")
+	}
+	_, _ = s.Resolve(ctx, "tok-a")
+	if row, _ := s.Repo.Get(ctx, "tok-a"); row.LastUsedAt.IsZero() {
+		t.Fatal("a real use was not stamped")
+	}
+}
+
+func TestResealSkipsRowsNoKeyOpensAndStillReseals(t *testing.T) {
+	s := newStore(t, "k1:"+key(1))
+	ctx := t.Context()
+	_ = s.Put(ctx, "tok-a", "value-a")
+	_ = s.Put(ctx, "tok-b", "value-b")
+	lost := secrets.Store{Repo: s.Repo}
+	lost.Keys, _ = secrets.ParseKeyring("k9:" + key(9))
+	_ = lost.Put(ctx, "tok-lost", "value-lost") // sealed under a key nobody configures any more
+	rotated := secrets.Store{Repo: s.Repo}
+	rotated.Keys, _ = secrets.ParseKeyring("k2:" + key(2) + ",k1:" + key(1))
+	n, err := rotated.Reseal(ctx)
+	if n != 2 || err == nil || !strings.Contains(err.Error(), "tok-lost") {
+		t.Fatalf("reseal = %d, %v", n, err)
+	}
+	if v, ok := rotated.Resolve(ctx, "tok-b"); !ok || v != "value-b" {
+		t.Fatal("a later row was not resealed after an unopenable one")
+	}
+}
+
 func TestParseKeyringRejectsBadKeys(t *testing.T) {
 	for _, spec := range []string{"nokey", "k1:" + base64.StdEncoding.EncodeToString([]byte("short")), "K1:" + key(1), "k1:" + key(1) + ",k1:" + key(2), "k1:!!!"} {
 		if _, err := secrets.ParseKeyring(spec); !errors.Is(err, secrets.ErrInvalidKey) {
