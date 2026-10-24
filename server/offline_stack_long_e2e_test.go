@@ -47,6 +47,12 @@ type callerTurnLog struct {
 }
 
 func (r *callerTurnLog) handler(w http.ResponseWriter, req *http.Request) {
+	// Only the model request counts as a turn: another local program probing this loopback port
+	// (it shows up as an empty turn) must not.
+	if req.Method != http.MethodPost || req.URL.Path != "/v1/responses" {
+		http.NotFound(w, req)
+		return
+	}
 	var body struct {
 		Input []struct {
 			Role    string `json:"role"`
