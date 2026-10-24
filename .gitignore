@@ -9,7 +9,7 @@ bin/
 
 # Python & JS virtual environments / dependencies
 .venv/
-node_modules/
+node_modules
 dist/
 __pycache__/
 *.pyc
@@ -35,7 +35,7 @@ progress.md
 .govoice-dev-fresh/
 
 # e2e (Playwright)
-e2e/node_modules/
+e2e/node_modules
 e2e/evidence/
 e2e/test-results/
 e2e/playwright-report/
