@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -78,12 +79,15 @@ func ParseCases(data []byte, source string) ([]Case, error) {
 		var c Case
 		if err := dec.Decode(&c); err != nil {
 			if errors.Is(err, io.EOF) {
-				if n == 1 {
+				if len(cases) == 0 {
 					return nil, fmt.Errorf("%s: empty file", source)
 				}
 				return cases, nil
 			}
 			return nil, fmt.Errorf("%s#%d: %w", source, n, err)
+		}
+		if reflect.DeepEqual(c, Case{}) { // an empty or comment-only document, e.g. a trailing "---"
+			continue
 		}
 		if err := c.Validate(false); err != nil {
 			return nil, fmt.Errorf("%s#%d: %w", source, n, err)

@@ -256,19 +256,22 @@ turns:
 // session, its turns and its traces.
 func fetchStored(ctx context.Context, t Target, id string) (Stored, error) {
 	var st Stored
+	var readErr error // the last failed read: why a session that never ended could not be seen
 	ended := false
 	for end := time.Now().Add(sessionEndWait); time.Now().Before(end) && !ended; {
-		if s, err := t.Stored(ctx, id); err == nil {
+		if s, err := t.Stored(ctx, id); err != nil {
+			readErr = err
+		} else {
 			st, ended = s, !s.Session.EndedAt.IsZero()
 		}
 		if !ended {
 			if err := sleepCtx(ctx, pollEvery); err != nil {
-				return st, err
+				return st, errors.Join(err, readErr)
 			}
 		}
 	}
 	if !ended {
-		return st, fmt.Errorf("session %s did not end within %s", id, sessionEndWait)
+		return st, errors.Join(fmt.Errorf("session %s did not end within %s", id, sessionEndWait), readErr)
 	}
 	if err := sleepCtx(ctx, rowsSettleWait); err != nil {
 		return st, err

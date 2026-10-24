@@ -244,3 +244,44 @@ func TestCaseRunPassedCountsErrors(t *testing.T) {
 		t.Error("a skipped scorer failed the case-run")
 	}
 }
+
+// A callback that panics errors that scorer's result; the other scorers still run.
+func TestRunScorersSurvivesAPanickingJudgeFor(t *testing.T) {
+	in := inputFor(storedCall(true, "succeeded"))
+	got := results(t, in, func(s string) *Judge {
+		if s == "toxicity" {
+			panic("boom")
+		}
+		return nil
+	}, nil)
+	if got["toxicity"].Outcome != Errored || got["expectations"].Outcome != Pass || got["correctness"].Outcome != Skipped {
+		t.Errorf("results = %+v", got)
+	}
+	if CaseRunPassed(RunScorers(context.Background(), in, func(string) *Judge { panic("boom") }, nil)) {
+		t.Error("a case-run passed while its judges were panicking")
+	}
+}
+
+// A reason that holds "; " is still one reason: the failure lines of a result are separated by newlines.
+func TestReasonsAreNewlineSeparated(t *testing.T) {
+	in := inputFor(storedCall(true, "succeeded"))
+	c := baseCase()
+	c.Expect.NeverSay = []string{`Many; many[^.]*`}
+	c.Expect.EndReason = "agent_hung_up"
+	in.Case = &c
+	in.Turns = append(in.Turns, Line{"agent", "Many; many; kinds."})
+	var reason string
+	for _, r := range RunScorers(context.Background(), in, nil, nil) {
+		if r.Scorer == "expectations" {
+			reason = r.Reason
+		}
+	}
+	lines := strings.Split(reason, "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], `matched "Many; many; kinds"`) || !strings.HasPrefix(lines[1], "end_reason:") {
+		t.Errorf("reason lines = %q", lines)
+	}
+	_, _, r := capture(t, in, "{\"score\":0.1,\"reason\":\"first\\nsecond; third\"}")
+	if r.Reason != "first second; third" {
+		t.Errorf("judge reason = %q", r.Reason)
+	}
+}

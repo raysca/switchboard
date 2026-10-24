@@ -153,3 +153,23 @@ func TestCaseJSONUsesYAMLKeys(t *testing.T) {
 		}
 	}
 }
+
+// Empty and comment-only YAML documents (a trailing "---") hold no case and are skipped.
+func TestParseCasesSkipsEmptyDocuments(t *testing.T) {
+	doc := "name: a\ncaller: {script: [hi]}\n"
+	for name, in := range map[string]string{
+		"trailing separator": doc + "---\n",
+		"comment document":   doc + "---\n# nothing here\n---\n",
+		"leading separator":  "---\n" + doc,
+	} {
+		cs, err := ParseCases([]byte(in), "f")
+		if err != nil || len(cs) != 1 || cs[0].Name != "a" {
+			t.Errorf("%s: %v, %v", name, cs, err)
+		}
+	}
+	for _, in := range []string{"", "---\n", "# only a comment\n"} {
+		if _, err := ParseCases([]byte(in), "f"); err == nil || !strings.Contains(err.Error(), "empty") {
+			t.Errorf("%q: err = %v, want an empty-file error", in, err)
+		}
+	}
+}

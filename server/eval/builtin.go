@@ -82,7 +82,7 @@ func (toolCallAccuracy) Score(_ context.Context, in Input, _ *Judge) (float64, s
 			fails = append(fails, fmt.Sprintf("tools_order: want %v in this order, got %v", e.ToolsCalled, tools))
 		}
 	}
-	return fraction(len(fails), checked), strings.Join(fails, "; "), nil
+	return fraction(len(fails), checked), strings.Join(fails, "\n"), nil
 }
 
 // inOrder reports whether want (name or name:status entries) is a subsequence of got ("name:status").
@@ -178,5 +178,5 @@ func (expectations) Score(_ context.Context, in Input, _ *Judge) (float64, strin
 			fail("median_reply_ms_max: want at most %d, got %d", e.MedianReplyMSMax, m)
 		}
 	}
-	return fraction(len(fails), checked), strings.Join(fails, "; "), nil
+	return fraction(len(fails), checked), strings.Join(fails, "\n"), nil
 }

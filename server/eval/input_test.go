@@ -145,7 +145,7 @@ func failLines(c Case, in Input) (out []string) {
 	in.Case = &c
 	for _, r := range RunScorers(context.Background(), in, nil, nil) {
 		if r.Outcome == Fail || r.Outcome == Errored {
-			out = append(out, strings.Split(r.Reason, "; ")...)
+			out = append(out, strings.Split(r.Reason, "\n")...)
 		}
 	}
 	return out

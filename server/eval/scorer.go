@@ -81,13 +81,27 @@ func RunScorers(ctx context.Context, in Input, judges JudgeFor, thresholds map[s
 	all := Builtins()
 	out := make([]Result, 0, len(all))
 	for _, s := range all {
-		var j *Judge
-		if judges != nil {
-			j = judges(s.Name())
+		j, err := judgeOf(judges, s)
+		if err != nil {
+			out = append(out, Result{Scorer: s.Name(), Version: s.Version(), Outcome: Errored, Reason: err.Error()})
+			continue
 		}
 		out = append(out, runOne(ctx, s, in, j, thresholds))
 	}
 	return out
+}
+
+// judgeOf asks the JudgeFor callback for a model-graded scorer's judge; a panicking callback is an error.
+func judgeOf(judges JudgeFor, s Scorer) (j *Judge, err error) {
+	if judges == nil || !s.Judged() {
+		return nil, nil
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			j, err = nil, errors.New("judge lookup panicked")
+		}
+	}()
+	return judges(s.Name()), nil
 }
 
 func runOne(ctx context.Context, s Scorer, in Input, j *Judge, thresholds map[string]float64) (r Result) {

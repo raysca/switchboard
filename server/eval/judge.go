@@ -35,7 +35,7 @@ func askJudge(ctx context.Context, j *Judge, rubric string, in Input) (float64, 
 	if err != nil {
 		return 0, "", err
 	}
-	if reason = strings.TrimSpace(reason); utf8.RuneCountInString(reason) > maxJudgeReason {
+	if reason = strings.Join(strings.Fields(reason), " "); utf8.RuneCountInString(reason) > maxJudgeReason {
 		reason = Truncate(reason, maxJudgeReason-len("..."))
 	}
 	return score, reason, nil

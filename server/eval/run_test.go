@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -117,4 +118,20 @@ func equalLines(a, b []Line) bool {
 		}
 	}
 	return true
+}
+
+type brokenTarget struct{ fakeTarget }
+
+func (*brokenTarget) Stored(context.Context, string) (Stored, error) {
+	return Stored{}, errors.New("GET sessions/s1: 503 Service Unavailable")
+}
+
+// A stored read that keeps failing is a harness error that says why, not a silent "did not end".
+func TestFetchStoredReportsReadErrors(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
+	defer cancel()
+	_, err := fetchStored(ctx, &brokenTarget{}, "s1")
+	if err == nil || !strings.Contains(err.Error(), "503 Service Unavailable") {
+		t.Errorf("err = %v", err)
+	}
 }
