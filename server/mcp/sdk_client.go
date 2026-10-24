@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"govoice/server/egress"
 	"io"
 	"net"
 	"net/http"
@@ -46,47 +47,11 @@ func NewSDKClient(opts ...SDKOption) *SDKClient {
 	base.Proxy = nil // Explicit remote destination policy; do not inherit ambient proxy routing.
 	base.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
-		return dialEgress(ctx, network, address, c.allowLoopbackHTTP, net.DefaultResolver.LookupIPAddr, dialer.DialContext)
+		return egress.Dial(ctx, network, address, c.allowLoopbackHTTP, net.DefaultResolver.LookupIPAddr, dialer.DialContext)
 	}
 	transport := closeBudgetTransport{next: boundedBodyTransport{next: classifiedStatusTransport{next: bearerTransport{next: base}}}}
 	c.client = &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	return c
-}
-
-// dialEgress connects only to public addresses, or also to loopback when
-// allowLoopback is set; the name is resolved again here, so a validation-time
-// answer cannot be swapped for a private address at dial time.
-func dialEgress(ctx context.Context, network, address string, allowLoopback bool, lookup func(context.Context, string) ([]net.IPAddr, error), dial func(context.Context, string, string) (net.Conn, error)) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(address)
-	if err != nil {
-		return nil, errors.New("invalid MCP destination")
-	}
-	var ips []net.IPAddr
-	if allowLoopback {
-		// Resolve once and judge those answers: the addresses dialed are exactly the
-		// ones checked, so a rebinding resolver cannot swap in another address.
-		var answers []net.IPAddr
-		if ip := net.ParseIP(host); ip != nil {
-			answers = []net.IPAddr{{IP: ip}}
-		} else if answers, err = lookup(ctx, host); err != nil || len(answers) == 0 {
-			return nil, errors.New("MCP destination resolution failed")
-		}
-		fixed := func(context.Context, string) ([]net.IPAddr, error) { return answers, nil }
-		if loopbackOnly(ctx, host, fixed) {
-			ips = answers
-		} else if ips, err = publicEgressIPs(ctx, host, fixed); err != nil {
-			return nil, err
-		}
-	} else if ips, err = publicEgressIPs(ctx, host, lookup); err != nil {
-		return nil, err
-	}
-	for _, entry := range ips {
-		conn, err := dial(ctx, network, net.JoinHostPort(entry.IP.String(), port))
-		if err == nil {
-			return conn, nil
-		}
-	}
-	return nil, errors.New("MCP destination connection failed")
 }
 
 type bearerContextKey struct{}
@@ -193,12 +158,12 @@ func (c *SDKClient) requestContext(ctx context.Context, token string, endpoint s
 	if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return nil, nil, errors.New("invalid remote MCP endpoint")
 	}
-	loopback := c.allowLoopbackHTTP && loopbackOnly(ctx, u.Hostname(), net.DefaultResolver.LookupIPAddr)
+	loopback := c.allowLoopbackHTTP && egress.LoopbackOnly(ctx, u.Hostname(), net.DefaultResolver.LookupIPAddr)
 	if u.Scheme != "https" && !(loopback && u.Scheme == "http") {
 		return nil, nil, errors.New("invalid remote MCP endpoint")
 	}
 	if !c.testOnlyAllowPrivate && !loopback {
-		if err = validatePublicIPs(ctx, u.Hostname()); err != nil {
+		if err = egress.ValidatePublicHost(ctx, u.Hostname()); err != nil {
 			return nil, nil, err
 		}
 	}

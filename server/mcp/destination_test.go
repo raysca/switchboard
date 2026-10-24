@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"govoice/server/egress"
 	"net"
 	"net/url"
 	"testing"
@@ -66,15 +67,15 @@ func TestDialEgressLoopbackAgreesWithValidation(t *testing.T) {
 		dialed = append(dialed, addr)
 		return nil, errors.New("stub dial")
 	}
-	if _, err := dialEgress(context.Background(), "tcp", "localhost:9", true, resolverFor("10.0.0.5"), dial); err == nil || len(dialed) != 0 {
+	if _, err := egress.Dial(context.Background(), "tcp", "localhost:9", true, resolverFor("10.0.0.5"), dial); err == nil || len(dialed) != 0 {
 		t.Fatalf("private address dialed: err=%v dialed=%v", err, dialed)
 	}
-	_, _ = dialEgress(context.Background(), "tcp", "localhost:9", true, resolverFor("127.0.0.1"), dial)
+	_, _ = egress.Dial(context.Background(), "tcp", "localhost:9", true, resolverFor("127.0.0.1"), dial)
 	if len(dialed) != 1 || dialed[0] != "127.0.0.1:9" {
 		t.Fatalf("loopback not dialed with the flag on: %v", dialed)
 	}
 	dialed = nil
-	if _, err := dialEgress(context.Background(), "tcp", "localhost:9", false, resolverFor("127.0.0.1"), dial); err == nil || len(dialed) != 0 {
+	if _, err := egress.Dial(context.Background(), "tcp", "localhost:9", false, resolverFor("127.0.0.1"), dial); err == nil || len(dialed) != 0 {
 		t.Fatalf("loopback dialed with the flag off: err=%v dialed=%v", err, dialed)
 	}
 }
@@ -95,7 +96,7 @@ func TestDialEgressResolvesOnceAgainstRebinding(t *testing.T) {
 		dialed = append(dialed, addr)
 		return nil, errors.New("stub dial")
 	}
-	_, _ = dialEgress(context.Background(), "tcp", "rebind.example:80", true, alternating, dial)
+	_, _ = egress.Dial(context.Background(), "tcp", "rebind.example:80", true, alternating, dial)
 	for _, a := range dialed {
 		if a != "127.0.0.1:80" {
 			t.Fatalf("dialed %s after a rebinding answer (lookups=%d)", a, lookups)

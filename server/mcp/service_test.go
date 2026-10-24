@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/server/egress"
 	"govoice/server/storage"
 )
 
@@ -482,11 +483,11 @@ func TestResultSanitizationParsesNestedValuesAndRedactsDecodedCredential(t *test
 
 func TestPublicEgressPredicateRejectsPrivateAndSpecialUseAddresses(t *testing.T) {
 	for _, raw := range []string{"10.0.0.1", "100.64.0.1", "100.127.255.254", "127.0.0.1", "169.254.1.1", "192.0.2.1", "192.31.196.1", "198.18.0.1", "224.0.0.1", "240.0.0.1", "::1", "fe80::1", "fec0::1", "fc00::1", "2001:db8::1", "2002::1", "64:ff9b::a00:1"} {
-		if ip := net.ParseIP(raw); ip == nil || isPublicEgressIP(ip) {
+		if ip := net.ParseIP(raw); ip == nil || egress.IsPublicIP(ip) {
 			t.Errorf("accepted non-public address %s", raw)
 		}
 	}
-	if !isPublicEgressIP(net.ParseIP("1.1.1.1")) || !isPublicEgressIP(net.ParseIP("2606:4700:4700::1111")) {
+	if !egress.IsPublicIP(net.ParseIP("1.1.1.1")) || !egress.IsPublicIP(net.ParseIP("2606:4700:4700::1111")) {
 		t.Fatal("rejected public addresses")
 	}
 }
@@ -496,7 +497,7 @@ func TestPublicEgressDialValidatesEveryResolvedAddressBeforeDial(t *testing.T) {
 		return []net.IPAddr{{IP: net.ParseIP("1.1.1.1")}, {IP: net.ParseIP("100.64.0.1")}}, nil
 	}
 	dialed := false
-	_, err := dialEgress(context.Background(), "tcp", "mcp.example:443", false, lookup, func(context.Context, string, string) (net.Conn, error) {
+	_, err := egress.Dial(context.Background(), "tcp", "mcp.example:443", false, lookup, func(context.Context, string, string) (net.Conn, error) {
 		dialed = true
 		return nil, nil
 	})
@@ -511,7 +512,7 @@ func TestPublicEgressDialValidatesEveryResolvedAddressBeforeDial(t *testing.T) {
 	defer clientConn.Close()
 	defer serverConn.Close()
 	var dialAddress string
-	got, err := dialEgress(context.Background(), "tcp", "mcp.example:443", false, lookup, func(_ context.Context, network, address string) (net.Conn, error) {
+	got, err := egress.Dial(context.Background(), "tcp", "mcp.example:443", false, lookup, func(_ context.Context, network, address string) (net.Conn, error) {
 		dialAddress = network + " " + address
 		return clientConn, nil
 	})
