@@ -42,6 +42,7 @@ func (r RetentionRepository) PurgeContent(ctx context.Context, cutoff time.Time,
 WHERE status = 'ended'
   AND ended_at IS NOT NULL
   AND ended_at <= ?
+  AND ` + notHeld + `
   AND (
     EXISTS (SELECT 1 FROM turns WHERE session_id = sessions.id AND (transcript IS NOT NULL OR assistant_text IS NOT NULL))
   )
@@ -121,6 +122,7 @@ func (r RetentionRepository) PurgeMetadata(ctx context.Context, cutoff time.Time
 WHERE status = 'ended'
   AND ended_at IS NOT NULL
   AND ended_at <= ?
+  AND ` + notHeld + `
 ORDER BY ended_at ASC
 LIMIT ?`
 
@@ -156,55 +158,17 @@ LIMIT ?`
 
 		err = r.s.WithTx(ctx, func(tx *sql.Tx) error {
 			for _, sessID := range batch {
-				// 1. Delete trace events referencing this session
-				resEvents, err := tx.ExecContext(ctx, r.s.bind("DELETE FROM trace_events WHERE session_id = ?"), sessID)
+				one, deleted, err := r.deleteSession(ctx, tx, sessID)
 				if err != nil {
 					return err
 				}
-				nEvents, _ := resEvents.RowsAffected()
-				stats.EventsDeleted += nEvents
-
-				// 2. Disconnect self-referential parent_id on trace_spans before deleting spans
-				if _, err := tx.ExecContext(ctx, r.s.bind("UPDATE trace_spans SET parent_id = NULL WHERE session_id = ?"), sessID); err != nil {
-					return err
+				if deleted { // a call held or gone since it was selected is left alone
+					stats.SessionsDeleted++
+					stats.TurnsDeleted += one.Turns
+					stats.SpansDeleted += one.Spans
+					stats.EventsDeleted += one.Events
+					stats.ToolCallsDeleted += one.ToolCalls
 				}
-
-				// 3. Delete trace spans referencing this session
-				resSpans, err := tx.ExecContext(ctx, r.s.bind("DELETE FROM trace_spans WHERE session_id = ?"), sessID)
-				if err != nil {
-					return err
-				}
-				nSpans, _ := resSpans.RowsAffected()
-				stats.SpansDeleted += nSpans
-
-				// 4. Delete tool calls referencing this session
-				resTC, err := tx.ExecContext(ctx, r.s.bind("DELETE FROM tool_calls WHERE session_id = ?"), sessID)
-				if err != nil {
-					return err
-				}
-				nTC, _ := resTC.RowsAffected()
-				stats.ToolCallsDeleted += nTC
-
-				// 5. Delete turns referencing this session
-				resTurns, err := tx.ExecContext(ctx, r.s.bind("DELETE FROM turns WHERE session_id = ?"), sessID)
-				if err != nil {
-					return err
-				}
-				nTurns, _ := resTurns.RowsAffected()
-				stats.TurnsDeleted += nTurns
-
-				// 6. Delete session_mcp_tools referencing this session
-				if _, err := tx.ExecContext(ctx, r.s.bind("DELETE FROM session_mcp_tools WHERE session_id = ?"), sessID); err != nil {
-					return err
-				}
-
-				// 7. Delete the ended session itself
-				resSess, err := tx.ExecContext(ctx, r.s.bind("DELETE FROM sessions WHERE id = ? AND status = 'ended'"), sessID)
-				if err != nil {
-					return err
-				}
-				nSess, _ := resSess.RowsAffected()
-				stats.SessionsDeleted += nSess
 			}
 			return nil
 		})
@@ -257,24 +221,24 @@ func (r RetentionRepository) Preview(ctx context.Context, contentCutoff, metadat
 	}
 	if !contentCutoff.IsZero() {
 		c := utc(contentCutoff)
-		if err := count(&p.ContentSessions, `SELECT count(*) FROM sessions WHERE status='ended' AND ended_at IS NOT NULL AND ended_at <= ?
+		if err := count(&p.ContentSessions, `SELECT count(*) FROM sessions WHERE status='ended' AND ended_at IS NOT NULL AND ended_at <= ? AND `+notHeld+`
 AND EXISTS (SELECT 1 FROM turns WHERE session_id = sessions.id AND (transcript IS NOT NULL OR assistant_text IS NOT NULL))`, c); err != nil {
 			return p, err
 		}
 		if err := count(&p.ContentTurns, `SELECT count(*) FROM turns t JOIN sessions s ON s.id = t.session_id
-WHERE s.status='ended' AND s.ended_at IS NOT NULL AND s.ended_at <= ? AND (t.transcript IS NOT NULL OR t.assistant_text IS NOT NULL)`, c); err != nil {
+WHERE s.status='ended' AND s.ended_at IS NOT NULL AND s.ended_at <= ? AND NOT s.held AND (t.transcript IS NOT NULL OR t.assistant_text IS NOT NULL)`, c); err != nil {
 			return p, err
 		}
 	}
 	if !metadataCutoff.IsZero() {
 		c := utc(metadataCutoff)
-		const old = "(SELECT id FROM sessions WHERE status='ended' AND ended_at IS NOT NULL AND ended_at <= ?)"
+		const old = "(SELECT id FROM sessions WHERE status='ended' AND ended_at IS NOT NULL AND ended_at <= ? AND " + notHeld + ")"
 		for _, q := range []struct {
 			dst   *int64
 			query string
 			args  []any
 		}{
-			{&p.MetadataSessions, "SELECT count(*) FROM sessions WHERE status='ended' AND ended_at IS NOT NULL AND ended_at <= ?", []any{c}},
+			{&p.MetadataSessions, "SELECT count(*) FROM sessions WHERE status='ended' AND ended_at IS NOT NULL AND ended_at <= ? AND " + notHeld, []any{c}},
 			{&p.MetadataTurns, "SELECT count(*) FROM turns WHERE session_id IN " + old, []any{c}},
 			{&p.MetadataToolCalls, "SELECT count(*) FROM tool_calls WHERE session_id IN " + old, []any{c}},
 			{&p.MetadataSpans, "SELECT (SELECT count(*) FROM trace_spans WHERE session_id IN " + old + ") + (SELECT count(*) FROM trace_spans WHERE session_id IS NULL AND started_at <= ?)", []any{c, c}},
