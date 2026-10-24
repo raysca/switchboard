@@ -21,7 +21,7 @@ test("define an HTTP tool in the UI and try it", async ({ page, stack }) => {
   await page.getByLabel("Description").fill("Check an order by its id.");
   await page.getByLabel("URL").fill(`${stack.mcpUrl}/rest/orders/{order_id}`);
   await page.getByLabel("Input schema").fill(JSON.stringify({ type: "object", properties: { order_id: { type: "string" } }, required: ["order_id"] }));
-  await page.getByLabel("Secret (optional)").fill("e2e-rest");
+  await page.getByLabel("Secret (optional)", { exact: true }).fill("e2e-rest");
   await page.getByRole("button", { name: "Create tool" }).click();
   await expect(page.getByRole("navigation", { name: "HTTP tools" }).getByText(TOOL)).toBeVisible();
   await step(page, "HTTP tool created");

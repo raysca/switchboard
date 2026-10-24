@@ -3,10 +3,11 @@ package mcp
 import (
 	"context"
 	"errors"
-	"govoice/server/egress"
 	"net"
 	"net/url"
 	"testing"
+
+	"govoice/server/egress"
 )
 
 // resolverFor answers every name with the given addresses.
