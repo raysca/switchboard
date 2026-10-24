@@ -139,10 +139,39 @@ func activity(kind string) bool {
 	return kind == "audio" || strings.HasPrefix(kind, "bot-") || strings.HasPrefix(kind, "llm-function-call")
 }
 
-// waitSettled returns once the agent has shown no activity for o.Quiet after mark and, when
-// needText, has said something since mark. The quiet window restarts on every new reply, tool
-// call and step greeting, so a tool round or a handoff does not split one turn into two. It
-// returns early (nil) when the connection ends, e.g. after end_call.
+// turnState reads the events after mark: when the agent last showed activity, whether it has said
+// anything, and whether a reply is still open. bot-llm-started comes only with a reply's first text
+// piece, so a slow model or tool leaves gaps inside a reply: it is open from its start to its
+// bot-llm-stopped, while a tool call is in flight, and after a tool call ends until the reply that
+// follows it (a transfer's greeting included) stops.
+func turnState(ev []stack.Event, mark time.Time) (last time.Time, text, open bool) {
+	last = mark
+	reply, calls, afterCall := false, 0, false
+	for _, e := range ev {
+		if !e.At.After(mark) || !activity(e.Kind) {
+			continue
+		}
+		last = e.At
+		switch e.Kind {
+		case "bot-llm-text":
+			text = true
+		case "bot-llm-started":
+			reply = true
+		case "bot-llm-stopped":
+			reply, afterCall = false, false
+		case "llm-function-call-started":
+			calls++
+		case "llm-function-call-stopped":
+			calls = max(calls-1, 0)
+			afterCall = true
+		}
+	}
+	return last, text, reply || calls > 0 || afterCall
+}
+
+// waitSettled returns once the agent has shown no activity for o.Quiet after mark, has no reply
+// open (see turnState) and, when needText, has said something since mark. It returns early (nil)
+// when the connection ends, e.g. after end_call, and fails at o.TurnTimeout.
 func waitSettled(ctx context.Context, cl *stack.Client, mark time.Time, needText bool, o opts) error {
 	deadline := time.Now().Add(o.TurnTimeout)
 	tick := time.NewTicker(25 * time.Millisecond)
@@ -155,14 +184,8 @@ func waitSettled(ctx context.Context, cl *stack.Client, mark time.Time, needText
 			return nil
 		case <-tick.C:
 		}
-		last, text := mark, false
-		for _, e := range cl.Snap() {
-			if e.At.After(mark) && activity(e.Kind) {
-				last = e.At
-				text = text || e.Kind == "bot-llm-text"
-			}
-		}
-		if (text || !needText) && time.Since(last) >= o.Quiet {
+		last, text, open := turnState(cl.Snap(), mark)
+		if (text || !needText) && !open && time.Since(last) >= o.Quiet {
 			return nil
 		}
 		if time.Now().After(deadline) {
@@ -225,6 +248,10 @@ turns:
 		}
 		if turn > maxPersonaTurn {
 			errs = append(errs, fmt.Errorf("more than %d caller turns", maxPersonaTurn))
+			break
+		}
+		if _, _, open := turnState(cl.Snap(), time.Time{}); open { // the harness gave up on a slow reply: not the agent's fault
+			errs = append(errs, fmt.Errorf("turn %d: reply still open when the next line was sent", turn))
 			break
 		}
 		mark := time.Now()

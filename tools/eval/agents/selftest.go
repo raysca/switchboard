@@ -38,25 +38,50 @@ func childEnv(environ []string) (env []string) {
 	return env
 }
 
-// selftestConfig is config/development.yaml on the chosen ports with the echo provider switched on.
-func selftestConfig(base string, pub, adm int) []byte {
+// selftestConfig is config/development.yaml on the chosen ports with the echo provider switched on
+// (echo is extra options for its inline map, e.g. ", llm_extra_delay: 1500ms").
+func selftestConfig(base string, pub, adm int, echo string) []byte {
 	set := func(src, key, val string) string {
 		return regexp.MustCompile(`(?m)^`+key+`:.*$`).ReplaceAllString(src, key+": "+fmt.Sprintf("%q", val))
 	}
 	y := set(base, "public_listen_addr", fmt.Sprintf("127.0.0.1:%d", pub))
 	y = set(y, "admin_listen_addr", fmt.Sprintf("127.0.0.1:%d", adm))
-	return []byte(regexp.MustCompile(`(?m)^providers:$`).ReplaceAllString(y, "providers:\n  echo: {mimic: instant, stt: audio}"))
+	return []byte(regexp.MustCompile(`(?m)^providers:$`).ReplaceAllString(y, "providers:\n  echo: {mimic: instant, stt: audio"+echo+"}"))
 }
 
-func buildBinaries(root, dir string) (string, error) {
-	for _, b := range [][2]string{{"server", "./cmd/server"}, {"vadworker", "./cmd/vadworker"}} {
-		c := exec.Command("go", "build", "-o", filepath.Join(dir, b[0]), b[1])
-		c.Dir = root
-		if out, err := c.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("go build %s: %v\n%s", b[1], err, out)
-		}
+// buildServer builds the server (the self-test runs the VAD in process: no worker binary).
+func buildServer(root, dir string) (string, error) {
+	bin := filepath.Join(dir, "server")
+	c := exec.Command("go", "build", "-o", bin, "./cmd/server")
+	c.Dir = root
+	if out, err := c.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("go build ./cmd/server: %v\n%s", err, out)
 	}
-	return filepath.Join(dir, "server"), nil
+	return bin, nil
+}
+
+// startServer runs the built server on echo in its own data dir under work. On a failed start it
+// prints the tail of the server log first, because the temp dir goes away with the run.
+func startServer(ctx context.Context, stderr io.Writer, root, bin, work, name, echoOpts string) (*stack.Server, error) {
+	base, err := os.ReadFile(filepath.Join(root, "config", "development.yaml"))
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(work, name)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	srv, err := stack.Start(ctx, stack.Spec{Root: root, Bin: bin, Dir: dir, Env: childEnv(os.Environ()),
+		Args:   []string{"-vad-mode", "inprocess"},
+		Config: func(pub, adm int) []byte { return selftestConfig(string(base), pub, adm, echoOpts) }})
+	if err != nil {
+		if log, rerr := os.ReadFile(filepath.Join(dir, "server.log")); rerr == nil {
+			lines := strings.Split(strings.TrimRight(string(log), "\n"), "\n")
+			fmt.Fprintf(stderr, "agent-eval selftest: server log (last lines):\n%s\n", strings.Join(lines[max(0, len(lines)-30):], "\n"))
+		}
+		return nil, err
+	}
+	return srv, nil
 }
 
 // createFixture creates the fixture agent over the API, as the named variant of its stored config.
@@ -80,9 +105,11 @@ func createFixture(srv *stack.Server, file, name string, edit func(cfg map[strin
 }
 
 // mutation is a broken agent and the case it must fail, with text every failure line set must contain.
+// edit changes the stored fixture (a new agent named agent); hand instead changes the rewritten draft
+// of the existing agent, for faults the text-only rewrite would otherwise overwrite.
 type mutation struct {
 	agent, caseName, wantFailure string
-	edit                         func(cfg map[string]any)
+	edit, hand                   func(cfg map[string]any)
 	tweak                        func(c *Case)
 }
 
@@ -96,6 +123,37 @@ var mutations = []mutation{
 	// The assistant does say "You said": a case that forbids it must fail, which shows never_say reads real replies.
 	{agent: "Eval assistant", caseName: "echo-assistant-replies", wantFailure: "never_say:",
 		tweak: func(c *Case) { c.Expect.NeverSay = []string{"(?i)you said"} }},
+	// The rewrite turns every voice into silence, so a step that cannot be built is put in the draft by hand:
+	// the sales step then fails to start, which the always-on handoff check must report.
+	{agent: "Eval desk", caseName: "echo-desk-handoff", wantFailure: "handoff:",
+		hand: func(cfg map[string]any) {
+			steps(cfg)[1].(map[string]any)["config"].(map[string]any)["tts"] = map[string]any{"provider": "echo", "voice": "brokenvoice"}
+		}},
+}
+
+// handEdit applies a mutation's draft change to the resolved agent.
+func handEdit(ref agentRef, edit func(cfg map[string]any)) (agentRef, error) {
+	var cfg map[string]any
+	if err := json.Unmarshal(ref.Draft, &cfg); err != nil {
+		return ref, err
+	}
+	edit(cfg)
+	d, err := json.Marshal(cfg)
+	ref.Draft = d
+	return ref, err
+}
+
+// requireSilero skips (exit 0) without the VAD model, except in CI, where a skipped safety net is a failure.
+func requireSilero(root string, stdout, stderr io.Writer) (ok bool, rc int) {
+	if fileExists(filepath.Join(root, "third_party", "silero_vad.onnx")) {
+		return true, 0
+	}
+	if os.Getenv("CI") != "" {
+		fmt.Fprintln(stderr, "agent-eval selftest: FAILED: third_party/silero_vad.onnx missing in CI")
+		return false, 1
+	}
+	fmt.Fprintln(stdout, "agent-eval selftest: SKIPPED: third_party/silero_vad.onnx missing, the harness was NOT checked")
+	return false, 0
 }
 
 func selftest(ctx context.Context, stdout, stderr io.Writer) int {
@@ -104,43 +162,35 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 	if err != nil || !fileExists(filepath.Join(root, "go.work")) {
 		return fail("run it from the repository root (make eval-agents-echo)")
 	}
-	if !fileExists(filepath.Join(root, "third_party", "silero_vad.onnx")) {
-		fmt.Fprintln(stdout, "agent-eval selftest: SKIPPED: third_party/silero_vad.onnx missing")
-		return 0
+	if ok, rc := requireSilero(root, stdout, stderr); !ok {
+		return rc
 	}
 	work, err := os.MkdirTemp("", "agent-eval-selftest-")
 	if err != nil {
 		return fail("%v", err)
 	}
 	defer os.RemoveAll(work)
-	bin, err := buildBinaries(root, work)
+	bin, err := buildServer(root, work)
 	if err != nil {
 		return fail("%v", err)
 	}
-	base, err := os.ReadFile(filepath.Join(root, "config", "development.yaml"))
-	if err != nil {
-		return fail("%v", err)
-	}
-	srv, err := stack.Start(ctx, stack.Spec{Root: root, Bin: bin, Dir: filepath.Join(work, "run"), Env: childEnv(os.Environ()),
-		Args:   []string{"-vad-mode", "inprocess"},
-		Config: func(pub, adm int) []byte { return selftestConfig(string(base), pub, adm) }})
+	srv, err := startServer(ctx, stderr, root, bin, work, "run", "")
 	if err != nil {
 		return fail("%v", err)
 	}
 	defer srv.Stop()
 
 	fx := filepath.Join(root, selftestDir, "agents")
-	for _, f := range []struct {
-		file, name string
-		edit       func(map[string]any)
-	}{{"assistant.json", "Eval assistant", nil}, {"desk.json", "Eval desk", nil}} {
-		if err := createFixture(srv, filepath.Join(fx, f.file), f.name, f.edit); err != nil {
-			return fail("%v", err)
-		}
+	assistant, desk := filepath.Join(fx, "assistant.json"), filepath.Join(fx, "desk.json")
+	if err := createFixture(srv, assistant, "Eval assistant", nil); err != nil {
+		return fail("%v", err)
+	}
+	if err := createFixture(srv, desk, "Eval desk", nil); err != nil {
+		return fail("%v", err)
 	}
 	for _, m := range mutations {
 		if m.edit != nil {
-			if err := createFixture(srv, filepath.Join(fx, "desk.json"), m.agent, m.edit); err != nil {
+			if err := createFixture(srv, desk, m.agent, m.edit); err != nil {
 				return fail("%v", err)
 			}
 		}
@@ -151,15 +201,20 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 		return fail("%v", err)
 	}
 	c := config{Mode: modeEcho, Runs: 1, MinPass: 1, Opts: opts{TurnTimeout: 30 * time.Second, Quiet: selftestQuiet}}
-	run := func(cs []Case) (Report, error) {
+	run := func(srv *stack.Server, cs []Case, hand map[string]func(map[string]any)) (Report, error) {
 		refs, _, err := prepare(srv, cs, c)
 		if err != nil {
 			return Report{}, err
 		}
+		for agent, edit := range hand {
+			if refs[agent], err = handEdit(refs[agent], edit); err != nil {
+				return Report{}, err
+			}
+		}
 		return execute(ctx, srv, cs, refs, c), nil
 	}
 
-	good, err := run(cases)
+	good, err := run(srv, cases, nil)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -175,6 +230,7 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 	}
 
 	var broken []Case
+	hand := map[string]func(map[string]any){}
 	for _, m := range mutations {
 		i := slices.IndexFunc(cases, func(c Case) bool { return c.Name == m.caseName })
 		if i < 0 {
@@ -185,9 +241,12 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 		if m.tweak != nil {
 			m.tweak(&mc)
 		}
+		if m.hand != nil {
+			hand[m.agent] = m.hand
+		}
 		broken = append(broken, mc)
 	}
-	bad, err := run(broken)
+	bad, err := run(srv, broken, hand)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -213,6 +272,31 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 		return fail("%d of %d broken agents failed as expected", failed, len(mutations))
 	}
 
+	// A slow model: the reply pieces come 1.5 s apart, longer than the quiet window, and the call must
+	// still be read as one reply (a cut turn would be a harness error, never a verdict on the agent).
+	slow, err := startServer(ctx, stderr, root, bin, work, "slow", ", llm_extra_delay: 1500ms")
+	if err != nil {
+		return fail("%v", err)
+	}
+	defer slow.Stop()
+	if err := createFixture(slow, assistant, "Eval assistant", nil); err != nil {
+		return fail("%v", err)
+	}
+	var replies []Case
+	for _, cs := range cases {
+		if cs.Name == "echo-assistant-replies" {
+			replies = append(replies, cs)
+		}
+	}
+	slowRep, err := run(slow, replies, nil)
+	if err != nil {
+		return fail("%v", err)
+	}
+	if len(slowRep.Results) != 1 || !slowRep.Results[0].Passed {
+		WriteText(stderr, slowRep)
+		return fail("a slow model was not read as one reply per turn")
+	}
+
 	// The command-line path against this server, as an operator runs it: key from the environment,
 	// an explicit published version, a JSON report.
 	os.Setenv("GOVOICE_MANAGEMENT_API_KEY", srv.Key)
@@ -226,7 +310,7 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 	if fi, err := os.Stat(report); err != nil || fi.Mode().Perm() != reportFileMode {
 		return fail("the JSON report is missing or not mode 0600: %v", err)
 	}
-	fmt.Fprintf(stdout, "agent-eval selftest: %d passed, %d mutations failed as expected\n", passed, failed)
+	fmt.Fprintf(stdout, "agent-eval selftest: %d passed, %d mutations failed as expected, slow model read as one reply\n", passed, failed)
 	return 0
 }
 
