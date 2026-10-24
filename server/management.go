@@ -29,6 +29,7 @@ type management struct {
 	retention *retention.Job
 	mcpSync   *mcp.Syncer
 	recStop   context.CancelFunc // ends the recording janitor
+	mcp       *mcp.Service       // its pooled connections close with the management plane
 	secrets   secrets.Store      // encrypted secrets; disabled without SWITCHBOARD_SECRETS_KEY
 }
 
@@ -136,6 +137,7 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	s.setStore(store)
 	s.endOrphanedSessions(ctx, store)
 	s.mcpService = mcpService
+	m.mcp = mcpService
 	s.httpTools = httpTools
 	s.setProviderManagementAPI(s.providersRoutes())
 	s.agents = agents
@@ -221,6 +223,9 @@ func (m *management) close() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	m.stopSync(ctx) // before the store closes
 	cancel()
+	if m.mcp != nil {
+		m.mcp.CloseIdleConnections()
+	}
 	if m.retention != nil {
 		m.retention.Stop()
 	}

@@ -197,6 +197,8 @@ func TestMCPAdminFailures(t *testing.T) {
 			t.Errorf("%s: want a failure, got 200", tool)
 		}
 	}
+	// Pooled keep-alive connections are not a leak (Go closes them after 90 s): release them, then count.
+	r.s.mcpService.CloseIdleConnections()
 	settles(t, before)
 }
 

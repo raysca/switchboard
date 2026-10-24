@@ -26,6 +26,7 @@ const (
 // server-side bearer credential. Local/process execution is deliberately not
 // implemented.
 type SDKClient struct {
+	transport            *http.Transport // the pooled connections; the wrappers around it hold no connections of their own
 	client               *http.Client
 	testOnlyAllowPrivate bool // Explicit loopback seam used only by the simulated-server tests.
 	allowLoopbackHTTP    bool // mcp.allow_local_http: development and tests only.
@@ -50,10 +51,14 @@ func NewSDKClient(opts ...SDKOption) *SDKClient {
 		dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
 		return egress.Dial(ctx, network, address, c.allowLoopbackHTTP, net.DefaultResolver.LookupIPAddr, dialer.DialContext)
 	}
+	c.transport = base
 	transport := closeBudgetTransport{next: boundedBodyTransport{next: classifiedStatusTransport{next: bearerTransport{next: base}}}}
 	c.client = &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	return c
 }
+
+// CloseIdleConnections closes the pooled keep-alive connections. Calls in flight are not affected.
+func (c *SDKClient) CloseIdleConnections() { c.transport.CloseIdleConnections() }
 
 type bearerContextKey struct{}
 type bearerTransport struct{ next http.RoundTripper }

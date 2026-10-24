@@ -525,6 +525,14 @@ func (s *Service) Disable(ctx context.Context, id string) error {
 func (s *Service) Enable(ctx context.Context, id string) error {
 	return s.store.MCP().EnableServer(ctx, id)
 }
+
+// CloseIdleConnections releases the remote client's pooled connections to MCP servers, when it keeps any.
+func (s *Service) CloseIdleConnections() {
+	if r, ok := s.remote.(interface{ CloseIdleConnections() }); ok {
+		r.CloseIdleConnections()
+	}
+}
+
 func (s *Service) Delete(ctx context.Context, id string) error {
 	return s.store.MCP().DeleteServer(ctx, id)
 }
