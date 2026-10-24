@@ -78,11 +78,14 @@ func scanEvalCase(r rowScanner) (EvalCase, error) {
 }
 
 // CreateCases saves the cases in one transaction under fresh ids: a duplicate name (within the batch or against the
-// agent's saved cases) writes nothing. The cap is checked in the transaction but not serialised, so two concurrent
-// batches can overshoot it by one batch; the per-agent job cap bounds what a run can do with them.
+// agent's saved cases) writes nothing. The agent row is locked first, so concurrent batches are counted one after
+// the other and the cap is exact.
 func (r EvalRepository) CreateCases(ctx context.Context, agentID string, cs []EvalCase) ([]EvalCase, error) {
 	out := make([]EvalCase, 0, len(cs))
 	err := r.s.WithTx(ctx, func(tx *sql.Tx) error {
+		if err := lockAgent(ctx, tx, r.s, agentID, "eval cases"); err != nil {
+			return err
+		}
 		var n int
 		if err := tx.QueryRowContext(ctx, r.s.bind("SELECT count(*) FROM eval_cases WHERE agent_id=?"), agentID).Scan(&n); err != nil {
 			return fmt.Errorf("count eval cases: %w", err)

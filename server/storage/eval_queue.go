@@ -140,6 +140,9 @@ func (r EvalRepository) CreateRun(ctx context.Context, run EvalRun, jobs []EvalJ
 	}
 	run.Status, run.CreatedAt = "pending", now
 	err := r.s.WithTx(ctx, func(tx *sql.Tx) error {
+		if err := lockAgent(ctx, tx, r.s, run.AgentID, "eval enqueue"); err != nil {
+			return err
+		}
 		var open int
 		if err := tx.QueryRowContext(ctx, r.s.bind("SELECT count(*) FROM eval_jobs WHERE agent_id=? AND status IN ('pending','running')"), run.AgentID).Scan(&open); err != nil {
 			return fmt.Errorf("count open eval jobs: %w", err)
@@ -173,6 +176,18 @@ func (r EvalRepository) CreateRun(ctx context.Context, run EvalRun, jobs []EvalJ
 		return EvalRun{}, err
 	}
 	return run, nil
+}
+
+// lockAgent takes the agent row's lock for the rest of the transaction, so that two transactions that count the
+// agent's rows and then insert (the queue and case caps) run one after the other instead of both counting before
+// either inserts. The key columns do not change, so Postgres takes a FOR NO KEY UPDATE lock, which does not block the
+// foreign-key checks of rows inserted meanwhile (the agents trigger fires only on UPDATE OF current_version_id). A call
+// starting for the agent (Sessions().Create selects the agent FOR UPDATE) waits for the transaction, which is short.
+func lockAgent(ctx context.Context, tx *sql.Tx, s *Store, agentID, what string) error {
+	if _, err := tx.ExecContext(ctx, s.bind("UPDATE agents SET updated_at=updated_at WHERE id=?"), agentID); err != nil {
+		return fmt.Errorf("lock agent for %s: %w", what, err)
+	}
+	return nil
 }
 
 func nullableBytes(b []byte) any {

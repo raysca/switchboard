@@ -664,3 +664,118 @@ func TestPurgeEvalBatches(t *testing.T) {
 		}
 	})
 }
+
+// queueRun is a published-version run of n run_case jobs for the agent, none of them due yet.
+func queueRun(agentID, versionID string, n int) (EvalRun, []EvalJob) {
+	run := EvalRun{ID: NewID(), AgentID: agentID, AgentVersionID: versionID, ConfigHash: "h", Scope: "suite", Providers: "offline", Runs: 1, MinPass: 1, TriggeredBy: "api"}
+	jobs := make([]EvalJob, n)
+	for i := range jobs {
+		k := NewID()
+		jobs[i] = EvalJob{Kind: "run_case", Subject: k + "#0", IdempotencyKey: "run:" + run.ID + ":" + k, Payload: []byte(`{}`)}
+	}
+	return run, jobs
+}
+
+// Two CreateRuns of 150 jobs for one agent racing in READ COMMITTED transactions both count 0 open jobs unless the
+// agent row is locked first: the second one then leaves 300 pending jobs. Dropping the lock makes this fail on
+// Postgres (SQLite serialises its single connection).
+func TestCreateRunCapHoldsUnderConcurrency(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		for round := 0; round < 10; round++ {
+			agentID, versionID := evalAgent(t, s)
+			var ok, full atomic.Int32
+			start := make(chan struct{})
+			var wg sync.WaitGroup
+			for g := 0; g < 2; g++ {
+				run, jobs := queueRun(agentID, versionID, 150)
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					<-start
+					switch _, err := s.Eval().CreateRun(ctx, run, jobs); {
+					case err == nil:
+						ok.Add(1)
+					case errors.Is(err, ErrQueueFull):
+						full.Add(1)
+					default:
+						t.Errorf("create run: %v", err)
+					}
+				}()
+			}
+			close(start)
+			wg.Wait()
+			var open int
+			if err := s.DB().QueryRowContext(ctx, s.bind("SELECT count(*) FROM eval_jobs WHERE agent_id=? AND status IN ('pending','running')"), agentID).Scan(&open); err != nil {
+				t.Fatal(err)
+			}
+			if ok.Load() != 1 || full.Load() != 1 || open != 150 {
+				t.Fatalf("round %d: %d accepted, %d refused, %d open jobs (want 1, 1, 150)", round, ok.Load(), full.Load(), open)
+			}
+		}
+	})
+}
+
+// Same for the saved cases: the 200 cap is exact, not "by one batch".
+func TestCreateCasesCapHoldsUnderConcurrency(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		for round := 0; round < 10; round++ {
+			agentID, _ := evalAgent(t, s)
+			var ok, full atomic.Int32
+			start := make(chan struct{})
+			var wg sync.WaitGroup
+			for g := 0; g < 2; g++ {
+				cs := make([]EvalCase, 150)
+				for i := range cs {
+					cs[i] = EvalCase{Name: fmt.Sprintf("g%d-%d", g, i), CallerJSON: []byte(`{}`), ExpectJSON: []byte(`{}`)}
+				}
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					<-start
+					switch _, err := s.Eval().CreateCases(ctx, agentID, cs); {
+					case err == nil:
+						ok.Add(1)
+					case errors.Is(err, ErrTooManyCases):
+						full.Add(1)
+					default:
+						t.Errorf("create cases: %v", err)
+					}
+				}()
+			}
+			close(start)
+			wg.Wait()
+			if got, _ := s.Eval().ListCases(ctx, agentID); ok.Load() != 1 || full.Load() != 1 || len(got) != 150 {
+				t.Fatalf("round %d: %d accepted, %d refused, %d cases (want 1, 1, 150)", round, ok.Load(), full.Load(), len(got))
+			}
+		}
+	})
+}
+
+// The agent row lock of an enqueue must not block inserts that only reference the agent (their foreign-key check takes
+// a KEY SHARE lock, which a NO KEY UPDATE on non-key columns does not conflict with). Sessions().Create does take
+// SELECT ... FOR UPDATE on the agent and so waits for the enqueue transaction, which lasts milliseconds.
+func TestAgentLockDoesNotBlockForeignKeyInserts(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		if s.dialect != Postgres {
+			t.Skip("SQLite has one connection and no row locks")
+		}
+		agentID, _ := evalAgent(t, s)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		tx, err := s.DB().BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback()
+		if err := lockAgent(ctx, tx, s, agentID, "test"); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Eval().PutSuite(ctx, EvalSuite{AgentID: agentID, Runs: 1, MinPass: 1, PassThreshold: 1}); err != nil {
+			t.Fatalf("a row referencing the agent waited on the lock: %v", err)
+		}
+	})
+}
