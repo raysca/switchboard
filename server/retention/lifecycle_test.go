@@ -169,17 +169,17 @@ func TestHoldAndEraseRefuseBadRequests(t *testing.T) {
 		code               int
 		err                string
 	}{
-		"hold unknown":          {http.MethodPut, "/api/v1/sessions/" + unknown + "/hold", "", 404, "not_found"},
-		"hold not an id":        {http.MethodPut, "/api/v1/sessions/nope/hold", "", 404, "not_found"},
-		"release unknown":       {http.MethodDelete, "/api/v1/sessions/" + unknown + "/hold", "", 404, "not_found"},
-		"long reason":           {http.MethodPut, "/api/v1/sessions/" + id + "/hold", `{"reason":"` + strings.Repeat("x", 201) + `"}`, 400, "invalid_request"},
-		"unknown body field":    {http.MethodPut, "/api/v1/sessions/" + id + "/hold", `{"why":"x"}`, 400, "invalid_request"},
-		"hold wrong method":     {http.MethodPost, "/api/v1/sessions/" + id + "/hold", "", 405, "method_not_allowed"},
-		"erase unknown":         {http.MethodDelete, "/api/v1/sessions/" + unknown, "", 404, "not_found"},
-		"erase not an id":       {http.MethodDelete, "/api/v1/sessions/nope", "", 404, "not_found"},
-		"GET erase is no route": {http.MethodGet, "/api/v1/sessions/erase", "", 404, "not_found"},
-		"held filter value":     {http.MethodGet, "/api/v1/sessions?held=maybe", "", 400, "invalid_request"},
-		"unknown filter":        {http.MethodGet, "/api/v1/sessions?holds=true", "", 400, "invalid_request"},
+		"hold unknown":                 {http.MethodPut, "/api/v1/sessions/" + unknown + "/hold", "", 404, "not_found"},
+		"hold not an id":               {http.MethodPut, "/api/v1/sessions/nope/hold", "", 404, "not_found"},
+		"release unknown":              {http.MethodDelete, "/api/v1/sessions/" + unknown + "/hold", "", 404, "not_found"},
+		"long reason":                  {http.MethodPut, "/api/v1/sessions/" + id + "/hold", `{"reason":"` + strings.Repeat("x", 201) + `"}`, 400, "invalid_request"},
+		"unknown body field":           {http.MethodPut, "/api/v1/sessions/" + id + "/hold", `{"why":"x"}`, 400, "invalid_request"},
+		"hold wrong method":            {http.MethodPost, "/api/v1/sessions/" + id + "/hold", "", 405, "method_not_allowed"},
+		"erase unknown":                {http.MethodDelete, "/api/v1/sessions/" + unknown, "", 404, "not_found"},
+		"erase not an id":              {http.MethodDelete, "/api/v1/sessions/nope", "", 404, "not_found"},
+		"GET erase is not an endpoint": {http.MethodGet, "/api/v1/sessions/erase", "", 404, "not_found"},
+		"held filter value":            {http.MethodGet, "/api/v1/sessions?held=maybe", "", 400, "invalid_request"},
+		"unknown filter":               {http.MethodGet, "/api/v1/sessions?holds=true", "", 400, "invalid_request"},
 	} {
 		r := f.do(f.handler, tc.method, tc.path, tc.body)
 		if r.Code != tc.code || r.errCode(t) != tc.err {

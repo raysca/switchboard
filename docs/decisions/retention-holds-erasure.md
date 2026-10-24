@@ -1,6 +1,6 @@
 # Retention holds and erasure: spec and plan
 
-Status: reviewed, ready to build. Slice 2 of Phase 8 in [roadmap-next-phases.md](../roadmap-next-phases.md). Slice 1 (status, dry run, metrics, alert) is built; see [privacy.md](../privacy.md#server-data-retention-and-privacy-controls). An independent review of the first draft changed the erase order, the caller-erase confirmation, the audit subject and the call teardown order; the findings and what was done are at the end.
+Status: built (see Outcome at the end). Slice 2 of Phase 8 in [roadmap-next-phases.md](../roadmap-next-phases.md). Slice 1 (status, dry run, metrics, alert) is built; see [privacy.md](../privacy.md#server-data-retention-and-privacy-controls). An independent review of the first draft changed the erase order, the caller-erase confirmation, the audit subject and the call teardown order; the findings and what was done are at the end.
 
 ## Goal
 
@@ -68,7 +68,7 @@ Removes (database): the session row (including `caller`, `safe_summary`, `runtim
 | Old API clients | `SessionDTO` fields are additive; the list filter is optional |
 | Retention disabled | holds and erasure still work |
 | Audit growth | one row per human action; bounded at read; purge coverage is a later slice |
-| MCP server and agent delete guards that join sessions | an erased session no longer counts; the pending-delete finalisation that follows a session ending runs after an erasure too |
+| MCP server and agent delete guards that join sessions | only calls in progress block a delete, and an erasure only removes ended calls, so nothing changes and no finalisation is needed (the plan said it would run; the code showed it was not needed) |
 
 ## Plan
 
@@ -111,3 +111,13 @@ The independent review of the first draft found the following; each is resolved 
 | `remaining` pagination | The client stops when `erased` is 0 (8) |
 | Other deleters of sessions (orphan cleanup, pending MCP deletes) | Covered in the edge cases and the plan |
 | Slice order: `Remove` belongs with the recording change; the metric needs wiring; add an end-to-end erasure test | Slices reordered and extended (plan 2 to 4) |
+
+## Outcome
+
+Built as specified, with these differences found while building:
+
+- The hold and release endpoints return the call (`SessionDTO`) rather than an empty body, so the console updates from the answer.
+- An erasure by caller reports `recordings_failed`, the ids of erased calls whose files could not be removed, so each can be retried with `DELETE` of its id.
+- The console asks for the call's name to be typed before an erasure, as the API asks for the caller twice.
+- The post-erase pending-delete finalisation was dropped: the delete guards count only calls in progress, which an erasure never touches.
+- Tests: storage (both dialects, concurrent-safe guard, audit, migration), the recording sink (`keep`, `Remove`), the call teardown order, every status code of the API with failure injection and a log capture, a Go end-to-end test with a real recorded call (`TestCallRecordsHoldAndErasureCoverTheRecording`), and a browser test that holds, filters, releases and erases a call (`e2e/tests-agents/45-retention-holds.spec.ts`).
