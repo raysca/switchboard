@@ -54,6 +54,8 @@ func parseFlags(args []string, usage io.Writer) (config, error) {
 		if errors.Is(err, flag.ErrHelp) {
 			fs.SetOutput(usage)
 			fmt.Fprintln(usage, "usage: go run ./tools/eval/agents [flags]")
+			fmt.Fprintln(usage, "MCP tools run for real: an eval call executes the agent's selected tools with whatever arguments the model sends.")
+			fmt.Fprintln(usage, "Point evals at agents whose tools hit test systems; GOVOICE_LIVE gates model cost only, not what tools do.")
 			fs.PrintDefaults()
 		}
 		return c, err
@@ -115,16 +117,23 @@ func liveGate(needsLive bool, env string) error {
 // rewritten config reaches a paid model.
 func prepare(srv *stack.Server, cases []Case, c config) (refs map[string]agentRef, needsLive bool, err error) {
 	refs = map[string]agentRef{}
+	tried := map[string]bool{}
+	var errs []error
 	for _, cs := range cases {
-		if _, done := refs[cs.Agent]; done {
+		if tried[cs.Agent] {
 			continue
 		}
+		tried[cs.Agent] = true
 		ref, err := resolveAgent(srv, cs.Agent, c.Version, c.Mode)
 		if err != nil {
-			return nil, false, fmt.Errorf("case %s: %w", cs.Name, err)
+			errs = append(errs, fmt.Errorf("case %s: %w", cs.Name, err)) // report every missing agent, not only the first
+			continue
 		}
 		refs[cs.Agent] = ref
 		needsLive = needsLive || NeedsLive(ref.Draft)
+	}
+	if err := errors.Join(errs...); err != nil {
+		return nil, false, err
 	}
 	return refs, needsLive, nil
 }

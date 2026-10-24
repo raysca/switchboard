@@ -8,6 +8,8 @@ Use it before and after you change a prompt, a step, a handoff or a tool selecti
 
 It runs a call over the real `/ws` with text turns (RTVI `send-text`). Speech is always switched off for the run: every speech stage is rewritten to the text-only `silence` provider, so the harness tests prompts, steps, handoffs and tools, not the speech stack. For speech use `make live-check` and `make agent-matrix`.
 
+**MCP tools run for real:** an eval call executes the agent's selected tools with whatever arguments the model sends. Point evals at agents whose tools hit test systems; `GOVOICE_LIVE` gates model cost only, not what tools do.
+
 Every eval call is a normal draft call. It appears on the Calls page with caller `agent-eval` and `draft: true`, and the stored agent is never changed.
 
 What a pass means depends on the model under test (`-providers`):
@@ -56,7 +58,7 @@ Regular expressions are Go RE2 and are not made case-insensitive: write `(?i)` y
 
 A **script** types its lines in order, one per turn, then hangs up (`caller_hung_up`), unless the agent hangs up first.
 
-A **persona** is played by a model. Each turn the model gets the persona, the goal and the transcript so far (the latest 24 lines, 400 characters each), and answers with one short sentence (cut at 300 characters). The call ends when the model replies with a lone `DONE`, or after `max_turns` typed lines. The caller model never sees the agent's configuration, has no tools, and makes one bounded completion per turn. It does read the agent's words, so treat an agent that tries to instruct the caller as a possible prompt injection, as you would any model reading untrusted text.
+A **persona** is played by a model. Each turn the model gets the persona, the goal and the transcript so far (the latest 24 lines, 400 characters each), and answers with one short sentence (cut at 300 characters). The call ends when the model replies with a lone `DONE`, or after `max_turns` typed lines. A persona that reaches `max_turns` without `DONE` is not a failure by itself: only the assertions decide, and a case with only `say` passes. The caller model never sees the agent's configuration, has no tools, and makes one bounded completion per turn. It does read the agent's words, so treat an agent that tries to instruct the caller as a possible prompt injection, as you would any model reading untrusted text.
 
 `-caller-llm offline` (default) uses Ollama `govoice-test` at 127.0.0.1:11434 (`-caller-url`, `-caller-model` change it). The Modelfile sets temperature 0 and seed 42, so the persona is as repeatable as a local model gets. `-caller-llm xai` uses xAI with `XAI_API_KEY` from the environment, only against the xAI endpoint (`-caller-url` is refused with it), and is paid.
 
@@ -70,9 +72,9 @@ make eval-agents                           # tools/eval/agents/cases on -provide
 make eval-agents CASES=my/cases EVAL_ARGS="-runs 5 -min-pass 3 -max-turns 200"
 ```
 
-The make variables are `EVAL_ADMIN` (default `http://127.0.0.1:9090`), `EVAL_PUBLIC` (default `127.0.0.1:8080`), `CASES` and `EVAL_ARGS`. Ollama must be up with `govoice-test` (`make offline-up OFFLINE_PROFILE=host-llm`, `make offline-models`). The Dealership desk case needs the seeded agents of `make dev`; the dental case needs the Smile Dental demo installed ([dentistry.md](../demo/dentistry.md)) and its MCP server (`make dental-mcp`).
+The make variables are `EVAL_ADMIN` (default `http://127.0.0.1:9090`), `EVAL_PUBLIC` (default `127.0.0.1:8080`), `CASES` and `EVAL_ARGS`. Ollama must be up with `govoice-test` (`make offline-up OFFLINE_PROFILE=host-llm`, `make offline-models`). The default cases (`dev-assistant-answers`, `dealership-buyer-reaches-sales`) need the seeded agents of `make dev`. The dental case is in its own directory, `tools/eval/agents/cases-dental`, so a default run never needs the demo: run it with `make eval-agents CASES=tools/eval/agents/cases-dental`, after installing the Smile Dental demo ([dentistry.md](../demo/dentistry.md)) and starting its MCP server (`make dental-mcp`). A run lists every case whose agent is missing in one error.
 
-The harness proves itself with no keys and no running server (about 30 s, builds and starts its own server on the echo provider, then must see every deliberately broken agent fail):
+The harness proves itself with no keys and no running server (about 40 s, builds and starts its own server on the echo provider, then must see every deliberately broken agent fail):
 
 ```bash
 make eval-agents-echo
@@ -110,6 +112,8 @@ go run ./tools/eval/agents -admin http://127.0.0.1:9090 -public 127.0.0.1:8080 -
 The management key is read from `GOVOICE_MANAGEMENT_API_KEY` and `XAI_API_KEY` from the environment only; neither is printed or written. Exit code 0: every case passed. 1: a case failed. 2: setup problem (bad case file, unreachable server, a refused live gate, too many planned turns).
 
 ### The live gate
+
+`GOVOICE_LIVE=1` gates model cost only. MCP tools run for real: an eval call executes the agent's selected tools with whatever arguments the model sends, so point evals at agents whose tools hit test systems.
 
 A run refuses without `GOVOICE_LIVE=1`, before any call, when any step of a selected agent would still reach a paid model (`-providers keep` with a non-echo, non-offline model, or a fallback that is), or when a persona case uses a paid caller model (`-caller-llm xai`, or an offline caller URL whose host is not loopback). Set it only when you mean to spend. Cost is roughly one model request per agent reply plus one per persona turn.
 
@@ -155,7 +159,7 @@ Measured on `govoice-test` (`llama3.2:3b`, Ollama), `-providers offline`, 2026-1
 |---|---|---|---|
 | `dev-assistant-answers` | Dev Assistant | 15 of 15 | |
 | `dealership-buyer-reaches-sales` | Dealership desk | 15 of 15 | The model picked `transfer_to_sales` every time. |
-| `dental-new-patient-books` | Smile Dental front desk | 0 of 15 | The persona held its role and said `DONE` after 8 lines. The front desk handed off to the new-patient step every time, but that step wrote `register_patient` and `find_slots` out as text instead of calling them, then called `book_appointment` with invented arguments (failed). A 3B model cannot do this five-tool booking; the case is kept for a bigger model (`FROM` in a local Modelfile, `offline/README.md`) or `-providers keep`. |
+| `dental-new-patient-books` | Smile Dental front desk | 0 of 15 | The persona held its role and said `DONE` after 8 lines. The front desk handed off to the new-patient step every time, but that step wrote `register_patient` and `find_slots` out as text instead of calling them, then called `book_appointment` with invented arguments (failed). A 3B model cannot do this five-tool booking; the case is kept in `cases-dental`, outside the default run, for a bigger model (`FROM` in a local Modelfile, `offline/README.md`) or `-providers keep`. |
 
 The runs were identical from batch to batch (temperature 0, seed 42), so repeated batches add little confidence: they show the harness is repeatable, not that the model is reliable. `-min-pass` cannot rescue a 0 of 15 case, and there is no per-case `min_pass` key.
 

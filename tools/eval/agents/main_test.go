@@ -2,9 +2,14 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"govoice/tools/internal/stack"
 )
 
 func TestPlanAndGate(t *testing.T) {
@@ -51,7 +56,25 @@ func TestHelpPrintsUsageAndSucceeds(t *testing.T) {
 	if rc := realMain([]string{"-h"}, &out, &errb); rc != 0 {
 		t.Errorf("-h exited %d", rc)
 	}
-	if got := errb.String(); !strings.Contains(got, "-max-turns") || !strings.Contains(got, "-providers") {
+	if got := errb.String(); !strings.Contains(got, "-max-turns") || !strings.Contains(got, "-providers") || !strings.Contains(got, "MCP tools run for real") {
 		t.Errorf("-h usage:\n%s", got)
+	}
+}
+
+// prepare names every missing agent in one error, so one run shows the whole fix.
+func TestPrepareReportsAllMissingAgents(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":[]}`)
+	}))
+	defer api.Close()
+	cases := []Case{{Name: "one", Agent: "Alpha"}, {Name: "two", Agent: "Beta"}, {Name: "three", Agent: "Alpha"}}
+	_, _, err := prepare(&stack.Server{Admin: api.URL}, cases, config{Mode: modeOffline})
+	if err == nil {
+		t.Fatal("missing agents accepted")
+	}
+	for _, want := range []string{`case one: agent "Alpha"`, `case two: agent "Beta"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error lacks %q: %v", want, err)
+		}
 	}
 }

@@ -1,3 +1,4 @@
+# Not in the default `make eval-agents` run (its own directory). Run: make eval-agents CASES=tools/eval/agents/cases-dental
 # Needs the Smile Dental demo installed (POST /api/v1/demo/dental) and its MCP server (make dental-mcp).
 # Five tool calls. Measured on the offline model (llama3.2:3b, 2026-10-24): 0 of 15 runs pass, because it writes the
 # tool calls as text. Expect it to fail on -providers offline; see docs/operations/agent-evals.md.

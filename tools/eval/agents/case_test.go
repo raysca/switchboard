@@ -121,15 +121,20 @@ func TestLoadAcceptsYml(t *testing.T) {
 
 // The example cases that ship with the tool (make eval-agents) must load.
 func TestExampleCasesLoad(t *testing.T) {
-	cs, err := LoadCases("cases", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var names []string
-	for _, c := range cs {
-		names = append(names, c.Name)
-	}
-	if want := []string{"dealership-buyer-reaches-sales", "dental-new-patient-books", "dev-assistant-answers"}; !slices.Equal(names, want) {
-		t.Errorf("cases = %v, want %v", names, want)
+	for dir, want := range map[string][]string{
+		"cases":        {"dealership-buyer-reaches-sales", "dev-assistant-answers"},
+		"cases-dental": {"dental-new-patient-books"},
+	} {
+		cs, err := LoadCases(dir, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var names []string
+		for _, c := range cs {
+			names = append(names, c.Name)
+		}
+		if !slices.Equal(names, want) {
+			t.Errorf("%s = %v, want %v", dir, names, want)
+		}
 	}
 }

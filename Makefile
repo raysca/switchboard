@@ -174,17 +174,20 @@ e2e-echo: test-e2e-go eval-agents-echo e2e-fake ## free|Every end-to-end test on
 
 # The agent eval harness (tools/eval/agents) proven on the echo provider: plumbing cases must pass and
 # each deliberately broken agent must fail its case. Skips (loudly) when the Silero model is missing, fails when CI is set.
-eval-agents-echo: ## free|Agent eval harness self-test on the echo provider, with mutation checks (about 30 s)
+eval-agents-echo: ## free|Agent eval harness self-test on the echo provider, with mutation checks (about 40 s)
 	@go run ./tools/eval/agents -selftest
 
 # Agent evals against a running server (make dev): export the management key first (the target never reads
 # or prints it): set -a; . .govoice-dev/dev.env; set +a. Cases: tools/eval/agents/cases, docs/operations/agent-evals.md.
+# The Smile Dental case is apart: make eval-agents CASES=tools/eval/agents/cases-dental (needs the dental demo and make dental-mcp).
+# MCP tools run for real: an eval call executes the agent's selected tools with whatever arguments the model sends.
+# Point evals at agents whose tools hit test systems; GOVOICE_LIVE gates model cost only, not what tools do.
 EVAL_ADMIN ?= http://127.0.0.1:9090
 EVAL_PUBLIC ?= 127.0.0.1:8080
-eval-agents: ## dev|Agent evals against make dev on the offline model (Ollama; CASES= dir, EVAL_ARGS=)
+eval-agents: ## dev|Agent evals against make dev on the offline model (Ollama; CASES= dir, EVAL_ARGS=; MCP tools run for real)
 	@go run ./tools/eval/agents -admin $(EVAL_ADMIN) -public $(EVAL_PUBLIC) -providers offline -cases $(or $(CASES),tools/eval/agents/cases) $(EVAL_ARGS)
 
-eval-agents-live: ## paid|Agent evals on each agent's own model (GOVOICE_LIVE=1; cap MAX_TURNS caller turns, default 40)
+eval-agents-live: ## paid|Agent evals on each agent's own model (GOVOICE_LIVE=1; cap MAX_TURNS caller turns, default 40; MCP tools run for real)
 	@test "$$GOVOICE_LIVE" = 1 || { echo "eval-agents-live runs the agents' own models and spends API credit: run GOVOICE_LIVE=1 make eval-agents-live"; exit 1; }
 	@go run ./tools/eval/agents -admin $(EVAL_ADMIN) -public $(EVAL_PUBLIC) -providers keep -max-turns $(or $(MAX_TURNS),$(DEFAULT_MAX_CALLS)) -cases $(or $(CASES),tools/eval/agents/cases) $(EVAL_ARGS)
 
