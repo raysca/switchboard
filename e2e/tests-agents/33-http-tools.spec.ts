@@ -1,6 +1,6 @@
 import { test, expect, LIVE } from "../lib/agents-stack";
 import { step } from "../lib/evidence";
-import { api, botReply, connectAdmin, openAgentTest, sendText, stage, startCall } from "../lib/agents-helpers";
+import { api, botReply, connectAdmin, openAgent, openAgentTest, sendText, stage, startCall } from "../lib/agents-helpers";
 
 // HTTP tools end to end on the echo stack: define a tool in the UI against the test server's REST endpoint
 // (cmd/mcptest), try it, give it to an agent, and have a call use it. The secret is a stored one.
@@ -64,9 +64,9 @@ test("an agent uses the tool in a call, and the tool picker shows it chosen", as
   await page.getByTestId("disconnect-btn").click();
 
   // the same tool, chosen, in the agent's Tools tab
-  await page.getByRole("link", { name: "Agents", exact: true }).first().click();
-  await page.getByRole("link", { name: AGENT }).first().click();
-  await page.getByRole("tab", { name: "Tools" }).click();
+  await openAgent(page, AGENT);
+  await page.locator(".react-flow__node").first().click();
+  await page.getByRole("tab", { name: /Tools/ }).click();
   const group = page.getByRole("group", { name: "HTTP tools" });
   await expect(group.getByRole("checkbox", { name: new RegExp(`^${TOOL}`) })).toBeChecked();
 });
