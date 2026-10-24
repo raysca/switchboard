@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -107,7 +108,7 @@ func TestEvalClaimRaceExactlyOnce(t *testing.T) {
 					if j.Attempts != 1 || j.LeaseOwner != owner || j.Status != "running" {
 						t.Errorf("claimed job %s: attempts=%d owner=%q status=%q", j.ID, j.Attempts, j.LeaseOwner, j.Status)
 					}
-					if _, err := s.Eval().Complete(ctx, j.ID, owner, t0, []EvalResult{resultFor(run, byID[j.ID], versionID, "expectations", "pass")}); err != nil {
+					if _, err := s.Eval().Complete(ctx, j, t0, []EvalResult{resultFor(run, byID[j.ID], versionID, "expectations", "pass")}); err != nil {
 						t.Errorf("complete: %v", err)
 						return
 					}
@@ -149,7 +150,7 @@ func TestEvalLeaseExpiryFencesOldOwner(t *testing.T) {
 		if _, ok, _ := e.Claim(ctx, "B", t0.Add(time.Minute), testLease); ok {
 			t.Fatal("B claimed a job whose lease is still live")
 		}
-		if err := e.Heartbeat(ctx, a.ID, "A", t0.Add(time.Minute), testLease); err != nil {
+		if err := e.Heartbeat(ctx, a, t0.Add(time.Minute), testLease); err != nil {
 			t.Fatalf("A heartbeat while it owns the lease: %v", err)
 		}
 		// A's heartbeat moved the lease to t0+3m, so B must wait past that.
@@ -161,13 +162,13 @@ func TestEvalLeaseExpiryFencesOldOwner(t *testing.T) {
 			t.Fatalf("B reclaim: %v %v %+v", err, ok, b)
 		}
 		// A lost the lease: it can neither extend it nor complete the job, and its results are not written.
-		if err := e.Heartbeat(ctx, a.ID, "A", t0.Add(4*time.Minute), testLease); !errors.Is(err, ErrLeaseLost) {
+		if err := e.Heartbeat(ctx, a, t0.Add(4*time.Minute), testLease); !errors.Is(err, ErrLeaseLost) {
 			t.Fatalf("A heartbeat after losing the lease: %v", err)
 		}
-		if _, err := e.Complete(ctx, a.ID, "A", t0.Add(4*time.Minute), res); !errors.Is(err, ErrLeaseLost) {
+		if _, err := e.Complete(ctx, a, t0.Add(4*time.Minute), res); !errors.Is(err, ErrLeaseLost) {
 			t.Fatalf("A complete after losing the lease: %v", err)
 		}
-		if _, _, err := e.Fail(ctx, a.ID, "A", t0.Add(4*time.Minute), "x", time.Second, false); !errors.Is(err, ErrLeaseLost) {
+		if _, _, err := e.Fail(ctx, a, t0.Add(4*time.Minute), "x", time.Second, false); !errors.Is(err, ErrLeaseLost) {
 			t.Fatalf("A fail after losing the lease: %v", err)
 		}
 		if got, _ := e.RunResults(ctx, run.ID); len(got) != 0 {
@@ -176,12 +177,45 @@ func TestEvalLeaseExpiryFencesOldOwner(t *testing.T) {
 		if j := jobByID(t, s, run, a.ID); j.Status != "running" || j.LeaseOwner != "B" {
 			t.Fatalf("job after fenced writes: %+v", j)
 		}
-		finished, err := e.Complete(ctx, b.ID, "B", t0.Add(4*time.Minute), res)
+		finished, err := e.Complete(ctx, b, t0.Add(4*time.Minute), res)
 		if err != nil || !finished {
 			t.Fatalf("B complete: %v finished=%v", err, finished)
 		}
 		if j := jobByID(t, s, run, a.ID); j.Status != "done" || j.LeaseOwner != "" {
 			t.Fatalf("done job: %+v", j)
+		}
+
+		// The same owner string reclaiming its own expired job (a slot name that is not unique, a restart reusing it): the
+		// stale holder of attempt 1 must be fenced by the attempt number, not only by the owner.
+		resetEval(t, s)
+		run, jobs, versionID = seedRun(t, s, 1, t0.Add(-time.Second))
+		res = []EvalResult{resultFor(run, jobs[0], versionID, "expectations", "pass")}
+		stale, ok, err := e.Claim(ctx, "S", t0, testLease)
+		if err != nil || !ok || stale.Attempts != 1 {
+			t.Fatalf("stale claim: %v %v %+v", err, ok, stale)
+		}
+		cur, ok, err := e.Claim(ctx, "S", t0.Add(3*time.Minute), testLease)
+		if err != nil || !ok || cur.Attempts != 2 || cur.LeaseOwner != "S" {
+			t.Fatalf("same-owner reclaim: %v %v %+v", err, ok, cur)
+		}
+		later := t0.Add(4 * time.Minute)
+		if err := e.Heartbeat(ctx, stale, later, testLease); !errors.Is(err, ErrLeaseLost) {
+			t.Fatalf("stale heartbeat with the same owner: %v", err)
+		}
+		if _, err := e.Complete(ctx, stale, later, res); !errors.Is(err, ErrLeaseLost) {
+			t.Fatalf("stale complete with the same owner: %v", err)
+		}
+		if _, _, err := e.Fail(ctx, stale, later, "x", time.Second, false); !errors.Is(err, ErrLeaseLost) {
+			t.Fatalf("stale fail with the same owner: %v", err)
+		}
+		if got, _ := e.RunResults(ctx, run.ID); len(got) != 0 {
+			t.Fatalf("a stale attempt wrote %d results", len(got))
+		}
+		if j := jobByID(t, s, run, cur.ID); j.Status != "running" || j.Attempts != 2 {
+			t.Fatalf("job after stale writes: %+v", j)
+		}
+		if _, err := e.Complete(ctx, cur, later, res); err != nil {
+			t.Fatalf("current attempt complete: %v", err)
 		}
 	})
 }
@@ -199,7 +233,7 @@ func TestEvalFailBackoffThenDead(t *testing.T) {
 			if err != nil || !ok || j.Attempts != attempt {
 				t.Fatalf("claim %d: %v %v %+v", attempt, err, ok, j)
 			}
-			dead, finished, err := e.Fail(ctx, j.ID, "w", now, "dial", 30*time.Second, false)
+			dead, finished, err := e.Fail(ctx, j, now, "dial", 30*time.Second, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -233,7 +267,7 @@ func TestEvalFailBackoffThenDead(t *testing.T) {
 		if !ok || j.ID != jobs2[0].ID {
 			t.Fatalf("claim for final: %v %+v", ok, j)
 		}
-		if dead, finished, err := e.Fail(ctx, j.ID, "w", t0, "persona_unavailable", 0, true); err != nil || !dead || !finished {
+		if dead, finished, err := e.Fail(ctx, j, t0, "persona_unavailable", 0, true); err != nil || !dead || !finished {
 			t.Fatalf("final fail: %v dead=%v finished=%v", err, dead, finished)
 		}
 	})
@@ -253,7 +287,7 @@ func TestEvalResultsInsertIdempotent(t *testing.T) {
 		second := resultFor(run, jobs[0], versionID, "expectations", "fail") // same key, a later attempt's verdict
 		a, _, _ := e.Claim(ctx, "A", t0, testLease)
 		// Simulate "A wrote its results, then the process died before the job row was observed done": the results exist, the job is reclaimed.
-		if _, err := e.Complete(ctx, a.ID, "A", t0, []EvalResult{first}); err != nil {
+		if _, err := e.Complete(ctx, a, t0, []EvalResult{first}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := s.DB().ExecContext(ctx, s.bind("UPDATE eval_jobs SET status='running', lease_owner='A', lease_expires_at=? WHERE id=?"), utc(t0.Add(time.Minute)), a.ID); err != nil {
@@ -263,7 +297,7 @@ func TestEvalResultsInsertIdempotent(t *testing.T) {
 		if err != nil || !ok || b.ID != a.ID {
 			t.Fatalf("reclaim: %v %v", err, ok)
 		}
-		if _, err := e.Complete(ctx, b.ID, "B", t0.Add(3*time.Minute), []EvalResult{second, resultFor(run, jobs[0], versionID, "tool_call_accuracy", "pass")}); err != nil {
+		if _, err := e.Complete(ctx, b, t0.Add(3*time.Minute), []EvalResult{second, resultFor(run, jobs[0], versionID, "tool_call_accuracy", "pass")}); err != nil {
 			t.Fatalf("replayed complete must not fail on the duplicate: %v", err)
 		}
 		got, err := e.RunResults(ctx, run.ID)
@@ -297,9 +331,9 @@ func TestFinishRunCountsDeadCaseRunAsFailed(t *testing.T) {
 			var finished bool
 			switch o := outcomes[j.ID]; o {
 			case "dead":
-				_, finished, err = e.Fail(ctx, j.ID, "w", t0, "dial", 0, true)
+				_, finished, err = e.Fail(ctx, j, t0, "dial", 0, true)
 			default:
-				finished, err = e.Complete(ctx, j.ID, "w", t0, []EvalResult{resultFor(run, j, versionID, "expectations", o)})
+				finished, err = e.Complete(ctx, j, t0, []EvalResult{resultFor(run, j, versionID, "expectations", o)})
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -343,7 +377,7 @@ func TestFinishRunMinPassAcrossRepeats(t *testing.T) {
 			}
 			var idx int
 			fmt.Sscanf(j.Subject[len(caseID)+1:], "%d", &idx)
-			if _, err := e.Complete(ctx, j.ID, "w", t0, []EvalResult{resultFor(run, j, versionID, "expectations", verdicts[idx])}); err != nil {
+			if _, err := e.Complete(ctx, j, t0, []EvalResult{resultFor(run, j, versionID, "expectations", verdicts[idx])}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -379,7 +413,7 @@ func TestEvalRunFinishesWhenLastJobsCompleteConcurrently(t *testing.T) {
 				go func() {
 					defer wg.Done()
 					<-start
-					if _, err := e.Complete(ctx, j.ID, "w", t0, []EvalResult{resultFor(run, j, versionID, "expectations", "pass")}); err != nil {
+					if _, err := e.Complete(ctx, j, t0, []EvalResult{resultFor(run, j, versionID, "expectations", "pass")}); err != nil {
 						t.Errorf("complete: %v", err)
 					}
 				}()
@@ -540,7 +574,7 @@ func finishedRun(t *testing.T, s *Store, at time.Time) (EvalRun, EvalJob) {
 	if err != nil || !ok || j.ID != jobs[0].ID {
 		t.Fatalf("claim: %v %v", err, ok)
 	}
-	if _, err := s.Eval().Complete(ctx, j.ID, "w", at, []EvalResult{resultFor(run, jobs[0], versionID, "expectations", "pass")}); err != nil {
+	if _, err := s.Eval().Complete(ctx, j, at, []EvalResult{resultFor(run, jobs[0], versionID, "expectations", "pass")}); err != nil {
 		t.Fatal(err)
 	}
 	return run, jobs[0]
@@ -776,6 +810,249 @@ func TestAgentLockDoesNotBlockForeignKeyInserts(t *testing.T) {
 		}
 		if err := s.Eval().PutSuite(ctx, EvalSuite{AgentID: agentID, Runs: 1, MinPass: 1, PassThreshold: 1}); err != nil {
 			t.Fatalf("a row referencing the agent waited on the lock: %v", err)
+		}
+	})
+}
+
+// The storage layer derives a case-run result's subject and run from the job, whatever the worker wrote: a bare
+// "<case>#<n>" subject must still be found by the run summary, or a failing case-run counts as passed.
+func TestCompleteDerivesCaseRunSubject(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		e := s.Eval()
+		t0 := time.Now()
+		run, jobs, versionID := seedRun(t, s, 1, t0.Add(-time.Second))
+		j, ok, err := e.Claim(ctx, "w", t0, testLease)
+		if err != nil || !ok {
+			t.Fatalf("claim: %v %v", err, ok)
+		}
+		bare := resultFor(run, jobs[0], versionID, "expectations", "fail")
+		bare.SubjectID, bare.RunID = jobs[0].Subject, "" // what a worker that does not know the scheme writes
+		if _, err := e.Complete(ctx, j, t0, []EvalResult{bare}); err != nil {
+			t.Fatal(err)
+		}
+		if r, _ := e.GetRun(ctx, run.AgentID, run.ID); r.Status != "done" || *r.PassedCases != 0 || *r.TotalCases != 1 {
+			t.Fatalf("a failing case-run with a bare subject counted as passed: %+v", r)
+		}
+		got, err := e.RunResults(ctx, run.ID)
+		if err != nil || len(got) != 1 || got[0].SubjectID != EvalCaseRunSubject(run.ID, jobs[0].Subject) || got[0].RunID != run.ID {
+			t.Fatalf("stored result: %v %+v", err, got)
+		}
+	})
+}
+
+func TestCompleteRefusesAResultOfAnotherRun(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		e := s.Eval()
+		t0 := time.Now()
+		run, jobs, versionID := seedRun(t, s, 1, t0.Add(-time.Second))
+		j, _, _ := e.Claim(ctx, "w", t0, testLease)
+		bad := resultFor(run, jobs[0], versionID, "expectations", "pass")
+		bad.RunID = NewID()
+		if _, err := e.Complete(ctx, j, t0, []EvalResult{bad}); !errors.Is(err, ErrResultRunMismatch) {
+			t.Fatalf("complete with another run's result: %v", err)
+		}
+		if got := jobByID(t, s, run, j.ID); got.Status != "running" {
+			t.Fatalf("a refused complete changed the job: %+v", got)
+		}
+		if _, err := e.Complete(ctx, j, t0, []EvalResult{resultFor(run, jobs[0], versionID, "expectations", "pass")}); err != nil {
+			t.Fatalf("complete after the refusal: %v", err)
+		}
+	})
+}
+
+// A case is run many times at one version: each run's results are its own (the unique key includes the run).
+func TestTwoRunsOfOneCaseKeepSeparateResults(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		e := s.Eval()
+		t0 := time.Now()
+		agentID, versionID := evalAgent(t, s)
+		subject := NewID() + "#0"
+		var runs []EvalRun
+		for _, outcome := range []string{"pass", "fail"} {
+			run := EvalRun{ID: NewID(), AgentID: agentID, AgentVersionID: versionID, ConfigHash: "h", Scope: "case", Providers: "offline", Runs: 1, MinPass: 1, TriggeredBy: "api"}
+			run, err := e.CreateRun(ctx, run, []EvalJob{{Kind: "run_case", Subject: subject, IdempotencyKey: "run:" + run.ID + ":" + subject, RunAfter: t0.Add(-time.Second), Payload: []byte(`{}`)}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			j, ok, err := e.Claim(ctx, "w", t0, testLease)
+			if err != nil || !ok || j.RunID != run.ID {
+				t.Fatalf("claim: %v %v %+v", err, ok, j)
+			}
+			res := resultFor(run, j, versionID, "expectations", outcome)
+			res.SubjectID = subject // bare
+			if _, err := e.Complete(ctx, j, t0, []EvalResult{res}); err != nil {
+				t.Fatal(err)
+			}
+			runs = append(runs, run)
+		}
+		for i, want := range []int{1, 0} {
+			r, _ := e.GetRun(ctx, agentID, runs[i].ID)
+			got, _ := e.RunResults(ctx, runs[i].ID)
+			if len(got) != 1 || r.PassedCases == nil || *r.PassedCases != want {
+				t.Fatalf("run %d: %d results, run %+v (want %d passed)", i, len(got), r, want)
+			}
+		}
+	})
+}
+
+// A randomized run of the whole queue on a virtual clock: workers claim, heartbeat, complete, fail and stall past the
+// lease (finishing late, after another worker may have taken the job), several of them under the same owner string.
+// Invariants: every (job, attempt) is claimed once and the attempts of a job are contiguous; a claim returns the row it
+// won (this owner, running, that attempt); a job is completed at most once, and a fenced writer leaves nothing behind
+// (one result per done job, none for a dead one: each attempt writes under its own scorer name, so a write that got
+// through after another attempt finished shows up as a second row); nothing is lost (every job ends done or dead, the
+// run finished with the right counts). Workers are capped at 8: more Postgres connections than the pool's idle limit
+// churn through ephemeral ports on macOS (storage.Open leaves database/sql's defaults).
+func TestEvalQueueStress(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		e := s.Eval()
+		const workers, njobs = 8, 200
+		t0 := time.Now()
+		run, _, versionID := seedRun(t, s, njobs, t0.Add(-time.Second))
+		var clock atomic.Int64
+		now := func() time.Time { return t0.Add(time.Duration(clock.Load())) }
+		advance := func(d time.Duration) { clock.Add(int64(d)) }
+
+		var mu sync.Mutex
+		claimed := map[string]map[int]bool{} // job -> attempts seen
+		completed := map[string]int{}
+		var finishedRuns int
+		var wg sync.WaitGroup
+		deadline := time.Now().Add(18 * time.Second)
+		var runDone atomic.Bool
+		for w := 0; w < workers; w++ {
+			owner := fmt.Sprintf("slot-%d", w%4) // two workers per owner string
+			rng := rand.New(rand.NewPCG(uint64(w), 7))
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for !runDone.Load() && time.Now().Before(deadline) {
+					j, ok, err := e.Claim(ctx, owner, now(), testLease)
+					if err != nil {
+						t.Errorf("claim: %v", err)
+						return
+					}
+					if !ok {
+						advance(time.Second)
+						time.Sleep(time.Millisecond)
+						continue
+					}
+					if j.LeaseOwner != owner || j.Status != "running" || j.Attempts < 1 || j.Attempts > j.MaxAttempts {
+						t.Errorf("claim returned a row it did not win: %+v (owner %s)", j, owner)
+					}
+					mu.Lock()
+					if claimed[j.ID] == nil {
+						claimed[j.ID] = map[int]bool{}
+					}
+					if claimed[j.ID][j.Attempts] {
+						t.Errorf("job %s attempt %d claimed twice", j.ID, j.Attempts)
+					}
+					claimed[j.ID][j.Attempts] = true
+					mu.Unlock()
+
+					res := resultFor(run, j, versionID, fmt.Sprintf("a%d", j.Attempts), "pass")
+					lost := func(err error) bool {
+						if err != nil && !errors.Is(err, ErrLeaseLost) {
+							t.Errorf("job %s attempt %d: %v", j.ID, j.Attempts, err)
+						}
+						return err != nil
+					}
+					finish := func() {
+						fin, err := e.Complete(ctx, j, now(), []EvalResult{res})
+						if lost(err) {
+							return
+						}
+						mu.Lock()
+						completed[j.ID]++
+						if fin {
+							finishedRuns++
+						}
+						mu.Unlock()
+					}
+					switch p := rng.IntN(100); {
+					case p < 55:
+						finish()
+					case p < 70:
+						if !lost(e.Heartbeat(ctx, j, now(), testLease)) {
+							finish()
+						}
+					case p < 90: // stalls past the lease, then finishes late
+						advance(testLease + time.Second)
+						finish()
+					default:
+						_, fin, err := e.Fail(ctx, j, now(), "dial", time.Second, false)
+						if !lost(err) && fin {
+							mu.Lock()
+							finishedRuns++
+							mu.Unlock()
+						}
+					}
+					if r, err := e.GetRun(ctx, run.AgentID, run.ID); err == nil && r.Status == "done" {
+						runDone.Store(true)
+					}
+				}
+			}()
+		}
+		wg.Wait()
+
+		r, err := e.GetRun(ctx, run.AgentID, run.ID)
+		if err != nil || r.Status != "done" || r.TotalCases == nil || *r.TotalCases != njobs {
+			t.Fatalf("run did not finish: %v %+v", err, r)
+		}
+		if finishedRuns > 1 {
+			t.Errorf("%d calls reported finishing the run", finishedRuns)
+		}
+		results, err := e.RunResults(ctx, run.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		perJob := map[string]int{}
+		for _, res := range results {
+			perJob[res.SubjectID]++
+		}
+		got, err := e.RunJobs(ctx, run.ID)
+		if err != nil || len(got) != njobs {
+			t.Fatalf("jobs: %v %d", err, len(got))
+		}
+		done := 0
+		for _, j := range got {
+			attempts := claimed[j.ID]
+			for a := 1; a <= j.Attempts; a++ {
+				if !attempts[a] {
+					t.Errorf("job %s: attempt %d of %d never observed (not contiguous)", j.ID, a, j.Attempts)
+				}
+			}
+			if len(attempts) != j.Attempts {
+				t.Errorf("job %s: %d claims observed, attempts=%d", j.ID, len(attempts), j.Attempts)
+			}
+			n := perJob[EvalCaseRunSubject(run.ID, j.Subject)]
+			switch j.Status {
+			case "done":
+				done++
+				if completed[j.ID] != 1 || n != 1 {
+					t.Errorf("done job %s: completed %d times, %d results", j.ID, completed[j.ID], n)
+				}
+			case "dead":
+				if completed[j.ID] != 0 || n != 0 {
+					t.Errorf("dead job %s: completed %d times, %d results, %+v", j.ID, completed[j.ID], n, j)
+				}
+			default:
+				t.Errorf("job %s left %s", j.ID, j.Status)
+			}
+		}
+		if r.PassedCases == nil || *r.PassedCases != done {
+			t.Errorf("passed %v, want the %d done jobs", r.PassedCases, done)
+		}
+		if done < njobs/2 {
+			t.Errorf("only %d of %d jobs done: the schedule is mostly dead ends", done, njobs)
 		}
 	})
 }

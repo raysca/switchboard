@@ -21,9 +21,11 @@ const (
 )
 
 var (
-	// ErrLeaseLost: the job is no longer running under this owner (its lease expired and another worker took it, or it finished).
+	// ErrLeaseLost: the job is no longer running under this claim (its lease expired and another worker took it, or it finished).
 	ErrLeaseLost = errors.New("eval job lease lost")
 	ErrQueueFull = errors.New("too many pending eval jobs for the agent")
+	// ErrResultRunMismatch: a result handed to Complete names a run other than the job's.
+	ErrResultRunMismatch = errors.New("eval result belongs to another run")
 )
 
 // EvalRun is one execution of a suite or one case against one agent version, or against a draft (AgentVersionID
@@ -280,10 +282,11 @@ func (r EvalRepository) MarkRunStarted(ctx context.Context, runID string, now ti
 }
 
 // Claim takes one due job: pending and past run_after, or running with an expired lease. Candidates are read without a
-// lock; each is then claimed with a conditional UPDATE that repeats the claimability test, so when several workers
-// race for one row the database lets exactly one UPDATE match it (RowsAffected 1) and the others move to the next
-// candidate. now is the worker's clock: leases are compared against worker-supplied time, never the database's.
-// A running job whose lease expired with no attempts left is ended as dead (category lease_expired) instead of claimed.
+// lock; each is then claimed with one conditional UPDATE ... RETURNING that repeats the claimability test, so when
+// several workers race for one row the database lets exactly one UPDATE match it; the others get no row and move to
+// the next candidate. The returned row is the one this UPDATE wrote, never a later re-read. now is the worker's clock:
+// leases are compared against worker-supplied time, never the database's. A running job whose lease expired with no
+// attempts left is ended as dead (category lease_expired) instead of claimed.
 func (r EvalRepository) Claim(ctx context.Context, owner string, now time.Time, lease time.Duration) (EvalJob, bool, error) {
 	n := utc(now)
 	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT id FROM eval_jobs WHERE (status='pending' AND run_after<=?) OR (status='running' AND lease_expires_at<=?) ORDER BY run_after, id LIMIT ?"), n, n, claimCandidates)
@@ -305,19 +308,15 @@ func (r EvalRepository) Claim(ctx context.Context, owner string, now time.Time, 
 	}
 	rows.Close()
 	for _, id := range ids {
-		res, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE eval_jobs SET status='running', lease_owner=?, lease_expires_at=?, attempts=attempts+1, updated_at=? WHERE id=? AND attempts<max_attempts AND ((status='pending' AND run_after<=?) OR (status='running' AND lease_expires_at<=?))"),
-			owner, utc(now.Add(lease)), n, id, n, n)
-		if err != nil {
-			return EvalJob{}, false, fmt.Errorf("claim eval job: %w", err)
-		}
-		if won, _ := res.RowsAffected(); won == 1 {
-			j, err := scanEvalJob(r.s.db.QueryRowContext(ctx, r.s.bind("SELECT "+evalJobCols+" FROM eval_jobs WHERE id=?"), id))
-			if err != nil {
-				return EvalJob{}, false, fmt.Errorf("read claimed eval job: %w", err)
-			}
+		j, err := scanEvalJob(r.s.db.QueryRowContext(ctx, r.s.bind("UPDATE eval_jobs SET status='running', lease_owner=?, lease_expires_at=?, attempts=attempts+1, updated_at=? WHERE id=? AND attempts<max_attempts AND ((status='pending' AND run_after<=?) OR (status='running' AND lease_expires_at<=?)) RETURNING "+evalJobCols),
+			owner, utc(now.Add(lease)), n, id, n, n))
+		if err == nil {
 			return j, true, nil
 		}
-		if err := r.deadExhausted(ctx, id, now); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return EvalJob{}, false, fmt.Errorf("claim eval job: %w", err)
+		}
+		if err := r.deadExhausted(ctx, id, now); err != nil { // lost the race, or the job has no attempts left
 			return EvalJob{}, false, err
 		}
 	}
@@ -328,16 +327,13 @@ func (r EvalRepository) Claim(ctx context.Context, owner string, now time.Time, 
 func (r EvalRepository) deadExhausted(ctx context.Context, id string, now time.Time) error {
 	return r.s.WithTx(ctx, func(tx *sql.Tx) error {
 		n := utc(now)
-		res, err := tx.ExecContext(ctx, r.s.bind("UPDATE eval_jobs SET status='dead', lease_owner=NULL, lease_expires_at=NULL, last_error_category='lease_expired', updated_at=? WHERE id=? AND status='running' AND lease_expires_at<=? AND attempts>=max_attempts"), n, id, n)
-		if err != nil {
-			return fmt.Errorf("end exhausted eval job: %w", err)
-		}
-		if k, _ := res.RowsAffected(); k != 1 {
+		var run sql.NullString
+		err := tx.QueryRowContext(ctx, r.s.bind("UPDATE eval_jobs SET status='dead', lease_owner=NULL, lease_expires_at=NULL, last_error_category='lease_expired', updated_at=? WHERE id=? AND status='running' AND lease_expires_at<=? AND attempts>=max_attempts RETURNING run_id"), n, id, n).Scan(&run)
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
-		var run sql.NullString
-		if err := tx.QueryRowContext(ctx, r.s.bind("SELECT run_id FROM eval_jobs WHERE id=?"), id).Scan(&run); err != nil {
-			return fmt.Errorf("read exhausted eval job: %w", err)
+		if err != nil {
+			return fmt.Errorf("end exhausted eval job: %w", err)
 		}
 		if !run.Valid {
 			return nil
@@ -347,9 +343,13 @@ func (r EvalRepository) deadExhausted(ctx context.Context, id string, now time.T
 	})
 }
 
-// Heartbeat extends the lease of a job still running under owner; ErrLeaseLost when it is not.
-func (r EvalRepository) Heartbeat(ctx context.Context, id, owner string, now time.Time, lease time.Duration) error {
-	res, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE eval_jobs SET lease_expires_at=?, updated_at=? WHERE id=? AND status='running' AND lease_owner=?"), utc(now.Add(lease)), utc(now), id, owner)
+// A write by a worker is fenced by the claimed attempt: lease_owner and attempts must both still be the claim's. The
+// owner alone is not enough, because an owner string can be reused (a restart, a shared slot name) and a stale holder of
+// an earlier attempt would then pass for the current one. attempts only grows, on a claim.
+
+// Heartbeat extends the lease of a claimed job still running under its claim; ErrLeaseLost when it is not.
+func (r EvalRepository) Heartbeat(ctx context.Context, job EvalJob, now time.Time, lease time.Duration) error {
+	res, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE eval_jobs SET lease_expires_at=?, updated_at=? WHERE id=? AND status='running' AND lease_owner=? AND attempts=?"), utc(now.Add(lease)), utc(now), job.ID, job.LeaseOwner, job.Attempts)
 	if err != nil {
 		return fmt.Errorf("extend eval job lease: %w", err)
 	}
@@ -359,58 +359,63 @@ func (r EvalRepository) Heartbeat(ctx context.Context, id, owner string, now tim
 	return nil
 }
 
-// Complete marks the job done and stores its results (ON CONFLICT DO NOTHING on the result key, so a replay never
-// double-counts) in one transaction, then finishes the run when this was its last open job. ErrLeaseLost, with
-// nothing written, when the job is not running under owner. now stamps the rows.
-func (r EvalRepository) Complete(ctx context.Context, id, owner string, now time.Time, results []EvalResult) (runFinished bool, err error) {
+// Complete marks the claimed job done and stores its results (ON CONFLICT DO NOTHING on the result key, so a replay
+// never double-counts) in one transaction, then finishes the run when this was its last open job. ErrLeaseLost, with
+// nothing written, when the job is no longer running under the claim. For a run_case job the storage layer, not the
+// worker, sets each result's run and subject (EvalCaseRunSubject of the job's own run and subject): a result that
+// names another run is refused (ErrResultRunMismatch), and the run summary can never miss a failure for a subject
+// written in another shape. now stamps the rows.
+func (r EvalRepository) Complete(ctx context.Context, job EvalJob, now time.Time, results []EvalResult) (runFinished bool, err error) {
 	err = r.s.WithTx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, r.s.bind("UPDATE eval_jobs SET status='done', lease_owner=NULL, lease_expires_at=NULL, updated_at=? WHERE id=? AND status='running' AND lease_owner=?"), utc(now), id, owner)
+		var run sql.NullString
+		var subject, kind string
+		err := tx.QueryRowContext(ctx, r.s.bind("UPDATE eval_jobs SET status='done', lease_owner=NULL, lease_expires_at=NULL, updated_at=? WHERE id=? AND status='running' AND lease_owner=? AND attempts=? RETURNING run_id, subject, kind"),
+			utc(now), job.ID, job.LeaseOwner, job.Attempts).Scan(&run, &subject, &kind)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrLeaseLost
+		}
 		if err != nil {
 			return fmt.Errorf("complete eval job: %w", err)
 		}
-		if n, _ := res.RowsAffected(); n != 1 {
-			return ErrLeaseLost
-		}
 		for _, e := range results {
+			if run.Valid && kind == "run_case" {
+				if e.RunID != "" && e.RunID != run.String {
+					return ErrResultRunMismatch
+				}
+				e.RunID, e.SubjectID = run.String, EvalCaseRunSubject(run.String, subject)
+			}
 			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO eval_results("+evalResultCols+") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(subject_id,scorer,version_key) DO NOTHING"),
 				NewID(), e.SubjectKind, e.SubjectID, e.Scorer, e.ScorerVersion, e.VersionKey, e.AgentID, nullable(e.AgentVersionID), e.ConfigHash, nullable(e.RunID), nullable(e.CaseID), nullable(e.CaseHash), e.SessionID, e.Score, e.Outcome, e.Reason, nullable(e.JudgeModel), utc(now)); err != nil {
 				return fmt.Errorf("insert eval result: %w", err)
 			}
 		}
-		runFinished, err = r.finishJobRun(ctx, tx, id, now)
+		if !run.Valid {
+			return nil
+		}
+		runFinished, err = r.finishRunIfDone(ctx, tx, run.String, now)
 		return err
 	})
 	return runFinished && err == nil, err
 }
 
-// Fail records a failed attempt of a job running under owner. With final, or when the attempts are used up, the job
-// is dead; otherwise it goes back to pending, due after retryAfter. category is a short error class, never content.
-// ErrLeaseLost when the job is not running under owner.
-func (r EvalRepository) Fail(ctx context.Context, id, owner string, now time.Time, category string, retryAfter time.Duration, final bool) (dead, runFinished bool, err error) {
+// Fail records a failed attempt of a claimed job. With final, or when the attempts are used up, the job is dead;
+// otherwise it goes back to pending, due after retryAfter. category is a short error class, never content.
+// ErrLeaseLost when the job is no longer running under the claim.
+func (r EvalRepository) Fail(ctx context.Context, job EvalJob, now time.Time, category string, retryAfter time.Duration, final bool) (dead, runFinished bool, err error) {
 	err = r.s.WithTx(ctx, func(tx *sql.Tx) error {
-		var attempts, maxAttempts int
-		if err := tx.QueryRowContext(ctx, r.s.bind("SELECT attempts,max_attempts FROM eval_jobs WHERE id=? AND status='running' AND lease_owner=?"), id, owner).Scan(&attempts, &maxAttempts); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return ErrLeaseLost
-			}
-			return fmt.Errorf("read eval job: %w", err)
+		var status string
+		var run sql.NullString
+		err := tx.QueryRowContext(ctx, r.s.bind("UPDATE eval_jobs SET status=CASE WHEN ? OR attempts>=max_attempts THEN 'dead' ELSE 'pending' END, run_after=?, lease_owner=NULL, lease_expires_at=NULL, last_error_category=?, updated_at=? WHERE id=? AND status='running' AND lease_owner=? AND attempts=? RETURNING status, run_id"),
+			boolValue(r.s.dialect, final), utc(now.Add(retryAfter)), category, utc(now), job.ID, job.LeaseOwner, job.Attempts).Scan(&status, &run)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrLeaseLost
 		}
-		dead = final || attempts >= maxAttempts
-		status, after := "pending", now.Add(retryAfter)
-		if dead {
-			status = "dead"
-		}
-		// The ownership guard is repeated: attempts only change under a new owner, but the write must still lose to one.
-		res, err := tx.ExecContext(ctx, r.s.bind("UPDATE eval_jobs SET status=?, run_after=?, lease_owner=NULL, lease_expires_at=NULL, last_error_category=?, updated_at=? WHERE id=? AND status='running' AND lease_owner=?"),
-			status, utc(after), category, utc(now), id, owner)
 		if err != nil {
 			return fmt.Errorf("fail eval job: %w", err)
 		}
-		if n, _ := res.RowsAffected(); n != 1 {
-			return ErrLeaseLost
-		}
-		if dead {
-			runFinished, err = r.finishJobRun(ctx, tx, id, now)
+		dead = status == "dead"
+		if dead && run.Valid {
+			runFinished, err = r.finishRunIfDone(ctx, tx, run.String, now)
 		}
 		return err
 	})
@@ -418,17 +423,6 @@ func (r EvalRepository) Fail(ctx context.Context, id, owner string, now time.Tim
 		return false, false, err
 	}
 	return dead, runFinished, nil
-}
-
-func (r EvalRepository) finishJobRun(ctx context.Context, tx *sql.Tx, jobID string, now time.Time) (bool, error) {
-	var run sql.NullString
-	if err := tx.QueryRowContext(ctx, r.s.bind("SELECT run_id FROM eval_jobs WHERE id=?"), jobID).Scan(&run); err != nil {
-		return false, fmt.Errorf("read eval job run: %w", err)
-	}
-	if !run.Valid {
-		return false, nil
-	}
-	return r.finishRunIfDone(ctx, tx, run.String, now)
 }
 
 // finishRunIfDone ends the run when none of its jobs is pending or running, and reports whether this call ended it.
