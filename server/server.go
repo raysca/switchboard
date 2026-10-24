@@ -28,6 +28,7 @@ import (
 	"govoice/server/api"
 	"govoice/server/auth"
 	"govoice/server/catalog"
+	"govoice/server/httptool"
 	"govoice/server/mcp"
 	"govoice/server/otelexport"
 	"govoice/server/storage"
@@ -42,42 +43,44 @@ var adminUIFS = adminui.Embedded()
 
 // Server represents the config-driven Switchboard server.
 type Server struct {
-	authFails             *rate.Limiter // global failed-management-auth allowance: burst 10, one more per 6 s
-	authNow               func() time.Time
-	clientIP              func(*http.Request) string // proxy-aware client address
-	secure                func(*http.Request) bool   // request arrived over TLS (directly or via a trusted proxy)
-	otel                  *otelexport.Exporter       // nil unless otel.enabled
-	redactor              *redact.Redactor           // sink redaction; never applied to the live LLM context
-	cfg                   *Config
-	adjustCall            func(*CallSpec) // tests only: changes the resolved call before it is built
-	catalog               *catalog.Catalog
-	metrics               *Metrics
-	timelines             *TimelineRegistry
-	admission             *AdmissionController
-	registry              *Registry
-	env                   func(string) string
-	resolver              *catalog.Resolver
-	availability          providerAvailability
-	validator             *token.Validator
-	management            *auth.Management
-	providerManagementAPI http.Handler
-	agentManagementAPI    http.Handler
-	mcpManagementAPI      http.Handler
-	secretsManagementAPI  http.Handler
-	sessionManagementAPI  http.Handler
-	store                 *storage.Store
-	startedAt             time.Time
-	voiceSignKey          []byte
-	voiceKeyID            string
-	voiceEpoch            string
-	drafts                *draftCalls
-	probes                probeGate
-	vadExecutor           vad.SharedExecutor
-	turnBackend           smartturn.Backend
-	mgmt                  atomic.Pointer[management]
-	agents                *agent.Service
-	mcpService            *mcp.Service
-	logger                *slog.Logger
+	authFails              *rate.Limiter // global failed-management-auth allowance: burst 10, one more per 6 s
+	authNow                func() time.Time
+	clientIP               func(*http.Request) string // proxy-aware client address
+	secure                 func(*http.Request) bool   // request arrived over TLS (directly or via a trusted proxy)
+	otel                   *otelexport.Exporter       // nil unless otel.enabled
+	redactor               *redact.Redactor           // sink redaction; never applied to the live LLM context
+	cfg                    *Config
+	adjustCall             func(*CallSpec) // tests only: changes the resolved call before it is built
+	catalog                *catalog.Catalog
+	metrics                *Metrics
+	timelines              *TimelineRegistry
+	admission              *AdmissionController
+	registry               *Registry
+	env                    func(string) string
+	resolver               *catalog.Resolver
+	availability           providerAvailability
+	validator              *token.Validator
+	management             *auth.Management
+	providerManagementAPI  http.Handler
+	agentManagementAPI     http.Handler
+	mcpManagementAPI       http.Handler
+	secretsManagementAPI   http.Handler
+	httpToolsManagementAPI http.Handler
+	sessionManagementAPI   http.Handler
+	store                  *storage.Store
+	startedAt              time.Time
+	voiceSignKey           []byte
+	voiceKeyID             string
+	voiceEpoch             string
+	drafts                 *draftCalls
+	probes                 probeGate
+	vadExecutor            vad.SharedExecutor
+	turnBackend            smartturn.Backend
+	mgmt                   atomic.Pointer[management]
+	agents                 *agent.Service
+	mcpService             *mcp.Service
+	httpTools              *httptool.Service
+	logger                 *slog.Logger
 
 	ready        atomic.Bool
 	shuttingDown atomic.Bool
@@ -308,6 +311,12 @@ func (s *Server) setAgentManagementAPI(handler http.Handler) {
 // authentication boundary. Configure it before serving requests.
 func (s *Server) setMCPManagementAPI(handler http.Handler) {
 	s.mcpManagementAPI = handler
+}
+
+// setHTTPToolsManagementAPI installs the HTTP tools handler behind the management listener
+// authentication boundary. Configure it before serving requests.
+func (s *Server) setHTTPToolsManagementAPI(handler http.Handler) {
+	s.httpToolsManagementAPI = handler
 }
 
 // setSecretsManagementAPI installs the secrets handler behind the management

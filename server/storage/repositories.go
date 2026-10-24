@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -76,6 +77,12 @@ func (s *Store) validateSelections(ctx context.Context, q queryer, selections []
 		return fmt.Errorf("%w: at most %d tools", ErrInvalidToolSelection, MaxSelectedTools)
 	}
 	for _, sel := range selections {
+		if strings.HasPrefix(sel.ServerID, HTTPToolRefPrefix) {
+			if err := s.validateHTTPSelection(ctx, q, sel); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := validID(sel.ServerID); err != nil {
 			return fmt.Errorf("%w: %v", ErrInvalidToolSelection, err)
 		}

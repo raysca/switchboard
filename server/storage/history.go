@@ -129,6 +129,12 @@ func (r SessionRepository) Create(ctx context.Context, v SessionRecord) error {
 				return errors.New("runtime MCP tool does not match agent version selection")
 			}
 			included[key] = true
+			if strings.HasPrefix(tool.ServerID, HTTPToolRefPrefix) {
+				if err := r.s.httpToolStartable(ctx, tx, strings.TrimPrefix(tool.ServerID, HTTPToolRefPrefix), tool.SchemaHash); err != nil {
+					return err
+				}
+				continue
+			}
 			query := "SELECT s.enabled,s.pending_delete,mt.schema_hash FROM mcp_servers s LEFT JOIN mcp_tools mt ON mt.discovery_id=s.latest_discovery_id AND mt.remote_name=? WHERE s.id=?"
 			if r.s.dialect == Postgres {
 				query += " FOR SHARE OF s"

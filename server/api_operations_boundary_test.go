@@ -92,8 +92,8 @@ func TestOperationsRouteUsesManagementBoundaryAndServesDiagnostics(t *testing.T)
 			if data.Database.Status != "connected" {
 				t.Errorf("got database status %s, want connected", data.Database.Status)
 			}
-			if data.Database.MigrationVersion != 10 {
-				t.Errorf("got migration version %d, want 10", data.Database.MigrationVersion)
+			if data.Database.MigrationVersion != 11 {
+				t.Errorf("got migration version %d, want 11", data.Database.MigrationVersion)
 			}
 			if data.VAD.WorkerStatus != "ready" {
 				t.Errorf("got vad status %s, want ready", data.VAD.WorkerStatus)

@@ -16,6 +16,7 @@ import (
 
 	"govoice/core"
 	"govoice/server/agent"
+	"govoice/server/httptool"
 	"govoice/server/mcp"
 	"govoice/server/storage"
 )
@@ -34,17 +35,38 @@ type Session struct {
 	runner    *sessionExecutor
 }
 
+// toolHandler is a captured tool of either kind (MCP or HTTP) as the executor runs it.
+type toolHandler interface {
+	ExecuteCall(ctx context.Context, args json.RawMessage, callID, sessionID, turnID string, generation uint64) (json.RawMessage, error)
+}
+
+type mcpHandler struct{ tool *mcp.CapturedTool }
+
+func (h mcpHandler) ExecuteCall(ctx context.Context, args json.RawMessage, callID, sessionID, turnID string, generation uint64) (json.RawMessage, error) {
+	result, err := h.tool.ExecuteCall(ctx, args, callID, sessionID, turnID, generation)
+	return result.JSON, err
+}
+
 type captured struct {
 	definition core.ToolDefinition
-	handler    *mcp.CapturedTool
+	handler    toolHandler
+	snapshot   agent.MCPToolSnapshot
 }
+
+// Option adds a tool kind to a session start.
+type Option func(*options)
+
+type options struct{ httpTools *httptool.Service }
+
+// WithHTTPTools lets the session capture the agent's HTTP tools; without it an agent that pins one cannot start.
+func WithHTTPTools(s *httptool.Service) Option { return func(o *options) { o.httpTools = s } }
 
 type sessionExecutor struct {
 	mu       sync.Mutex
 	closing  bool
 	inFlight int
 	drained  chan struct{}
-	handlers map[string]*mcp.CapturedTool
+	handlers map[string]toolHandler
 	async    map[string]bool // async tools: bounded by the loop's AsyncTimeout, not the MCP call timeout
 	// sessionID is the stored session's id. Calls carry the core session's
 	// numeric id, which history and trace rows cannot reference.
@@ -94,7 +116,7 @@ func (e *sessionExecutor) Execute(ctx context.Context, call core.ToolCall) (core
 		}{category, message})
 		return core.ToolResult{CallID: call.ID, Status: status, ErrorCategory: category, Result: body, StartedAt: started, EndedAt: ended}, nil
 	}
-	return core.ToolResult{CallID: call.ID, Status: core.ToolSucceeded, Result: append(json.RawMessage(nil), result.JSON...), StartedAt: started, EndedAt: ended}, nil
+	return core.ToolResult{CallID: call.ID, Status: core.ToolSucceeded, Result: append(json.RawMessage(nil), result...), StartedAt: started, EndedAt: ended}, nil
 }
 
 func (e *sessionExecutor) close(ctx context.Context) error {
@@ -122,7 +144,7 @@ func (e *sessionExecutor) close(ctx context.Context) error {
 // StartSession captures each selected MCP tool before persisting the session.
 // Required capture failures reject admission; optional failures produce no
 // wrapper. The MCP package holds the credential lease only in memory.
-func StartSession(ctx context.Context, agents *agent.Service, mcpService *mcp.Service, agentID, sessionID, caller string) (*Session, error) {
+func StartSession(ctx context.Context, agents *agent.Service, mcpService *mcp.Service, agentID, sessionID, caller string, opts ...Option) (*Session, error) {
 	if agents == nil || mcpService == nil {
 		return nil, errors.New("agent and MCP services are required")
 	}
@@ -130,43 +152,38 @@ func StartSession(ctx context.Context, agents *agent.Service, mcpService *mcp.Se
 	if err != nil {
 		return nil, err
 	}
-	return StartSnapshotSession(ctx, agents, mcpService, snapshot, sessionID, caller)
+	return StartSnapshotSession(ctx, agents, mcpService, snapshot, sessionID, caller, opts...)
 }
 
 // StartSnapshotSession starts a session from an already resolved snapshot: the
 // current version, or a draft over it (agent.Service.ResolveDraft).
-func StartSnapshotSession(ctx context.Context, agents *agent.Service, mcpService *mcp.Service, snapshot agent.Snapshot, sessionID, caller string) (*Session, error) {
+func StartSnapshotSession(ctx context.Context, agents *agent.Service, mcpService *mcp.Service, snapshot agent.Snapshot, sessionID, caller string, opts ...Option) (*Session, error) {
+	var o options
+	for _, apply := range opts {
+		apply(&o)
+	}
 	if agents == nil || mcpService == nil {
 		return nil, errors.New("agent and MCP services are required")
 	}
 	items := make([]captured, 0, len(snapshot.MCPTools))
 	agentCfg, _ := agent.StartConfig(snapshot.Version.Config) // already validated at publish; unusable config = no async tools
 	for _, tool := range snapshot.MCPTools {
-		capturedTool, captureErr := mcpService.CaptureTool(ctx, tool.ServerID, tool.RemoteName, tool.SchemaHash)
-		if captureErr != nil {
+		item, err := captureTool(ctx, mcpService, o.httpTools, agentCfg, tool)
+		if err != nil {
 			if tool.Required {
-				return nil, errors.New("required MCP tool could not be captured")
+				return nil, err
 			}
 			continue
 		}
-		name := runtimeToolName(tool.ServerID, tool.RemoteName)
-		if len(capturedTool.Schema()) > 32<<10 {
-			if tool.Required {
-				return nil, errors.New("required MCP schema exceeds framework tool limit")
-			}
-			continue
-		}
-		definition := core.ToolDefinition{Name: name, RemoteName: tool.RemoteName, Description: capturedTool.Description(), InputSchema: capturedTool.Schema(), Policy: core.ToolPolicy{Required: tool.Required, Async: agentCfg.IsAsyncTool(tool.ServerID, tool.RemoteName)}}
-		items = append(items, captured{definition: definition, handler: capturedTool})
+		items = append(items, item)
 	}
 	definitions := make([]core.ToolDefinition, 0, len(items))
 	metadata := make([]agent.MCPToolSnapshot, 0, len(items))
 	references := make([]agent.ToolSelection, 0, len(items))
 	for _, item := range items {
 		definitions = append(definitions, item.definition)
-		tool := item.handler
-		metadata = append(metadata, agent.MCPToolSnapshot{ServerID: tool.ServerID(), ServerName: tool.ServerName(), Endpoint: tool.Endpoint(), Transport: tool.Transport(), AuthEnv: tool.AuthEnv(), RemoteName: tool.Name(), Description: tool.Description(), SchemaJSON: tool.Schema(), SchemaHash: tool.SchemaHash(), Required: item.definition.Policy.Required})
-		references = append(references, agent.ToolSelection{ServerID: tool.ServerID(), RemoteName: tool.Name(), SchemaHash: tool.SchemaHash(), Required: item.definition.Policy.Required})
+		metadata = append(metadata, item.snapshot)
+		references = append(references, agent.ToolSelection{ServerID: item.snapshot.ServerID, RemoteName: item.snapshot.RemoteName, SchemaHash: item.snapshot.SchemaHash, Required: item.snapshot.Required})
 	}
 	snapshot.MCPTools = metadata
 	runtimeJSON, err := json.Marshal(metadata)
@@ -175,7 +192,7 @@ func StartSnapshotSession(ctx context.Context, agents *agent.Service, mcpService
 	}
 	// The core executor closes over captured server-side handles; only definitions
 	// and redacted snapshot metadata are persisted or exposed to the framework.
-	handlers := make(map[string]*mcp.CapturedTool, len(items))
+	handlers := make(map[string]toolHandler, len(items))
 	async := map[string]bool{}
 	for _, item := range items {
 		handlers[item.definition.Name] = item.handler
@@ -188,6 +205,35 @@ func StartSnapshotSession(ctx context.Context, agents *agent.Service, mcpService
 	}
 	runner.sessionID = pin.ID
 	return &Session{Pin: pin, Snapshot: snapshot, Definitions: definitions, Executor: runner, end: agents.EndSession, runner: runner}, nil
+}
+
+// captureTool pins one selected tool for the call: an MCP tool through the MCP service, an HTTP tool through the HTTP
+// tool service. The error names the kind and nothing else, so a required tool's failure is safe to return.
+func captureTool(ctx context.Context, mcpService *mcp.Service, httpTools *httptool.Service, cfg agent.Config, tool agent.MCPToolSnapshot) (captured, error) {
+	name := runtimeToolName(tool.ServerID, tool.RemoteName)
+	if httptool.IsRef(tool.ServerID) {
+		id, _ := httptool.IDFromRef(tool.ServerID)
+		if httpTools == nil {
+			return captured{}, errors.New("required HTTP tool could not be captured")
+		}
+		c, err := httpTools.Capture(ctx, id, tool.SchemaHash)
+		if err != nil || len(c.Schema()) > 32<<10 {
+			return captured{}, errors.New("required HTTP tool could not be captured")
+		}
+		definition := core.ToolDefinition{Name: name, RemoteName: tool.RemoteName, Description: c.Description(), InputSchema: c.Schema(), Policy: core.ToolPolicy{Required: tool.Required}}
+		snap := agent.MCPToolSnapshot{ServerID: tool.ServerID, ServerName: c.Name(), Endpoint: c.Endpoint(), Transport: "http", AuthEnv: c.AuthSecret(), RemoteName: tool.RemoteName, Description: c.Description(), SchemaJSON: c.Schema(), SchemaHash: c.Hash(), Required: tool.Required}
+		return captured{definition: definition, handler: c, snapshot: snap}, nil
+	}
+	c, err := mcpService.CaptureTool(ctx, tool.ServerID, tool.RemoteName, tool.SchemaHash)
+	if err != nil {
+		return captured{}, errors.New("required MCP tool could not be captured")
+	}
+	if len(c.Schema()) > 32<<10 {
+		return captured{}, errors.New("required MCP schema exceeds framework tool limit")
+	}
+	definition := core.ToolDefinition{Name: name, RemoteName: tool.RemoteName, Description: c.Description(), InputSchema: c.Schema(), Policy: core.ToolPolicy{Required: tool.Required, Async: cfg.IsAsyncTool(tool.ServerID, tool.RemoteName)}}
+	snap := agent.MCPToolSnapshot{ServerID: c.ServerID(), ServerName: c.ServerName(), Endpoint: c.Endpoint(), Transport: c.Transport(), AuthEnv: c.AuthEnv(), RemoteName: c.Name(), Description: c.Description(), SchemaJSON: c.Schema(), SchemaHash: c.SchemaHash(), Required: tool.Required}
+	return captured{definition: definition, handler: mcpHandler{c}, snapshot: snap}, nil
 }
 
 // MCPTool is the captured MCP tool a model-facing tool name stands for; false
@@ -247,6 +293,10 @@ func ToolName(serverID, remote string) string { return runtimeToolName(serverID,
 var invalidToolName = regexp.MustCompile(`[^A-Za-z0-9_.-]+`)
 
 func runtimeToolName(serverID, remote string) string {
+	if httptool.IsRef(serverID) {
+		// Tool names are unique and 1-40 characters of [a-z0-9_]; the prefix keeps them apart from MCP names and built-ins.
+		return "http_" + remote
+	}
 	server := strings.ReplaceAll(serverID, "-", "")
 	if len(server) > 8 {
 		server = server[:8]

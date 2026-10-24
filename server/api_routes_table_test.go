@@ -19,6 +19,7 @@ func TestManagementPrefixRouting(t *testing.T) {
 		{"/api/v1/agents", "agent_management_unavailable", (*Server).setAgentManagementAPI},
 		{"/api/v1/providers", "provider_management_unavailable", (*Server).setProviderManagementAPI},
 		{"/api/v1/mcp-servers", "mcp_management_unavailable", (*Server).setMCPManagementAPI},
+		{"/api/v1/http-tools", "http_tools_management_unavailable", (*Server).setHTTPToolsManagementAPI},
 		{"/api/v1/secrets", "secrets_management_unavailable", (*Server).setSecretsManagementAPI},
 		{"/api/v1/sessions", "session_management_unavailable", (*Server).setSessionManagementAPI},
 	}

@@ -47,10 +47,10 @@ func (s *Server) resolveCall(ctx context.Context, agentID, tokenID, caller strin
 	if draft, found := s.drafts.take(sessionID); found {
 		// The agent may have been archived, disabled or left unready since the token was issued.
 		if _, err = s.agents.ResolveCurrent(ctx, agentID); err == nil {
-			rs, err = runtime.StartSnapshotSession(ctx, s.agents, s.mcpService, draft.snapshot, sessionID, caller)
+			rs, err = runtime.StartSnapshotSession(ctx, s.agents, s.mcpService, draft.snapshot, sessionID, caller, runtime.WithHTTPTools(s.httpTools))
 		}
 	} else {
-		rs, err = runtime.StartSession(ctx, s.agents, s.mcpService, agentID, sessionID, caller)
+		rs, err = runtime.StartSession(ctx, s.agents, s.mcpService, agentID, sessionID, caller, runtime.WithHTTPTools(s.httpTools))
 	}
 	if err != nil {
 		return CallSpec{}, nil, fmt.Errorf("start agent session: %w", err)

@@ -36,7 +36,7 @@ func TestMigrationEmptyAndIdempotentReopen(t *testing.T) {
 			t.Fatal(err)
 		}
 		var n int
-		if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 10 {
+		if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 11 {
 			t.Fatalf("version=%d err=%v", n, err)
 		}
 		s.Close()
@@ -573,7 +573,7 @@ func TestMigrationUpgradeAndRollback(t *testing.T) {
 	}
 	defer s.Close()
 	var n int
-	if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 10 {
+	if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 11 {
 		t.Fatalf("upgrade version=%d err=%v", n, err)
 	}
 	// Goose runs each migration transactionally: failed DDL must not survive.
@@ -585,7 +585,7 @@ func TestMigrationUpgradeAndRollback(t *testing.T) {
 		}
 		files[name] = &fstest.MapFile{Data: body}
 	}
-	files["011_bad.sql"] = &fstest.MapFile{Data: []byte("-- +goose Up\nCREATE TABLE rollback_probe (id INTEGER);\nINSERT INTO absent_table VALUES (1);\n")}
+	files["012_bad.sql"] = &fstest.MapFile{Data: []byte("-- +goose Up\nCREATE TABLE rollback_probe (id INTEGER);\nINSERT INTO absent_table VALUES (1);\n")}
 	bad, err := goose.NewProvider(goose.DialectSQLite3, s.DB(), files)
 	if err != nil {
 		t.Fatal(err)
@@ -670,7 +670,7 @@ func TestMigrationPostgresUpgradeRollback(t *testing.T) {
 	}
 	defer s.Close()
 	var version int
-	if err := s.DB().QueryRowContext(ctx, "SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&version); err != nil || version != 10 {
+	if err := s.DB().QueryRowContext(ctx, "SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&version); err != nil || version != 11 {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	files := fstest.MapFS{}
@@ -681,7 +681,7 @@ func TestMigrationPostgresUpgradeRollback(t *testing.T) {
 		}
 		files[name] = &fstest.MapFile{Data: body}
 	}
-	files["011_bad.sql"] = &fstest.MapFile{Data: []byte("-- +goose Up\nCREATE TABLE rollback_probe (id INTEGER);\nINSERT INTO absent_table VALUES (1);\n")}
+	files["012_bad.sql"] = &fstest.MapFile{Data: []byte("-- +goose Up\nCREATE TABLE rollback_probe (id INTEGER);\nINSERT INTO absent_table VALUES (1);\n")}
 	bad, err := goose.NewProvider(goose.DialectPostgres, s.DB(), files)
 	if err != nil {
 		t.Fatal(err)

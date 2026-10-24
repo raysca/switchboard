@@ -25,10 +25,15 @@ type Service struct {
 	// tokenSet reports whether an MCP token variable has a value; nil counts
 	// every variable as set.
 	tokenSet func(name string) bool
+	// secretSet reports whether an HTTP tool's secret name resolves; nil counts as set.
+	secretSet func(name string) bool
 }
 
 // SetTokenEnv makes readiness report MCP servers whose token variable is unset.
 func (s *Service) SetTokenEnv(isSet func(name string) bool) { s.tokenSet = isSet }
+
+// SetSecretCheck makes readiness report HTTP tools whose secret name resolves to nothing; nil counts as resolved.
+func (s *Service) SetSecretCheck(isSet func(name string) bool) { s.secretSet = isSet }
 
 func NewService(store *storage.Store, av Availability) *Service {
 	return &Service{store: store, av: av}
@@ -485,7 +490,31 @@ func (s *Service) agentReadiness(ctx context.Context, version storage.AgentVersi
 	requiredFailure := ""
 	optionalWarning := false
 	var missing []string
+	// noteFailure records an unusable tool: a required tool whose pin is stale or gone needs a review, any other
+	// required failure makes the agent unavailable, and an optional tool only warns.
+	noteFailure := func(selection storage.SelectedTool, state string) {
+		if !selection.Required {
+			optionalWarning = true
+		} else if state == "schema_drift" || state == "tool_missing" || state == "tool_edited" {
+			requiredFailure = ReadinessNeedsToolReview
+		} else if requiredFailure == "" {
+			requiredFailure = ReadinessToolUnavailable
+		}
+	}
 	for _, selection := range selections {
+		if strings.HasPrefix(selection.ServerID, storage.HTTPToolRefPrefix) {
+			state, currentHash, snap, secret := s.httpToolDependency(ctx, selection)
+			if secret != "" {
+				missing = append(missing, secret)
+			}
+			dependencies = append(dependencies, ToolDependency{ServerID: selection.ServerID, RemoteName: selection.RemoteName, Required: selection.Required, State: state, SelectedSchemaHash: selection.SchemaHash, CurrentSchemaHash: currentHash})
+			if state != "ready" {
+				noteFailure(selection, state)
+				continue
+			}
+			snapshots = append(snapshots, snap)
+			continue
+		}
 		state := "ready"
 		currentHash := ""
 		server, serverErr := s.store.MCP().Server(ctx, selection.ServerID)
@@ -518,15 +547,7 @@ func (s *Service) agentReadiness(ctx context.Context, version storage.AgentVersi
 		}
 		dependencies = append(dependencies, ToolDependency{ServerID: selection.ServerID, RemoteName: selection.RemoteName, Required: selection.Required, State: state, SelectedSchemaHash: selection.SchemaHash, CurrentSchemaHash: currentHash})
 		if state != "ready" {
-			if selection.Required {
-				if state == "schema_drift" || state == "tool_missing" {
-					requiredFailure = ReadinessNeedsToolReview
-				} else if requiredFailure == "" {
-					requiredFailure = ReadinessToolUnavailable
-				}
-			} else {
-				optionalWarning = true
-			}
+			noteFailure(selection, state)
 			continue
 		}
 		schema, schemaErr := s.store.MCP().Schema(ctx, selection.ServerID, selection.RemoteName, selection.SchemaHash)
@@ -639,3 +660,46 @@ func toStorageSelections(tools []ToolSelection) ([]storage.SelectedTool, error) 
 }
 
 func boolPointer(value bool) *bool { return &value }
+
+// httpToolDependency evaluates a pinned HTTP tool. The state is ready, tool_missing (deleted, or the pinned
+// definition is gone), tool_disabled, secret_missing (the secret name resolves to nothing; its name is returned) or
+// tool_edited (the tool has a newer definition than the one pinned, which must be reviewed again). The snapshot is
+// built from the pinned definition.
+func (s *Service) httpToolDependency(ctx context.Context, sel storage.SelectedTool) (state, currentHash string, snap MCPToolSnapshot, missingSecret string) {
+	id := strings.TrimPrefix(sel.ServerID, storage.HTTPToolRefPrefix)
+	tool, err := s.store.HTTPTools().Get(ctx, id)
+	if err != nil {
+		return "tool_missing", "", snap, ""
+	}
+	currentHash = tool.CurrentHash
+	raw, err := s.store.HTTPTools().Definition(ctx, id, sel.SchemaHash)
+	if err != nil {
+		return "tool_missing", currentHash, snap, ""
+	}
+	var def struct {
+		Name        string          `json:"name"`
+		Description string          `json:"description"`
+		URL         string          `json:"url"`
+		InputSchema json.RawMessage `json:"input_schema"`
+		Auth        *struct {
+			Secret string `json:"secret"`
+		} `json:"auth"`
+	}
+	if err := json.Unmarshal(raw, &def); err != nil || def.Name != sel.RemoteName {
+		return "tool_missing", currentHash, snap, ""
+	}
+	if !tool.Enabled {
+		return "tool_disabled", currentHash, snap, ""
+	}
+	secret := ""
+	if def.Auth != nil {
+		secret = def.Auth.Secret
+		if s.secretSet != nil && !s.secretSet(secret) {
+			return "secret_missing", currentHash, snap, secret
+		}
+	}
+	if currentHash != sel.SchemaHash {
+		return "tool_edited", currentHash, snap, ""
+	}
+	return "ready", currentHash, MCPToolSnapshot{ServerID: sel.ServerID, ServerName: def.Name, Endpoint: def.URL, Transport: "http", AuthEnv: secret, RemoteName: sel.RemoteName, Description: def.Description, SchemaJSON: def.InputSchema, SchemaHash: sel.SchemaHash, Required: sel.Required}, ""
+}

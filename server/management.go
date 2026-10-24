@@ -14,6 +14,7 @@ import (
 	"govoice/core/record"
 	"govoice/server/agent"
 	"govoice/server/api"
+	"govoice/server/httptool"
 	"govoice/server/mcp"
 	"govoice/server/retention"
 	"govoice/server/secrets"
@@ -71,11 +72,12 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 			s.logger.Info("secrets re-sealed under the first master key", slog.Int("count", n))
 		}
 	}
-	mcpTokens := mcp.ResolverTokens(secrets.Chain{
+	secretChain := secrets.Chain{
 		secrets.Env{Getenv: func(k string) string { return s.env(k) }},
 		secrets.Dir{Path: s.cfg.Secrets.Dir},
 		m.secrets,
-	})
+	}
+	mcpTokens := mcp.ResolverTokens(secretChain)
 	mcpCfg := mcp.ServiceConfig{Store: store, Remote: mcp.NewSDKClient(), Tokens: mcpTokens, Tracer: m.traces, Timeout: s.cfg.MCP.Timeout}
 	if s.cfg.MCP.AllowLocalHTTP {
 		s.logger.Warn("MCP allows plain HTTP to loopback (development and tests)")
@@ -85,6 +87,11 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	mcpService, err := mcp.NewService(mcpCfg)
 	if err != nil {
 		return fail(fmt.Errorf("mcp service: %w", err))
+	}
+
+	httpTools, err := httptool.NewService(httptool.Config{Store: store, Secrets: secretChain, AllowLocalHTTP: s.cfg.MCP.AllowLocalHTTP, Tracer: m.traces})
+	if err != nil {
+		return fail(fmt.Errorf("http tools: %w", err))
 	}
 
 	// Validate everything that can fail before installing handlers, so a failed
@@ -106,6 +113,11 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	// both run before anything points at the store fail() closes.
 	agents := agent.NewService(store, s.availability)
 	agents.SetTokenEnv(mcpTokens.Has)
+	agents.SetSecretCheck(func(name string) bool {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		return httpTools.SecretSet(ctx, name)
+	})
 	if bad := s.unavailableAgentProviders(ctx, agents); len(bad) > 0 {
 		for _, b := range bad {
 			s.logger.Error("agent references a provider this build cannot run", slog.String("problem", b))
@@ -124,11 +136,13 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	s.setStore(store)
 	s.endOrphanedSessions(ctx, store)
 	s.mcpService = mcpService
+	s.httpTools = httpTools
 	s.setProviderManagementAPI(s.providersRoutes())
 	s.agents = agents
 	s.setAgentManagementAPI(api.NewAgentsHandler(s.agents))
 	s.setMCPManagementAPI(mcp.Handler(mcpService))
-	s.setSecretsManagementAPI(secrets.Handler(secrets.Sources{Env: secrets.Env{Getenv: func(k string) string { return s.env(k) }}, Dir: secrets.Dir{Path: s.cfg.Secrets.Dir}, Store: m.secrets, Logger: s.logger}))
+	s.setHTTPToolsManagementAPI(httptool.Handler(httpTools))
+	s.setSecretsManagementAPI(secrets.Handler(secrets.Sources{Env: secrets.Env{Getenv: func(k string) string { return s.env(k) }}, Dir: secrets.Dir{Path: s.cfg.Secrets.Dir}, Store: m.secrets, Uses: httpTools.SecretUses, Logger: s.logger}))
 	s.setSessionManagementAPI(api.NewTracesHandler(store.Sessions(), store.Traces()))
 
 	if policy != nil {

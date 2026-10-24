@@ -1,6 +1,7 @@
 package secrets
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"govoice/server/api"
+	"govoice/server/storage"
 )
 
 // SecretView is a secret without its value. Writes go through PUT and the value is never read back by any endpoint.
@@ -28,9 +30,11 @@ type SecretList struct {
 
 // Sources are the backends the handler lists and writes to.
 type Sources struct {
-	Env     Env
-	Dir     Dir
-	Store   Store
+	Env   Env
+	Dir   Dir
+	Store Store
+	// Uses lists what besides MCP servers refers to a secret (HTTP tools); it may be nil.
+	Uses    func(ctx context.Context, name string) ([]storage.SecretUse, error)
 	Environ func() []string // defaults to os.Environ
 	Logger  *slog.Logger
 }
@@ -132,6 +136,12 @@ func del(w http.ResponseWriter, r *http.Request, src Sources, log *slog.Logger, 
 		return
 	}
 	uses, err := src.Store.Repo.Uses(r.Context(), name)
+	if err == nil && src.Uses != nil {
+		var more []storage.SecretUse
+		if more, err = src.Uses(r.Context(), name); err == nil {
+			uses = append(uses, more...)
+		}
+	}
 	if err != nil {
 		api.WriteError(w, 500, "internal_error", "secrets unavailable", id)
 		return
