@@ -3323,6 +3323,21 @@ textarea.mono {
   border-radius: var(--radius-lg);
   overflow: hidden;
 }
+.server-card .retention-history {
+  padding: 16px 22px;
+  border-top: 1px solid var(--rule);
+}
+.server-card .retention-history h3 {
+  margin: 0 0 8px;
+  font-size: 0.875rem;
+  color: var(--ink-2);
+}
+.server-card .retention-history li + li {
+  margin-top: 4px;
+}
+.server-card .retention-preview {
+  padding: 16px 22px;
+}
 .server-card .table-scroll {
   margin-top: 0;
 }

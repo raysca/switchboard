@@ -80,6 +80,7 @@ describe("CallsView", () => {
     expect(await screen.findAllByText("On hold", { selector: "td .chip" })).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "On hold" }));
     expect(screen.getByTestId("where")).toHaveTextContent("/sessions?held=1");
+    expect(screen.getByRole("button", { name: "On hold" })).toHaveAttribute("aria-pressed", "true");
     expect(getSessions).toHaveBeenLastCalledWith(expect.objectContaining({ held: true }));
   });
 

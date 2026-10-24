@@ -57,7 +57,7 @@ export function RetentionCard({ client }: { client: ApiClient }) {
         ]}
       />
       {r.recent_actions.length > 0 && (
-        <section aria-label="Recent holds and erasures">
+        <section aria-label="Recent holds and erasures" className="retention-history">
           <h3>Recent holds and erasures</h3>
           <ul className="plain-list">
             {r.recent_actions.map((a) => (
