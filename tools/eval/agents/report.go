@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"unicode"
+
+	"govoice/server/eval"
 )
 
 const (
@@ -33,17 +35,17 @@ type CaseResult struct {
 
 // RunResult is one call: what the server stored, what the client saw, and what failed.
 type RunResult struct {
-	SessionID      string   `json:"session_id"`
-	AgentVersionID string   `json:"agent_version_id"`
-	ConfigHash     string   `json:"config_hash"`
-	Path           []string `json:"path"`
-	Tools          []string `json:"tools"`
-	EndReason      string   `json:"end_reason"`
-	TurnCount      int      `json:"turn_count"`
-	MedianReplyMS  int      `json:"median_reply_ms"`
-	Errors         []string `json:"errors"` // harness problems: setup, timeouts
-	Transcript     []Line   `json:"transcript"`
-	Failures       []string `json:"failures"` // failed assertions
+	SessionID      string      `json:"session_id"`
+	AgentVersionID string      `json:"agent_version_id"`
+	ConfigHash     string      `json:"config_hash"`
+	Path           []string    `json:"path"`
+	Tools          []string    `json:"tools"`
+	EndReason      string      `json:"end_reason"`
+	TurnCount      int         `json:"turn_count"`
+	MedianReplyMS  int         `json:"median_reply_ms"`
+	Errors         []string    `json:"errors"` // harness problems: setup, timeouts
+	Transcript     []eval.Line `json:"transcript"`
+	Failures       []string    `json:"failures"` // failed assertions
 }
 
 // OK reports whether the run had no harness error and no failed assertion.
@@ -59,9 +61,9 @@ func (r Report) view() Report {
 			run := &out.Results[i].Runs[j]
 			run.Path, run.Tools = nonNil(run.Path), nonNil(run.Tools)
 			run.Errors, run.Failures = nonNil(run.Errors), nonNil(run.Failures)
-			tr := make([]Line, len(run.Transcript))
+			tr := make([]eval.Line, len(run.Transcript))
 			for k, l := range run.Transcript {
-				tr[k] = Line{l.Who, truncate(l.Text, maxReportLine)}
+				tr[k] = eval.Line{Who: l.Who, Text: eval.Truncate(l.Text, maxReportLine)}
 			}
 			run.Transcript = tr
 		}
@@ -132,7 +134,7 @@ func WriteText(w io.Writer, r Report) {
 			}
 		}
 	}
-	if r.Mode == modeEcho {
+	if r.Mode == eval.ModeEcho {
 		fmt.Fprintln(w, echoModeNote)
 	}
 	fmt.Fprintf(w, "agent-eval: %d passed, %d failed (%s)\n", passed, len(r.Results)-passed, r.Mode)

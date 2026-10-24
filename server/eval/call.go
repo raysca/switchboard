@@ -1,4 +1,4 @@
-package main
+package eval
 
 import (
 	"context"
@@ -10,110 +10,69 @@ import (
 	"time"
 
 	"govoice/server/agent"
-	"govoice/server/api"
-	"govoice/tools/internal/stack"
+	"govoice/server/storage"
 	"govoice/transport/wsclient"
 )
 
 const (
-	evalPrincipal  = "agent-eval" // the Calls page shows this as the caller
-	maxAgentPages  = 50
-	agentPageSize  = 100
+	// Principal is the caller label of every eval call; the Calls page shows it.
+	Principal      = "agent-eval"
 	sessionEndWait = 15 * time.Second
 	rowsSettleWait = 500 * time.Millisecond // tool rows are written by a per-call goroutine
 	tracesWait     = 5 * time.Second        // handoff spans arrive through the async trace queue
+	pollEvery      = 200 * time.Millisecond
 )
 
-// opts bounds one call.
-type opts struct {
+// Opts bounds one call.
+type Opts struct {
 	TurnTimeout time.Duration // per typed turn: reply plus settle
 	Quiet       time.Duration // no agent activity for this long ends a turn
 }
 
-// agentRef is a stored agent resolved for one case: the version that will run, and the
+// Agent is a stored agent version resolved for one case: the version that will run, and the
 // rewritten (text-only) config the call runs as a draft.
-type agentRef struct {
+type Agent struct {
 	ID, Name  string
-	Version   agent.Version
+	VersionID string
+	Version   int
 	Start     string
 	StepNames map[string]string // step id -> name
+	Prompts   map[string]string // step id -> system prompt, for the judges
 	Draft     json.RawMessage
+	Tools     []agent.ToolSelection
 }
 
-// resolveAgent finds an agent by id or exact name and the version to test (0: the current one),
-// and rewrites that version's config for mode.
-func resolveAgent(srv *stack.Server, key string, version int, mode string) (agentRef, error) {
-	var found []agent.Agent
-	for page, more := 0, true; more && page < maxAgentPages; page++ {
-		d, err := srv.Call("GET", fmt.Sprintf("agents?limit=%d&offset=%d", agentPageSize, page*agentPageSize), nil)
-		if err != nil {
-			return agentRef{}, fmt.Errorf("list agents: %w", err)
-		}
-		var items []agent.Agent
-		if err := json.Unmarshal(d, &items); err != nil {
-			return agentRef{}, fmt.Errorf("list agents: %w", err)
-		}
-		for _, a := range items {
-			if !a.Archived && (a.ID == key || a.Name == key) {
-				found = append(found, a)
-			}
-		}
-		more = len(items) == agentPageSize
-	}
-	switch len(found) {
-	case 0:
-		return agentRef{}, fmt.Errorf("agent %q: no such agent (match by id or exact name)", key)
-	case 1:
-	default:
-		return agentRef{}, fmt.Errorf("agent %q: %d agents match, use the id", key, len(found))
-	}
-	a := found[0]
-	ver := a.Version
-	if version > 0 {
-		d, err := srv.Call("GET", fmt.Sprintf("agents/%s/versions/%d", a.ID, version), nil)
-		if err != nil {
-			return agentRef{}, fmt.Errorf("agent %q version %d: %w", key, version, err)
-		}
-		ver = new(agent.Version)
-		if err := json.Unmarshal(d, ver); err != nil {
-			return agentRef{}, fmt.Errorf("agent %q version %d: %w", key, version, err)
-		}
-	}
-	if ver == nil {
-		return agentRef{}, fmt.Errorf("agent %q has no published version", key)
-	}
-	def, err := agent.Decode(ver.Config)
-	if err != nil {
-		return agentRef{}, fmt.Errorf("agent %q: %w", key, err)
-	}
-	draft, err := Rewrite(ver.Config, mode)
-	if err != nil {
-		return agentRef{}, fmt.Errorf("agent %q: %w", key, err)
-	}
-	ref := agentRef{ID: a.ID, Name: a.Name, Version: *ver, Start: def.Start, Draft: draft, StepNames: map[string]string{}}
-	for _, s := range def.Steps {
-		ref.StepNames[s.ID] = s.Name
-	}
-	return ref, nil
+// Target is where an eval call runs: it issues the draft token, names the public listener to dial
+// and reads back what the server stored for the call. The CLI reaches a server over HTTP; the server
+// itself reaches its own stores.
+type Target interface {
+	DraftToken(ctx context.Context, a Agent) (string, error)
+	PublicAddr() string
+	Stored(ctx context.Context, sessionID string) (Stored, error)
 }
 
-// draftToken mints a voice token for a call on the rewritten draft of the resolved version. The
-// version's own tool selection is the draft's, so an older version runs with its own tools.
-func draftToken(srv *stack.Server, a agentRef) (string, error) {
-	tools := a.Version.MCPTools
-	if tools == nil {
-		tools = []agent.ToolSelection{}
-	}
-	d, err := srv.Call("POST", "voice-tokens", api.VoiceTokenRequest{
-		Principal: evalPrincipal, AgentID: a.ID, Draft: &api.DraftRequest{Config: a.Draft, MCPTools: &tools}})
-	if err != nil {
-		return "", fmt.Errorf("voice token: %w", err)
-	}
-	var t api.VoiceTokenResponse
-	if err := json.Unmarshal(d, &t); err != nil || t.Token == "" {
-		return "", errors.New("voice token: empty response")
-	}
-	return t.Token, nil
+// Stored is the server's view of one call.
+type Stored struct {
+	Session storage.SessionRecord
+	Turns   []storage.TurnRecord
+	Spans   []storage.TraceSpan
+	Tools   []storage.ToolCallRecord
+}
+
+// Observed is everything one call showed: the stored rows and what the client saw.
+type Observed struct {
+	SessionID    string
+	Stored       Stored
+	Transcript   []Line // the client's view, for reports
+	ReplyMS      []int  // typed turn -> first bot-llm-text
+	ClientErrors int    // RTVI error messages that are not the call's own end
+	Dropped      int    // client events past the cap: the call is only partly seen
+}
+
+// sentTurn is one typed caller turn.
+type sentTurn struct {
+	At   time.Time
+	Text string
 }
 
 // jti reads the token id (the stored session id) from a JWT's payload. The signature is not
@@ -180,7 +139,7 @@ func turnState(ev []wsclient.Event, mark time.Time) (last time.Time, text, open 
 // waitSettled returns once the agent has shown no activity for o.Quiet after mark, has no reply
 // open (see turnState) and, when needText, has said something since mark. It returns early (nil)
 // when the connection ends, e.g. after end_call, and fails at o.TurnTimeout.
-func waitSettled(ctx context.Context, cl *wsclient.Client, mark time.Time, needText bool, o opts) error {
+func waitSettled(ctx context.Context, cl *wsclient.Client, mark time.Time, needText bool, o Opts) error {
 	deadline := time.Now().Add(o.TurnTimeout)
 	tick := time.NewTicker(25 * time.Millisecond)
 	defer tick.Stop()
@@ -213,11 +172,11 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// runOnce makes one call: draft token, dial, caller turns, hang-up (unless the agent ended it),
-// then the stored session and traces. A harness problem (timeout, API error) comes back as err
-// together with whatever was observed.
-func runOnce(ctx context.Context, srv *stack.Server, a agentRef, next NextFunc, o opts) (Observed, error) {
-	tok, err := draftToken(srv, a)
+// RunCall makes one call: draft token, dial, caller turns, hang-up (unless the agent ended it),
+// then the stored rows. A harness problem (timeout, API error) comes back as err together with
+// whatever was observed.
+func RunCall(ctx context.Context, t Target, a Agent, next NextFunc, o Opts) (Observed, error) {
+	tok, err := t.DraftToken(ctx, a)
 	if err != nil {
 		return Observed{}, err
 	}
@@ -225,7 +184,7 @@ func runOnce(ctx context.Context, srv *stack.Server, a agentRef, next NextFunc, 
 	if err != nil {
 		return Observed{}, err
 	}
-	cl, err := wsclient.Dial(ctx, srv.Public, tok, false)
+	cl, err := wsclient.Dial(ctx, t.PublicAddr(), tok, false)
 	if err != nil {
 		return Observed{}, fmt.Errorf("call %s: %w", id, err)
 	}
@@ -234,7 +193,7 @@ func runOnce(ctx context.Context, srv *stack.Server, a agentRef, next NextFunc, 
 	var (
 		errs []error
 		hist []Line
-		sent []Sent
+		sent []sentTurn
 	)
 	if err := waitSettled(ctx, cl, cl.T0, false, o); err != nil { // the greeting, if any
 		errs = append(errs, fmt.Errorf("greeting: %w", err))
@@ -263,7 +222,7 @@ turns:
 			break
 		}
 		mark := time.Now()
-		sent = append(sent, Sent{At: mark, Text: line})
+		sent = append(sent, sentTurn{At: mark, Text: line})
 		if err := cl.SendText(line); err != nil {
 			select {
 			case <-cl.Closed():
@@ -282,72 +241,138 @@ turns:
 	}
 	cl.Close() // the caller hangs up; a no-op when the agent already did
 
-	sess, tr, err := fetchCall(ctx, srv, id)
+	st, err := fetchStored(ctx, t, id)
 	if err != nil {
 		errs = append(errs, err)
 	}
-	obs := Observe(sess, tr, a.Start, cl.Snap(), sent)
-	obs.SessionID, obs.Dropped = id, cl.Dropped()
+	ev := cl.Snap()
+	obs := Observed{SessionID: id, Stored: st, Dropped: cl.Dropped()}
+	obs.Transcript, obs.ReplyMS = clientView(ev, sent)
+	obs.ClientErrors = clientErrors(st.Session.EndReason, ev)
 	return obs, errors.Join(errs...)
 }
 
-// fetchCall waits for the stored session to end, lets the asynchronous rows land, and reads the
-// session and its traces.
-func fetchCall(ctx context.Context, srv *stack.Server, id string) (api.SessionDTO, api.SessionTracesDTO, error) {
-	var sess api.SessionDTO
-	var tr api.SessionTracesDTO
+// fetchStored waits for the stored session to end, lets the asynchronous rows land, and reads the
+// session, its turns and its traces.
+func fetchStored(ctx context.Context, t Target, id string) (Stored, error) {
+	var st Stored
 	ended := false
 	for end := time.Now().Add(sessionEndWait); time.Now().Before(end) && !ended; {
-		if d, err := srv.Call("GET", "sessions/"+id, nil); err == nil && json.Unmarshal(d, &sess) == nil {
-			ended = sess.EndedAt != nil
+		if s, err := t.Stored(ctx, id); err == nil {
+			st, ended = s, !s.Session.EndedAt.IsZero()
 		}
 		if !ended {
-			if err := sleepCtx(ctx, 200*time.Millisecond); err != nil {
-				return sess, tr, err
+			if err := sleepCtx(ctx, pollEvery); err != nil {
+				return st, err
 			}
 		}
 	}
 	if !ended {
-		return sess, tr, fmt.Errorf("session %s did not end within %s", id, sessionEndWait)
+		return st, fmt.Errorf("session %s did not end within %s", id, sessionEndWait)
 	}
 	if err := sleepCtx(ctx, rowsSettleWait); err != nil {
-		return sess, tr, err
+		return st, err
 	}
 	// Handoff spans go through the asynchronous trace queue and may land after the tool rows: poll
 	// until every transfer tool has its span, or give up loudly.
 	for end := time.Now().Add(tracesWait); ; {
-		d, err := srv.Call("GET", "sessions/"+id+"/traces", nil)
-		if err == nil {
-			tr = api.SessionTracesDTO{}
-			err = json.Unmarshal(d, &tr)
-		}
+		s, err := t.Stored(ctx, id)
 		if err != nil {
-			return sess, tr, fmt.Errorf("session %s traces: %w", id, err)
+			return st, fmt.Errorf("session %s traces: %w", id, err)
 		}
-		if tracesComplete(tr) {
-			return sess, tr, nil
+		st = s
+		if tracesComplete(st) {
+			return st, nil
 		}
 		if time.Now().After(end) {
-			return sess, tr, fmt.Errorf("session %s: traces incomplete: a transfer tool has no handoff span after %s", id, tracesWait)
+			return st, fmt.Errorf("session %s: traces incomplete: a transfer tool has no handoff span after %s", id, tracesWait)
 		}
-		if err := sleepCtx(ctx, 200*time.Millisecond); err != nil {
-			return sess, tr, err
+		if err := sleepCtx(ctx, pollEvery); err != nil {
+			return st, err
 		}
 	}
 }
 
 // tracesComplete reports whether every transfer_to_* tool call has its handoff span (active or failed).
-func tracesComplete(tr api.SessionTracesDTO) bool {
+func tracesComplete(st Stored) bool {
 	transfers, spans := 0, 0
-	for _, c := range tr.ToolCalls {
+	for _, c := range st.Tools {
 		if strings.HasPrefix(c.RemoteName, "transfer_to_") {
 			transfers++
 		}
 	}
-	for _, sp := range tr.Spans {
+	for _, sp := range st.Spans {
 		if sp.Name == "handoff.active" || sp.Name == "handoff.failed" {
 			spans++
 		}
 	}
 	return spans >= transfers
+}
+
+// clientView builds the client-side transcript and the typed-turn reply times from the RTVI events.
+func clientView(ev []wsclient.Event, sent []sentTurn) (transcript []Line, replyMS []int) {
+	// agentText joins the bot text that arrived in [from, to); a new LLM reply starts a new sentence.
+	agentText := func(from, to time.Time) string {
+		var b strings.Builder
+		for _, e := range ev {
+			if e.At.Before(from) || (!to.IsZero() && !e.At.Before(to)) {
+				continue
+			}
+			switch e.Kind {
+			case "bot-llm-started":
+				if b.Len() > 0 {
+					b.WriteByte(' ')
+				}
+			case "bot-llm-text":
+				b.WriteString(e.Text)
+			}
+		}
+		return strings.TrimSpace(b.String())
+	}
+	add := func(who, text string) {
+		if text != "" {
+			transcript = append(transcript, Line{who, text})
+		}
+	}
+	if len(sent) > 0 {
+		add("agent", agentText(time.Time{}, sent[0].At))
+	} else {
+		add("agent", agentText(time.Time{}, time.Time{}))
+	}
+	for i, s := range sent {
+		var next time.Time
+		if i+1 < len(sent) {
+			next = sent[i+1].At
+		}
+		add("caller", s.Text)
+		add("agent", agentText(s.At, next))
+		for _, e := range ev {
+			if e.Kind == "bot-llm-text" && !e.At.Before(s.At) && (next.IsZero() || e.At.Before(next)) {
+				replyMS = append(replyMS, int(e.At.Sub(s.At).Milliseconds()))
+				break
+			}
+		}
+	}
+	return transcript, replyMS
+}
+
+// clientErrors counts the RTVI error messages that are faults.
+func clientErrors(endReason string, ev []wsclient.Event) (n int) {
+	for i, e := range ev {
+		if e.Kind == "error" && !isEndMessage(endReason, e.Text, i == len(ev)-1) {
+			n++
+		}
+	}
+	return n
+}
+
+// endMessages is what the server sends as the closing RTVI error message when the stored end reason
+// is not the same word (server/server.go: idle controller reasons and the call time limit).
+var endMessages = map[string]string{"silent_caller": "user_idle", "agent_stuck": "bot_idle", "time_limit": "max_call_duration"}
+
+// isEndMessage reports whether an RTVI error message is the server closing the call with its end
+// reason, which is not a fault: the reason itself, or (as the last event before the close) the
+// word the server uses for it.
+func isEndMessage(endReason, text string, last bool) bool {
+	return endReason != "" && (text == endReason || (last && text == endMessages[endReason]))
 }

@@ -26,7 +26,7 @@ There is no LLM judge. Assertions are structural (step path, tool names and stat
 
 ## Case format
 
-One case per file, `*.yaml` or `*.yml`, in a directory (default `tools/eval/agents/cases`). Unknown keys are refused. An omitted `expect` key is not checked.
+One or more cases per file (YAML documents separated by `---`), `*.yaml` or `*.yml`, in a directory (default `tools/eval/agents/cases`). Unknown keys are refused. An omitted `expect` key is not checked.
 
 ```yaml
 name: dealership-buyer-reaches-sales      # unique across the directory

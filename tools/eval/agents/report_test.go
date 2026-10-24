@@ -7,17 +7,19 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"govoice/server/eval"
 )
 
 func fixedReport() Report {
 	return Report{Schema: reportSchema, Mode: "echo", Results: []CaseResult{
 		{Case: "b-fails", Runs: []RunResult{{SessionID: "s2", AgentVersionID: "v1", ConfigHash: "h2", Path: []string{"front"},
 			Tools: []string{}, EndReason: "caller_hung_up", TurnCount: 1, MedianReplyMS: 90,
-			Errors: []string{"turn 1: no reply within 45s"}, Transcript: []Line{{"caller", "hi"}, {"agent", strings.Repeat("x", 600)}},
+			Errors: []string{"turn 1: no reply within 45s"}, Transcript: []eval.Line{{Who: "caller", Text: "hi"}, {Who: "agent", Text: strings.Repeat("x", 600)}},
 			Failures: []string{"path: want [front sales], got [front]"}}}},
 		{Case: "a-passes", Passed: true, Runs: []RunResult{{SessionID: "s1", AgentVersionID: "v7", ConfigHash: "abc", Path: []string{"front", "sales"},
 			Tools: []string{"transfer_to_sales:succeeded"}, EndReason: "caller_hung_up", TurnCount: 3, MedianReplyMS: 380,
-			Errors: []string{}, Transcript: []Line{{"caller", "I want a car"}, {"agent", "Sure."}}, Failures: []string{}}}},
+			Errors: []string{}, Transcript: []eval.Line{{Who: "caller", Text: "I want a car"}, {Who: "agent", Text: "Sure."}}, Failures: []string{}}}},
 	}}
 }
 
@@ -101,7 +103,7 @@ func TestReportJSON(t *testing.T) {
 
 func TestReportQuotesControlCharacters(t *testing.T) {
 	r := fixedReport()
-	r.Results[1].Runs[0].Transcript = []Line{{"agent", "a\x1b[31mred\nnext\ttab\u0085 ok é"}}
+	r.Results[1].Runs[0].Transcript = []eval.Line{{Who: "agent", Text: "a\x1b[31mred\nnext\ttab\u0085 ok é"}}
 	r.Results[1].Runs[0].Failures = []string{"never_say: matched \"\x1b[2J\""}
 	var b bytes.Buffer
 	WriteText(&b, r)

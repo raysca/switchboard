@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"govoice/server/eval"
 	"govoice/tools/internal/stack"
 )
 
@@ -25,7 +26,7 @@ type config struct {
 	Dir, Only, Mode, JSON, Admin, Public string
 	CallerLLM, CallerURL, CallerModel    string
 	Version, Runs, MinPass, MaxTurns     int
-	Opts                                 opts
+	Opts                                 eval.Opts
 	Selftest                             bool
 }
 
@@ -36,7 +37,7 @@ func parseFlags(args []string, usage io.Writer) (config, error) {
 	fs.SetOutput(io.Discard)
 	fs.StringVar(&c.Dir, "cases", "tools/eval/agents/cases", "directory of case files (*.yaml, *.yml)")
 	fs.StringVar(&c.Only, "case", "", "comma-separated case names to run (default all)")
-	fs.StringVar(&c.Mode, "providers", modeKeep, "model under test: keep (the agent's own, paid), offline (Ollama) or echo (plumbing only)")
+	fs.StringVar(&c.Mode, "providers", eval.ModeKeep, "model under test: keep (the agent's own, paid), offline (Ollama) or echo (plumbing only)")
 	fs.IntVar(&c.Version, "version", 0, "run this published version of each agent (default the current one)")
 	fs.IntVar(&c.Runs, "runs", 1, "runs per case")
 	fs.IntVar(&c.MinPass, "min-pass", 1, "runs that must pass for a case to pass")
@@ -61,7 +62,7 @@ func parseFlags(args []string, usage io.Writer) (config, error) {
 		return c, err
 	}
 	switch {
-	case c.Mode != modeKeep && c.Mode != modeOffline && c.Mode != modeEcho:
+	case c.Mode != eval.ModeKeep && c.Mode != eval.ModeOffline && c.Mode != eval.ModeEcho:
 		return c, fmt.Errorf("-providers %q: want keep, offline or echo", c.Mode)
 	case c.Runs < 1 || c.MinPass < 1 || c.MinPass > c.Runs:
 		return c, errors.New("-runs must be at least 1 and -min-pass between 1 and -runs")
@@ -76,7 +77,7 @@ func parseFlags(args []string, usage io.Writer) (config, error) {
 }
 
 // plannedTurns is the caller turns a run will type.
-func plannedTurns(cases []Case, runs int) (n int) {
+func plannedTurns(cases []eval.Case, runs int) (n int) {
 	for _, c := range cases {
 		if p := c.Caller.Persona; p != nil {
 			n += p.MaxTurns * runs
@@ -88,7 +89,7 @@ func plannedTurns(cases []Case, runs int) (n int) {
 }
 
 // checkPlan refuses a run before its first call: more caller turns than the cap.
-func checkPlan(cases []Case, runs, maxTurns int) error {
+func checkPlan(cases []eval.Case, runs, maxTurns int) error {
 	if n := plannedTurns(cases, runs); n > maxTurns {
 		return fmt.Errorf("the run plans %d caller turns, more than -max-turns %d", n, maxTurns)
 	}
@@ -96,7 +97,7 @@ func checkPlan(cases []Case, runs, maxTurns int) error {
 }
 
 // hasPersona reports whether any case needs the persona model.
-func hasPersona(cases []Case) bool {
+func hasPersona(cases []eval.Case) bool {
 	for _, c := range cases {
 		if c.Caller.Persona != nil {
 			return true
@@ -115,8 +116,8 @@ func liveGate(needsLive bool, env string) error {
 
 // prepare resolves and rewrites the agent of every case (read-only API calls) and reports whether any
 // rewritten config reaches a paid model.
-func prepare(srv *stack.Server, cases []Case, c config) (refs map[string]agentRef, needsLive bool, err error) {
-	refs = map[string]agentRef{}
+func prepare(srv *stack.Server, cases []eval.Case, c config) (refs map[string]eval.Agent, needsLive bool, err error) {
+	refs = map[string]eval.Agent{}
 	tried := map[string]bool{}
 	var errs []error
 	for _, cs := range cases {
@@ -130,7 +131,7 @@ func prepare(srv *stack.Server, cases []Case, c config) (refs map[string]agentRe
 			continue
 		}
 		refs[cs.Agent] = ref
-		needsLive = needsLive || NeedsLive(ref.Draft)
+		needsLive = needsLive || eval.NeedsLive(ref.Draft)
 	}
 	if err := errors.Join(errs...); err != nil {
 		return nil, false, err
@@ -139,7 +140,7 @@ func prepare(srv *stack.Server, cases []Case, c config) (refs map[string]agentRe
 }
 
 // execute runs every case c.Runs times and builds the report.
-func execute(ctx context.Context, srv *stack.Server, cases []Case, refs map[string]agentRef, c config, ask AskFunc) Report {
+func execute(ctx context.Context, srv *stack.Server, cases []eval.Case, refs map[string]eval.Agent, c config, ask eval.AskFunc) Report {
 	rep := Report{Schema: reportSchema, Mode: c.Mode}
 	for _, cs := range cases {
 		res := CaseResult{Case: cs.Name}
@@ -163,19 +164,21 @@ func execute(ctx context.Context, srv *stack.Server, cases []Case, refs map[stri
 	return rep
 }
 
-func runCase(ctx context.Context, srv *stack.Server, ref agentRef, cs Case, o opts, ask AskFunc) RunResult {
-	next := ScriptCaller(cs.Caller.Script)
+func runCase(ctx context.Context, srv *stack.Server, ref eval.Agent, cs eval.Case, o eval.Opts, ask eval.AskFunc) RunResult {
+	next := eval.ScriptCaller(cs.Caller.Script)
 	if p := cs.Caller.Persona; p != nil {
-		next = PersonaCaller(*p, ref.Name, ask)
+		next = eval.PersonaCaller(*p, ref.Name, ask)
 	}
-	obs, err := runOnce(ctx, srv, ref, next, o)
-	run := RunResult{SessionID: obs.SessionID, AgentVersionID: obs.AgentVersionID, ConfigHash: obs.ConfigHash,
-		Path: obs.Path, Tools: obs.Tools, EndReason: obs.EndReason, TurnCount: obs.TurnCount,
-		MedianReplyMS: medianMS(obs.ReplyMS), Transcript: obs.Transcript}
+	obs, err := eval.RunCall(ctx, httpTarget{srv}, ref, next, o)
+	in := eval.BuildInput(ref, obs, &cs)
+	sess := obs.Stored.Session
+	run := RunResult{SessionID: obs.SessionID, AgentVersionID: sess.AgentVersionID, ConfigHash: sess.ConfigHash,
+		Path: in.Path, Tools: in.ToolStrings(), EndReason: in.EndReason, TurnCount: in.TurnCount,
+		MedianReplyMS: eval.MedianMS(in.ReplyMS), Transcript: obs.Transcript}
 	if err != nil {
 		run.Errors = strings.Split(err.Error(), "\n")
 	}
-	run.Failures = Score(cs, obs, ref.StepNames)
+	run.Failures = eval.Score(cs, in)
 	return run
 }
 
@@ -200,7 +203,7 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 	if c.Only != "" {
 		only = strings.Split(c.Only, ",")
 	}
-	cases, err := LoadCases(c.Dir, only)
+	cases, err := eval.LoadCases(c.Dir, only)
 	if err != nil {
 		return setup(err)
 	}
@@ -216,7 +219,7 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return setup(err)
 	}
-	var ask AskFunc
+	var ask eval.AskFunc
 	if hasPersona(cases) {
 		needsLive = needsLive || callerNeedsLive(c.CallerLLM, c.CallerURL)
 	}

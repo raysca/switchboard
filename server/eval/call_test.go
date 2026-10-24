@@ -1,11 +1,11 @@
-package main
+package eval
 
 import (
 	"encoding/base64"
 	"testing"
 	"time"
 
-	"govoice/server/api"
+	"govoice/server/storage"
 	"govoice/transport/wsclient"
 )
 
@@ -55,20 +55,20 @@ func TestTurnState(t *testing.T) {
 }
 
 func TestTracesComplete(t *testing.T) {
-	span := func(n string) api.TraceSpanDTO { return api.TraceSpanDTO{Name: n} }
-	call := func(n string) api.ToolCallDTO { return api.ToolCallDTO{RemoteName: n} }
+	span := func(n string) storage.TraceSpan { return storage.TraceSpan{Name: n} }
+	call := func(n string) storage.ToolCallRecord { return storage.ToolCallRecord{RemoteName: n} }
 	for _, c := range []struct {
 		name string
-		tr   api.SessionTracesDTO
+		st   Stored
 		want bool
 	}{
-		{"no transfers", api.SessionTracesDTO{ToolCalls: []api.ToolCallDTO{call("end_call")}}, true},
-		{"transfer, span late", api.SessionTracesDTO{ToolCalls: []api.ToolCallDTO{call("transfer_to_sales")}}, false},
-		{"transfer, active span", api.SessionTracesDTO{ToolCalls: []api.ToolCallDTO{call("transfer_to_sales")}, Spans: []api.TraceSpanDTO{span("handoff.active")}}, true},
-		{"transfer, failed span", api.SessionTracesDTO{ToolCalls: []api.ToolCallDTO{call("transfer_to_sales")}, Spans: []api.TraceSpanDTO{span("handoff.failed")}}, true},
-		{"two transfers, one span", api.SessionTracesDTO{ToolCalls: []api.ToolCallDTO{call("transfer_to_a"), call("transfer_to_b")}, Spans: []api.TraceSpanDTO{span("handoff.active")}}, false},
+		{"no transfers", Stored{Tools: []storage.ToolCallRecord{call("end_call")}}, true},
+		{"transfer, span late", Stored{Tools: []storage.ToolCallRecord{call("transfer_to_sales")}}, false},
+		{"transfer, active span", Stored{Tools: []storage.ToolCallRecord{call("transfer_to_sales")}, Spans: []storage.TraceSpan{span("handoff.active")}}, true},
+		{"transfer, failed span", Stored{Tools: []storage.ToolCallRecord{call("transfer_to_sales")}, Spans: []storage.TraceSpan{span("handoff.failed")}}, true},
+		{"two transfers, one span", Stored{Tools: []storage.ToolCallRecord{call("transfer_to_a"), call("transfer_to_b")}, Spans: []storage.TraceSpan{span("handoff.active")}}, false},
 	} {
-		if got := tracesComplete(c.tr); got != c.want {
+		if got := tracesComplete(c.st); got != c.want {
 			t.Errorf("%s: %v, want %v", c.name, got, c.want)
 		}
 	}

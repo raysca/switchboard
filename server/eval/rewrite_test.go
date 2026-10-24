@@ -1,4 +1,4 @@
-package main
+package eval
 
 import (
 	"encoding/json"
@@ -52,7 +52,7 @@ func eq(t *testing.T, what string, got, want any) {
 
 func TestRewriteFlat(t *testing.T) {
 	orig := gen(t, flatAgent)
-	got := rewritten(t, flatAgent, modeOffline)
+	got := rewritten(t, flatAgent, ModeOffline)
 	eq(t, "stt", got["stt"], map[string]any{"provider": "silence", "model": "text", "language": "fr-FR"})
 	eq(t, "tts", got["tts"], map[string]any{"provider": "silence", "voice": "none"})
 	llm := got["llm"].(map[string]any)
@@ -66,13 +66,13 @@ func TestRewriteFlat(t *testing.T) {
 		eq(t, "llm."+k, llm[k], ol[k])
 	}
 	eq(t, "greeting", got["greeting"], orig["greeting"])
-	if e := rewritten(t, flatAgent, modeEcho)["llm"].(map[string]any); e["provider"] != "echo" || e["model"] != "fake" {
+	if e := rewritten(t, flatAgent, ModeEcho)["llm"].(map[string]any); e["provider"] != "echo" || e["model"] != "fake" {
 		t.Errorf("echo llm = %v", e)
 	}
 }
 
 func TestRewriteKeepKeepsModelAndFallbacks(t *testing.T) {
-	got := rewritten(t, flatAgent, modeKeep)
+	got := rewritten(t, flatAgent, ModeKeep)
 	eq(t, "llm", got["llm"], gen(t, flatAgent)["llm"])
 	eq(t, "tts", got["tts"], map[string]any{"provider": "silence", "voice": "none"})
 	eq(t, "stt", got["stt"].(map[string]any)["provider"], "silence")
@@ -80,7 +80,7 @@ func TestRewriteKeepKeepsModelAndFallbacks(t *testing.T) {
 
 func TestRewriteMultiStep(t *testing.T) {
 	for _, tc := range []struct{ name, cfg string }{{"desk", deskAgent}, {"dental", dentalAgent}} {
-		for _, mode := range []string{modeKeep, modeOffline, modeEcho} {
+		for _, mode := range []string{ModeKeep, ModeOffline, ModeEcho} {
 			orig, got := gen(t, tc.cfg), rewritten(t, tc.cfg, mode)
 			eq(t, tc.name+" start", got["start"], orig["start"])
 			eq(t, tc.name+" handoffs", got["handoffs"], orig["handoffs"])
@@ -98,7 +98,7 @@ func TestRewriteMultiStep(t *testing.T) {
 				} else if _, has := gc["stt"]; has {
 					t.Errorf("%s: stt invented on a step that had none", tc.name)
 				}
-				if mode != modeKeep {
+				if mode != ModeKeep {
 					if p := gc["llm"].(map[string]any)["provider"]; p != mode {
 						t.Errorf("%s/%s: llm provider %v", tc.name, mode, p)
 					}
@@ -109,14 +109,14 @@ func TestRewriteMultiStep(t *testing.T) {
 			}
 		}
 	}
-	eq(t, "sales temperature", rewritten(t, deskAgent, modeOffline)["steps"].([]any)[1].(map[string]any)["config"].(map[string]any)["llm"].(map[string]any)["temperature"], float64(0))
+	eq(t, "sales temperature", rewritten(t, deskAgent, ModeOffline)["steps"].([]any)[1].(map[string]any)["config"].(map[string]any)["llm"].(map[string]any)["temperature"], float64(0))
 }
 
 func TestRewriteRefusesBadInput(t *testing.T) {
 	if _, err := Rewrite(json.RawMessage(flatAgent), "live"); err == nil {
 		t.Error("unknown mode accepted")
 	}
-	if _, err := Rewrite(json.RawMessage(`[1]`), modeKeep); err == nil {
+	if _, err := Rewrite(json.RawMessage(`[1]`), ModeKeep); err == nil {
 		t.Error("non-object config accepted")
 	}
 }
@@ -138,13 +138,13 @@ func TestNeedsLive(t *testing.T) {
 			t.Errorf("%s: NeedsLive = %v, want %v", tc.name, got, tc.want)
 		}
 	}
-	for _, mode := range []string{modeOffline, modeEcho} {
+	for _, mode := range []string{ModeOffline, ModeEcho} {
 		out, _ := Rewrite(json.RawMessage(dentalAgent), mode)
 		if NeedsLive(out) {
 			t.Errorf("%s-rewritten dental agent needs live", mode)
 		}
 	}
-	out, _ := Rewrite(json.RawMessage(dentalAgent), modeKeep)
+	out, _ := Rewrite(json.RawMessage(dentalAgent), ModeKeep)
 	if !NeedsLive(out) {
 		t.Error("keep-mode dental agent must need live")
 	}
@@ -179,7 +179,7 @@ func requireTextOnly(t *testing.T, name string, out json.RawMessage, mode string
 		if c.Idle != nil {
 			t.Errorf("%s/%s step %s: idle kept", name, mode, s.ID)
 		}
-		if ch := c.Chain("llm"); mode != modeKeep && (len(ch) != 1 || ch[0].Provider != mode) {
+		if ch := c.Chain("llm"); mode != ModeKeep && (len(ch) != 1 || ch[0].Provider != mode) {
 			t.Errorf("%s/%s step %s: llm chain %v", name, mode, s.ID, ch)
 		}
 	}
@@ -187,7 +187,7 @@ func requireTextOnly(t *testing.T, name string, out json.RawMessage, mode string
 
 func TestRewriteOutputPassesServerDecoder(t *testing.T) {
 	for name, cfg := range map[string]string{"flat": flatAgent, "desk": deskAgent, "dental": dentalAgent, "mixed": mixedCaseAgent, "mixed-desk": mixedCaseDesk} {
-		for _, mode := range []string{modeKeep, modeOffline, modeEcho} {
+		for _, mode := range []string{ModeKeep, ModeOffline, ModeEcho} {
 			out, err := Rewrite(json.RawMessage(cfg), mode)
 			if err != nil {
 				t.Fatalf("%s/%s: %v", name, mode, err)
@@ -203,7 +203,7 @@ func TestRewriteDropsIdle(t *testing.T) {
 		if err != nil || in.StartStep().Config.Idle == nil {
 			t.Fatalf("fixture has no idle block: %v", err)
 		}
-		out, err := Rewrite(json.RawMessage(cfg), modeKeep)
+		out, err := Rewrite(json.RawMessage(cfg), ModeKeep)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -214,7 +214,7 @@ func TestRewriteDropsIdle(t *testing.T) {
 }
 
 func TestRewriteRefusesConfigTheServerRejects(t *testing.T) {
-	if _, err := Rewrite(json.RawMessage(`{"llm":{"provider":"echo","model":"f"},"end_call":true}`), modeKeep); err == nil {
+	if _, err := Rewrite(json.RawMessage(`{"llm":{"provider":"echo","model":"f"},"end_call":true}`), ModeKeep); err == nil {
 		t.Error("unknown top-level key accepted")
 	}
 }

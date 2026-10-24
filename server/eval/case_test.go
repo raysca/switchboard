@@ -1,10 +1,10 @@
-package main
+package eval
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -80,7 +80,9 @@ func TestLoadBadInline(t *testing.T) {
 		many.WriteString("    - hi\n")
 	}
 	for _, tc := range []struct{ name, body, want string }{
-		{"two documents", head + "caller: {script: [hi]}\n---\n" + head + "caller: {script: [hi]}\n", "one case per file"},
+		{"duplicate name across documents", head + "caller: {script: [hi]}\n---\n" + head + "caller: {script: [hi]}\n", "already used by"},
+		{"second document invalid", head + "caller: {script: [hi]}\n---\nname: m\nagent: a\ncaller: {script: []}\n", "c.yaml#2"},
+		{"long expected answer", head + "caller: {script: [hi]}\nexpected_answer: " + strings.Repeat("x", 2001) + "\n", "expected_answer"},
 		{"empty say", head + "caller: {script: [hi]}\nexpect: {say: [\"\"]}\n", "expect.say[0]"},
 		{"empty never_say", head + "caller: {script: [hi]}\nexpect: {never_say: [\"\"]}\n", "expect.never_say[0]"},
 		{"bad never_say regexp", head + "caller: {script: [hi]}\nexpect: {never_say: [\"(\"]}\n", "expect.never_say[0]"},
@@ -119,22 +121,35 @@ func TestLoadAcceptsYml(t *testing.T) {
 	}
 }
 
-// The example cases that ship with the tool (make eval-agents) must load.
-func TestExampleCasesLoad(t *testing.T) {
-	for dir, want := range map[string][]string{
-		"cases":        {"dealership-buyer-reaches-sales", "dev-assistant-answers"},
-		"cases-dental": {"dental-new-patient-books"},
-	} {
-		cs, err := LoadCases(dir, nil)
-		if err != nil {
-			t.Fatal(err)
+func TestParseCasesMultiDocument(t *testing.T) {
+	src := "name: a\ncaller: {script: [hi]}\nexpected_answer: Open until 5.\nexpect: {tools_called: [x, y], tools_ordered: true}\n---\nname: b\ncaller: {persona: {who: w, goal: g}}\n"
+	cs, err := ParseCases([]byte(src), "export.yaml")
+	if err != nil || len(cs) != 2 {
+		t.Fatalf("cases = %+v, err = %v", cs, err)
+	}
+	if cs[0].Agent != "" || cs[0].ExpectedAnswer != "Open until 5." || !cs[0].Expect.ToolsOrdered || cs[1].Caller.Persona.MaxTurns != defaultTurns {
+		t.Errorf("parsed = %+v", cs)
+	}
+	for _, bad := range []string{"", "---\n", "name: a\ncaller: {script: [hi]}\nbogus: 1\n"} {
+		if _, err := ParseCases([]byte(bad), "x.yaml"); err == nil || !strings.Contains(err.Error(), "x.yaml") {
+			t.Errorf("%q: err = %v", bad, err)
 		}
-		var names []string
-		for _, c := range cs {
-			names = append(names, c.Name)
-		}
-		if !slices.Equal(names, want) {
-			t.Errorf("%s = %v, want %v", dir, names, want)
+	}
+	// Case files name their agent; stored cases do not.
+	if _, err := ParseCases([]byte("name: a\ncaller: {script: [hi]}\n"), "x.yaml"); err != nil {
+		t.Errorf("agent required of a stored case: %v", err)
+	}
+}
+
+func TestCaseJSONUsesYAMLKeys(t *testing.T) {
+	c := Case{Name: "n", Caller: Caller{Script: []string{"hi"}}, Expect: Expect{ToolsCalled: []string{"a"}, ToolsOrdered: true, MedianReplyMSMax: 5}, ExpectedAnswer: "x"}
+	b, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"tools_called"`, `"tools_ordered"`, `"median_reply_ms_max"`, `"expected_answer"`, `"script"`} {
+		if !strings.Contains(string(b), key) {
+			t.Errorf("%s missing from %s", key, b)
 		}
 	}
 }

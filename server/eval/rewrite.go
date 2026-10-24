@@ -1,4 +1,4 @@
-package main
+package eval
 
 import (
 	"bytes"
@@ -13,9 +13,9 @@ import (
 // Rewrite modes: keep the agent's own model, or swap it for the free offline or echo one.
 // Speech is always replaced by the text-only silence provider.
 const (
-	modeKeep    = "keep"
-	modeOffline = "offline"
-	modeEcho    = "echo"
+	ModeKeep    = "keep"
+	ModeOffline = "offline"
+	ModeEcho    = "echo"
 )
 
 // Rewrite turns a stored agent config into the config an eval call runs as a draft. It works on
@@ -27,11 +27,11 @@ const (
 func Rewrite(config json.RawMessage, mode string) (json.RawMessage, error) {
 	llm := map[string]any{}
 	switch mode {
-	case modeKeep:
+	case ModeKeep:
 		llm = nil
-	case modeOffline:
+	case ModeOffline:
 		llm["provider"], llm["model"] = "offline", "govoice-test"
-	case modeEcho:
+	case ModeEcho:
 		llm["provider"], llm["model"] = "echo", "fake"
 	default:
 		return nil, fmt.Errorf("unknown providers mode %q, want keep, offline or echo", mode)

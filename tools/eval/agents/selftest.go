@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"govoice/server/eval"
 	"govoice/tools/internal/stack"
 )
 
@@ -110,7 +111,7 @@ func createFixture(srv *stack.Server, file, name string, edit func(cfg map[strin
 type mutation struct {
 	agent, caseName, wantFailure string
 	edit, hand                   func(cfg map[string]any)
-	tweak                        func(c *Case)
+	tweak                        func(c *eval.Case)
 }
 
 func steps(cfg map[string]any) []any { return cfg["steps"].([]any) }
@@ -122,7 +123,7 @@ var mutations = []mutation{
 		edit: func(cfg map[string]any) { delete(steps(cfg)[1].(map[string]any), "end_call") }},
 	// The assistant does say "You said": a case that forbids it must fail, which shows never_say reads real replies.
 	{agent: "Eval assistant", caseName: "echo-assistant-replies", wantFailure: "never_say:",
-		tweak: func(c *Case) { c.Expect.NeverSay = []string{"(?i)you said"} }},
+		tweak: func(c *eval.Case) { c.Expect.NeverSay = []string{"(?i)you said"} }},
 	// The rewrite turns every voice into silence, so a step that cannot be built is put in the draft by hand:
 	// the sales step then fails to start, which the always-on handoff check must report.
 	{agent: "Eval desk", caseName: "echo-desk-handoff", wantFailure: "handoff:",
@@ -132,7 +133,7 @@ var mutations = []mutation{
 }
 
 // handEdit applies a mutation's draft change to the resolved agent.
-func handEdit(ref agentRef, edit func(cfg map[string]any)) (agentRef, error) {
+func handEdit(ref eval.Agent, edit func(cfg map[string]any)) (eval.Agent, error) {
 	var cfg map[string]any
 	if err := json.Unmarshal(ref.Draft, &cfg); err != nil {
 		return ref, err
@@ -196,12 +197,12 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 		}
 	}
 
-	cases, err := LoadCases(filepath.Join(root, selftestDir, "echo"), nil)
+	cases, err := eval.LoadCases(filepath.Join(root, selftestDir, "echo"), nil)
 	if err != nil {
 		return fail("%v", err)
 	}
-	c := config{Mode: modeEcho, Runs: 1, MinPass: 1, Opts: opts{TurnTimeout: 30 * time.Second, Quiet: selftestQuiet}}
-	run := func(srv *stack.Server, cs []Case, hand map[string]func(map[string]any), ask AskFunc) (Report, error) {
+	c := config{Mode: eval.ModeEcho, Runs: 1, MinPass: 1, Opts: eval.Opts{TurnTimeout: 30 * time.Second, Quiet: selftestQuiet}}
+	run := func(srv *stack.Server, cs []eval.Case, hand map[string]func(map[string]any), ask eval.AskFunc) (Report, error) {
 		refs, _, err := prepare(srv, cs, c)
 		if err != nil {
 			return Report{}, err
@@ -229,10 +230,10 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 		return fail("%d of %d plumbing cases passed", passed, len(cases))
 	}
 
-	var broken []Case
+	var broken []eval.Case
 	hand := map[string]func(map[string]any){}
 	for _, m := range mutations {
-		i := slices.IndexFunc(cases, func(c Case) bool { return c.Name == m.caseName })
+		i := slices.IndexFunc(cases, func(c eval.Case) bool { return c.Name == m.caseName })
 		if i < 0 {
 			return fail("mutation %q names no case %q", m.agent, m.caseName)
 		}
@@ -277,15 +278,15 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 
 	// The persona caller on echo, with a scripted persona model (no Ollama): one that asks for the
 	// handoff and then says DONE must pass; one that never gets to the point must fail the same case.
-	pc := Case{Name: "echo-persona-handoff", Agent: "Eval desk",
-		Caller: Caller{Persona: &Persona{Who: "a caller", Goal: "reach sales", MaxTurns: 3}},
-		Expect: Expect{Path: []string{"front", "sales"}, ToolsCalled: []string{"transfer_to_sales"}}}
+	pc := eval.Case{Name: "echo-persona-handoff", Agent: "Eval desk",
+		Caller: eval.Caller{Persona: &eval.Persona{Who: "a caller", Goal: "reach sales", MaxTurns: 3}},
+		Expect: eval.Expect{Path: []string{"front", "sales"}, ToolsCalled: []string{"transfer_to_sales"}}}
 	goal := scriptedAsk("please transfer to sales", "DONE")
-	if rep, err := run(srv, []Case{pc}, nil, goal); err != nil || len(rep.Results) != 1 || !rep.Results[0].Passed {
+	if rep, err := run(srv, []eval.Case{pc}, nil, goal); err != nil || len(rep.Results) != 1 || !rep.Results[0].Passed {
 		WriteText(stderr, rep)
 		return fail("the persona caller did not reach its goal on echo: %v", err)
 	}
-	if rep, err := run(srv, []Case{pc}, nil, scriptedAsk("hello there")); err != nil || len(rep.Results) != 1 || rep.Results[0].Passed ||
+	if rep, err := run(srv, []eval.Case{pc}, nil, scriptedAsk("hello there")); err != nil || len(rep.Results) != 1 || rep.Results[0].Passed ||
 		len(rep.Results[0].Runs[0].Errors) > 0 || rep.Results[0].Runs[0].TurnCount < 3 {
 		WriteText(stderr, rep)
 		return fail("a persona that never reaches its goal was not failed on an assertion within max_turns: %v", err)
@@ -301,7 +302,7 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 	if err := createFixture(slow, assistant, "Eval assistant", nil); err != nil {
 		return fail("%v", err)
 	}
-	var replies []Case
+	var replies []eval.Case
 	for _, cs := range cases {
 		if cs.Name == "echo-assistant-replies" {
 			replies = append(replies, cs)
@@ -324,7 +325,7 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 	os.Setenv("GOVOICE_MANAGEMENT_API_KEY", srv.Key)
 	defer os.Unsetenv("GOVOICE_MANAGEMENT_API_KEY")
 	report := filepath.Join(work, "report.json")
-	args := []string{"-cases", filepath.Join(root, selftestDir, "echo"), "-case", "echo-desk-handoff", "-providers", modeEcho, "-version", "1",
+	args := []string{"-cases", filepath.Join(root, selftestDir, "echo"), "-case", "echo-desk-handoff", "-providers", eval.ModeEcho, "-version", "1",
 		"-quiet", selftestQuiet.String(), "-admin", srv.Admin, "-public", srv.Public, "-json", report}
 	if rc := realMain(args, io.Discard, stderr); rc != 0 {
 		return fail("the command-line path exited %d", rc)
@@ -339,7 +340,7 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }
 
 // scriptedAsk is a persona model that replays replies, repeating the last one.
-func scriptedAsk(replies ...string) AskFunc {
+func scriptedAsk(replies ...string) eval.AskFunc {
 	n := 0
 	return func(context.Context, string, string) (string, error) {
 		n++
