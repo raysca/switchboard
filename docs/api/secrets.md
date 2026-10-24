@@ -20,10 +20,12 @@ There is no `GET /api/v1/secrets/{name}`: a value cannot be read back.
   { "name": "billing-api",   "source": "directory",   "writable": false },
   { "name": "crm-api",       "source": "store",       "writable": true,
     "updated_at": "2026-10-24T09:12:00Z", "last_used_at": "2026-10-24T09:30:11Z" }
+], "recent_changes": [
+  { "at": "2026-10-24T09:12:00Z", "action": "replace", "name": "crm-api", "request_id": "0b1c…" }
 ] } }
 ```
 
-`store_enabled` is false when `SWITCHBOARD_SECRETS_KEY` is not set; writes then fail with 503. `source` is `environment`, `directory` or `store`. Only environment variables named `MCP_TOKEN_*` or `HTTP_TOKEN_*` and files in `secrets.dir` appear; nothing else in the environment is listed.
+`recent_changes` is the audit trail of the encrypted store, newest first (the last 20): `action` is `create`, `replace` or `delete`, `name` the secret, `request_id` the management request that did it (the `X-Request-ID` of its response, also in the server log). It never holds a value. Each entry is written in the same transaction as the change, so a change without an entry cannot happen; re-sealing under a new master key at start-up is not a change and is not recorded. Entries are kept until the retention policy covers them (Phase 8 of the roadmap). `store_enabled` is false when `SWITCHBOARD_SECRETS_KEY` is not set; writes then fail with 503. `source` is `environment`, `directory` or `store`. Only environment variables named `MCP_TOKEN_*` or `HTTP_TOKEN_*` and files in `secrets.dir` appear; nothing else in the environment is listed.
 
 ## Create or replace
 

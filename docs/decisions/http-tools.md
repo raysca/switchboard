@@ -7,7 +7,8 @@ Status: implemented (slices 0 to 5). Phase 2 of [roadmap-next-phases.md](../road
 - The development switch is the existing `mcp.allow_local_http`, not a second one.
 - There is no per-tool in-flight cap; the model loop's `max_parallel` bounds concurrency.
 - Text bodies are `text/plain` only.
-- The delete guard looks at current agent versions only (an active call keeps its captured definition in memory).
+- Secret writes and deletes are recorded in a persistent audit table (`secret_audit`), not only logged as the plan said.
+- The delete guard refuses a tool any agent version has pinned, so a tool with history is disabled instead of deleted (an active call keeps its captured definition in memory).
 
 ## Goal
 

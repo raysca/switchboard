@@ -4,13 +4,13 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 import { SecretsView } from "./SecretsView";
-import { ApiError, type ApiClient, type SecretDTO } from "../../api/client";
+import { ApiError, type ApiClient, type SecretChangeDTO, type SecretDTO } from "../../api/client";
 
 const env: SecretDTO = { name: "MCP_TOKEN_CRM", source: "environment", writable: false };
 const stored: SecretDTO = { name: "crm-api", source: "store", writable: true, updated_at: "2026-10-24T09:00:00Z", last_used_at: null };
 
-function setup(client: Partial<ApiClient> = {}, list = { store_enabled: true, secrets: [env, stored] }) {
-  const full = { getSecrets: vi.fn().mockResolvedValue(list), putSecret: vi.fn().mockResolvedValue(stored), deleteSecret: vi.fn().mockResolvedValue(undefined), ...client } as unknown as ApiClient;
+function setup(client: Partial<ApiClient> = {}, list: { store_enabled: boolean; secrets: SecretDTO[]; recent_changes?: SecretChangeDTO[] } = { store_enabled: true, secrets: [env, stored] }) {
+  const full = { getSecrets: vi.fn().mockResolvedValue({ recent_changes: [], ...list }), putSecret: vi.fn().mockResolvedValue(stored), deleteSecret: vi.fn().mockResolvedValue(undefined), ...client } as unknown as ApiClient;
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
@@ -61,5 +61,24 @@ describe("SecretsView", () => {
     await user.click(await screen.findByRole("button", { name: "Delete" }));
     await user.click(screen.getByRole("button", { name: "Delete secret" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Still used by: CRM");
+  });
+
+  it("lists recent changes by name and request, never a value", async () => {
+    const recent_changes: SecretChangeDTO[] = [
+      { at: new Date(Date.now() - 2 * 60_000).toISOString(), action: "replace", name: "crm-api", request_id: "0123456789abcdef" },
+      { at: new Date(Date.now() - 3600_000).toISOString(), action: "create", name: "crm-api", request_id: "fedcba9876543210" },
+    ];
+    setup({}, { store_enabled: true, secrets: [env, stored], recent_changes });
+    const section = await screen.findByRole("region", { name: "Recent changes" });
+    expect(within(section).getAllByRole("listitem")).toHaveLength(2);
+    expect(section).toHaveTextContent("crm-api was replaced");
+    expect(section).toHaveTextContent("request 01234567");
+    expect(section).toHaveTextContent("crm-api was added");
+  });
+
+  it("shows no changes section until something has changed", async () => {
+    setup();
+    await screen.findByRole("table");
+    expect(screen.queryByRole("region", { name: "Recent changes" })).toBeNull();
   });
 });

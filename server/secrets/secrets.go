@@ -55,6 +55,18 @@ func ValidValue(v string) bool {
 	return v != "" && len(v) <= MaxValueBytes && strings.IndexFunc(v, func(c rune) bool { return c <= ' ' || c == 0x7f }) < 0
 }
 
+type auditKey struct{}
+
+// WithAudit marks the writes made with ctx as an audited change by the given request.
+func WithAudit(ctx context.Context, requestID string) context.Context {
+	return context.WithValue(ctx, auditKey{}, requestID)
+}
+
+func auditRequest(ctx context.Context) string {
+	id, _ := ctx.Value(auditKey{}).(string)
+	return id
+}
+
 type noStampKey struct{}
 
 // WithoutUseStamp marks a lookup that only asks whether a secret resolves (readiness, server views): it must not
@@ -268,11 +280,13 @@ func (s Store) Put(ctx context.Context, name, value string) error {
 	if err != nil {
 		return err
 	}
-	return s.Repo.Put(ctx, storage.SecretRow{Name: name, KeyID: keyID, Nonce: nonce, Ciphertext: ct})
+	return s.Repo.Put(ctx, storage.SecretRow{Name: name, KeyID: keyID, Nonce: nonce, Ciphertext: ct}, auditRequest(ctx))
 }
 
 // Delete removes a stored secret; the caller checks first that nothing references it.
-func (s Store) Delete(ctx context.Context, name string) error { return s.Repo.Delete(ctx, name) }
+func (s Store) Delete(ctx context.Context, name string) error {
+	return s.Repo.Delete(ctx, name, auditRequest(ctx))
+}
 
 // List returns the stored secrets without values.
 func (s Store) List(ctx context.Context) ([]Info, error) {

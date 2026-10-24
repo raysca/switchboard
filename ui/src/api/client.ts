@@ -385,7 +385,9 @@ export const secretSchema = z.object({
   last_used_at: z.string().nullish(),
 });
 export type SecretDTO = z.infer<typeof secretSchema>;
-const secretListEnvelope = z.object({ data: z.object({ store_enabled: z.boolean(), secrets: z.array(secretSchema) }) });
+export const secretChangeSchema = z.object({ at: z.string(), action: z.enum(["create", "replace", "delete"]), name: z.string(), request_id: z.string() });
+export type SecretChangeDTO = z.infer<typeof secretChangeSchema>;
+const secretListEnvelope = z.object({ data: z.object({ store_enabled: z.boolean(), secrets: z.array(secretSchema), recent_changes: z.array(secretChangeSchema).optional().default([]) }) });
 const secretEnvelope = z.object({ data: secretSchema });
 
 const mcpServersEnvelope = z.object({

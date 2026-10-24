@@ -1,6 +1,7 @@
 package secrets_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -116,5 +117,64 @@ func TestSecretsAPIWithoutMasterKeyStillListsExternalSecrets(t *testing.T) {
 	}
 	if w := do(h, "GET", "/api/v1/secrets", ""); w.Code != 200 || !strings.Contains(w.Body.String(), "MCP_TOKEN_CRM") {
 		t.Fatalf("list: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestStoredSecretChangesAreAuditedWithoutTheValue(t *testing.T) {
+	h, st := handler(t, "k1:"+key(1), "")
+	do2 := func(method, path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-Request-ID", "req-"+method)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	if w := do2("PUT", "/api/v1/secrets/crm-api", `{"value":"`+sentinel+`"}`); w.Code != 200 {
+		t.Fatal(w.Body)
+	}
+	if w := do2("PUT", "/api/v1/secrets/crm-api", `{"value":"`+sentinel+`-2"}`); w.Code != 200 {
+		t.Fatal(w.Body)
+	}
+	if w := do2("PUT", "/api/v1/secrets/Bad_Name", `{"value":"v"}`); w.Code != 400 { // a refused write leaves no entry
+		t.Fatal(w.Code)
+	}
+	if w := do2("DELETE", "/api/v1/secrets/crm-api", ""); w.Code != 204 {
+		t.Fatal(w.Code)
+	}
+	if w := do2("DELETE", "/api/v1/secrets/crm-api", ""); w.Code != 404 { // nothing deleted, nothing recorded
+		t.Fatal(w.Code)
+	}
+	w := do2("GET", "/api/v1/secrets", "")
+	var env struct {
+		Data struct {
+			RecentChanges []struct {
+				Action    string `json:"action"`
+				Name      string `json:"name"`
+				RequestID string `json:"request_id"`
+			} `json:"recent_changes"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	got := env.Data.RecentChanges
+	if len(got) != 3 || got[0].Action != "delete" || got[1].Action != "replace" || got[2].Action != "create" || got[0].Name != "crm-api" || got[0].RequestID == "" {
+		t.Fatalf("changes = %+v", got)
+	}
+	if strings.Contains(w.Body.String(), sentinel) {
+		t.Fatalf("the audit trail carries a value: %s", w.Body)
+	}
+	// only a write marked as a request's is audited: re-sealing under a new key is housekeeping, not a change someone made
+	if err := st.Put(t.Context(), "quiet", "value-quiet"); err != nil {
+		t.Fatal(err)
+	}
+	rotated := secrets.Store{Repo: st.Repo}
+	rotated.Keys, _ = secrets.ParseKeyring("k2:" + key(2) + ",k1:" + key(1))
+	if _, err := rotated.Reseal(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if changes, _ := st.Repo.Changes(t.Context(), 100); len(changes) != 3 {
+		t.Fatalf("housekeeping writes were audited: %+v", changes)
 	}
 }

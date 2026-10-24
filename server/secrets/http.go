@@ -26,7 +26,20 @@ type SecretView struct {
 type SecretList struct {
 	StoreEnabled bool         `json:"store_enabled"`
 	Secrets      []SecretView `json:"secrets"`
+	// RecentChanges is the audit trail of stored secrets, newest first (at most recentChanges): what happened to which
+	// name, and the request that did it. Never a value.
+	RecentChanges []Change `json:"recent_changes"`
 }
+
+// Change is one audited change to a stored secret.
+type Change struct {
+	At        time.Time `json:"at"`
+	Action    string    `json:"action"` // create, replace or delete
+	Name      string    `json:"name"`
+	RequestID string    `json:"request_id"`
+}
+
+const recentChanges = 20
 
 // Sources are the backends the handler lists and writes to.
 type Sources struct {
@@ -78,7 +91,18 @@ func Handler(src Sources) http.Handler {
 				views = append(views, v)
 			}
 		}
-		api.WriteJSON(w, 200, api.SuccessResponse[SecretList]{Data: SecretList{StoreEnabled: src.Store.Enabled(), Secrets: views}})
+		list := SecretList{StoreEnabled: src.Store.Enabled(), Secrets: views, RecentChanges: []Change{}}
+		if list.StoreEnabled {
+			changes, err := src.Store.Repo.Changes(r.Context(), recentChanges)
+			if err != nil {
+				api.WriteError(w, 500, "internal_error", "secrets unavailable", id)
+				return
+			}
+			for _, c := range changes {
+				list.RecentChanges = append(list.RecentChanges, Change{At: c.At, Action: c.Action, Name: c.Name, RequestID: c.RequestID})
+			}
+		}
+		api.WriteJSON(w, 200, api.SuccessResponse[SecretList]{Data: list})
 	})
 	mux.HandleFunc("/api/v1/secrets/{name}", func(w http.ResponseWriter, r *http.Request) {
 		id := api.RequestID(w, r)
@@ -121,7 +145,7 @@ func put(w http.ResponseWriter, r *http.Request, src Sources, log *slog.Logger, 
 		api.WriteError(w, 409, "secret_managed_externally", "a file in the secrets directory already has this name", id)
 		return
 	}
-	if err := src.Store.Put(r.Context(), name, body.Value); err != nil {
+	if err := src.Store.Put(WithAudit(r.Context(), id), name, body.Value); err != nil {
 		log.Error("secret write failed", slog.String("secret", name), slog.String("request_id", id))
 		api.WriteError(w, 500, "internal_error", "secret could not be saved", id)
 		return
@@ -150,7 +174,7 @@ func del(w http.ResponseWriter, r *http.Request, src Sources, log *slog.Logger, 
 		api.WriteJSON(w, http.StatusConflict, api.ErrorResponse{Error: api.Error{Code: "secret_in_use", Message: "secret is used by tools or servers", RequestID: id, Details: uses}})
 		return
 	}
-	switch err := src.Store.Delete(r.Context(), name); {
+	switch err := src.Store.Delete(WithAudit(r.Context(), id), name); {
 	case errors.Is(err, sql.ErrNoRows):
 		api.WriteError(w, 404, "not_found", "secret not found", id)
 	case err != nil:

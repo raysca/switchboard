@@ -9,6 +9,7 @@ export type SecretsViewProps = { client: ApiClient; keyValue: string | null };
 
 // Mirrors the server: stored names are lower case, so they never overlap the MCP_TOKEN_* environment names.
 const NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;
+const CHANGE_LABEL = { create: "was added", replace: "was replaced", delete: "was deleted" } as const;
 const SOURCE_LABEL: Record<SecretDTO["source"], string> = { environment: "Environment variable", directory: "Secrets directory", store: "Encrypted store" };
 
 /** The credentials tools and MCP servers can use, by name. A value is typed in once and never shown again. */
@@ -102,6 +103,18 @@ export function SecretsView({ client, keyValue }: SecretsViewProps) {
               ),
             ])}
           />
+        )}
+        {query.data.recent_changes.length > 0 && (
+          <section aria-label="Recent changes" className="secret-changes">
+            <h2>Recent changes</h2>
+            <ul className="plain-list">
+              {query.data.recent_changes.map((c) => (
+                <li key={`${c.at}-${c.request_id}-${c.action}`}>
+                  <code>{c.name}</code> {CHANGE_LABEL[c.action]} <span className="subtext">{ago(c.at, now)} · request {c.request_id.slice(0, 8)}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
         )}
       </>
     );
