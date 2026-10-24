@@ -340,6 +340,42 @@ const httpToolTestEnvelope = z.object({ data: httpToolTestSchema });
 export const httpToolServerId = (toolId: string) => `http:${toolId}`;
 export const isHTTPToolSelection = (t: { mcp_server_id: string }) => t.mcp_server_id.startsWith("http:");
 
+// Retention: the policy in force, the last run, and (on request) what the next run would remove.
+export const retentionStatusSchema = z.object({
+  enabled: z.boolean(),
+  interval_seconds: z.number(),
+  content_retention_days: z.number(),
+  metadata_retention_days: z.number(),
+  batch_size: z.number(),
+  recording_retention_days: z.number(),
+  last_run: z
+    .object({
+      started_at: z.string(),
+      duration_ms: z.number(),
+      error: z.string().optional(),
+      turns_purged: z.number(),
+      sessions_deleted: z.number(),
+      turns_deleted: z.number(),
+      tool_calls_deleted: z.number(),
+      spans_deleted: z.number(),
+      events_deleted: z.number(),
+    })
+    .nullable(),
+  dry_run: z
+    .object({
+      content_sessions: z.number(),
+      content_turns: z.number(),
+      metadata_sessions: z.number(),
+      metadata_turns: z.number(),
+      metadata_tool_calls: z.number(),
+      metadata_spans: z.number(),
+      metadata_events: z.number(),
+    })
+    .nullish(),
+});
+export type RetentionStatus = z.infer<typeof retentionStatusSchema>;
+const retentionEnvelope = z.object({ data: retentionStatusSchema });
+
 // Secrets: names and where they live; a value is only ever sent, never received.
 export const secretSchema = z.object({
   name: z.string(),
@@ -689,6 +725,9 @@ export function createApiClient(
       await request(`/http-tools/${encodeURIComponent(id)}`, z.unknown(), { method: "DELETE" });
     },
     testHTTPTool: async (id: string, args: unknown) => (await request(`/http-tools/${encodeURIComponent(id)}/test`, httpToolTestEnvelope, { method: "POST", body: { arguments: args } })).data,
+
+    // Retention status
+    getRetention: async (dryRun = false) => (await request(`/retention${dryRun ? "?dry_run=true" : ""}`, retentionEnvelope)).data,
 
     // Secrets endpoints
     getSecrets: async () => (await request("/secrets", secretListEnvelope)).data,

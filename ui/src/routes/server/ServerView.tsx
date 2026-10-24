@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { RetentionCard } from "./RetentionCard";
 import type { ApiClient, ApiError } from "../../api/client";
 import {
   DataTable,
@@ -194,6 +195,7 @@ export function ServerView({ client, keyValue }: ServerViewProps) {
           ]}
         />
       </section>
+      <RetentionCard client={client} />
       </div>
     </>
   );

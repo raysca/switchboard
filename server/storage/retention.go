@@ -239,13 +239,13 @@ LIMIT ?`
 // leaves that pass out. The counts are the ones a run reports: ContentTurns is RunResult.TurnsPurged, and the Metadata
 // fields are the rows PurgeMetadata deletes (sessions and everything of theirs, plus standalone spans and events).
 type RetentionPreview struct {
-	ContentSessions   int64
-	ContentTurns      int64
-	MetadataSessions  int64
-	MetadataTurns     int64
-	MetadataToolCalls int64
-	MetadataSpans     int64
-	MetadataEvents    int64
+	ContentSessions   int64 `json:"content_sessions"`
+	ContentTurns      int64 `json:"content_turns"`
+	MetadataSessions  int64 `json:"metadata_sessions"`
+	MetadataTurns     int64 `json:"metadata_turns"`
+	MetadataToolCalls int64 `json:"metadata_tool_calls"`
+	MetadataSpans     int64 `json:"metadata_spans"`
+	MetadataEvents    int64 `json:"metadata_events"`
 }
 
 // Preview counts what PurgeContent (contentCutoff) and PurgeMetadata (metadataCutoff) would remove. It reads in

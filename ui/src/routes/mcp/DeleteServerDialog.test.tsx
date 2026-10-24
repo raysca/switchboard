@@ -61,4 +61,16 @@ describe("DeleteServerDialog", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("MCP server not found");
     expect(screen.getByRole("button", { name: "Deleting…" })).toBeDisabled();
   });
+
+  it("names the agents that use the server before the first delete, and says delete will be refused", () => {
+    setup({ inUse: false, agents: [agent("a1", "Front desk"), agent("a2", "Billing")] });
+    expect(screen.getByText(/These agents use its tools, so deleting is refused until you detach it/)).toBeVisible();
+    expect(screen.getByRole("link", { name: "Front desk" })).toHaveAttribute("href", "/agents/a1");
+    expect(screen.getByRole("link", { name: "Billing" })).toBeVisible();
+  });
+
+  it("says nothing extra when no agent uses the server", () => {
+    setup({ inUse: false, agents: [] });
+    expect(screen.queryByText(/deleting is refused/)).toBeNull();
+  });
 });

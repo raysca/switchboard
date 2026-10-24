@@ -36,7 +36,23 @@ export function DeleteServerDialog({ name, agents, inUse, pending, error, onDele
           ) : null}
         </>
       ) : (
-        <p>This removes the server and its tool list. It does not touch the remote server.</p>
+        <>
+          <p>This removes the server and its tool list. It does not touch the remote server.</p>
+          {agents !== undefined && agents.length > 0 && (
+            <>
+              <p>
+                {agents.length === 1 ? "This agent uses" : "These agents use"} its tools, so deleting is refused until you detach it, which takes the tools off {agents.length === 1 ? "it" : "them"}:
+              </p>
+              <ul className="drift-agents">
+                {agents.map((f) => (
+                  <li key={f.id}>
+                    <Link to={`/agents/${encodeURIComponent(f.id)}`}>{f.name}</Link>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </>
       )}
       {error && (
         <p role="alert" className="tool-console__error">

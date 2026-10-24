@@ -289,6 +289,8 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
           name={dialog.agent.name}
           pending={archiveMutation.isPending}
           error={actionError?.message ?? null}
+          liveCalls={liveCalls(sessions, dialog.agent).live}
+          tools={(dialog.agent.current_version?.mcp_tools ?? []).map((t) => t.remote_name)}
           onConfirm={() => archiveMutation.mutate(dialog.agent.id)}
           onCancel={() => setDialog(null)}
         />
