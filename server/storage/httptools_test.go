@@ -19,8 +19,9 @@ func newHTTPTool(t *testing.T, s *Store, name, hash string) HTTPTool {
 func TestHTTPToolDefinitionsAreImmutableAndVersioned(t *testing.T) {
 	eachStore(t, func(t *testing.T, s *Store) {
 		ctx := context.Background()
-		tool := newHTTPTool(t, s, "get_order", "h1")
-		if err := s.HTTPTools().NewDefinition(ctx, tool.ID, "get_order", "h2", []byte(`{"v":"h2"}`)); err != nil {
+		getOrder := "get_order_" + NewID()[28:] // the Postgres database is shared by the tests: names are unique per run
+		tool := newHTTPTool(t, s, getOrder, "h1")
+		if err := s.HTTPTools().NewDefinition(ctx, tool.ID, getOrder, "h2", []byte(`{"v":"h2"}`)); err != nil {
 			t.Fatal(err)
 		}
 		got, err := s.HTTPTools().Get(ctx, tool.ID)
@@ -33,10 +34,10 @@ func TestHTTPToolDefinitionsAreImmutableAndVersioned(t *testing.T) {
 			}
 		}
 		// going back to a definition seen before reuses it
-		if err := s.HTTPTools().NewDefinition(ctx, tool.ID, "get_order", "h1", []byte(`{"v":"other"}`)); err != nil {
+		if err := s.HTTPTools().NewDefinition(ctx, tool.ID, getOrder, "h1", []byte(`{"v":"other"}`)); err != nil {
 			t.Fatal(err)
 		}
-		if raw, _ := s.HTTPTools().Definition(ctx, tool.ID, "h1"); string(raw) != `{"name":"get_order","v":"h1"}` {
+		if raw, _ := s.HTTPTools().Definition(ctx, tool.ID, "h1"); string(raw) != `{"name":"`+getOrder+`","v":"h1"}` {
 			t.Fatalf("a stored definition was changed: %s", raw)
 		}
 		if _, err := s.DB().ExecContext(ctx, s.bind("UPDATE http_tool_definitions SET definition_json=? WHERE tool_id=?"), "{}", tool.ID); err == nil {
@@ -51,16 +52,17 @@ func TestHTTPToolDefinitionsAreImmutableAndVersioned(t *testing.T) {
 func TestHTTPToolNamesAreUnique(t *testing.T) {
 	eachStore(t, func(t *testing.T, s *Store) {
 		ctx := context.Background()
-		first := newHTTPTool(t, s, "get_order", "h1")
-		if err := s.HTTPTools().Create(ctx, HTTPTool{ID: NewID(), Name: "get_order", CurrentHash: "h9", Enabled: true}, []byte(`{}`)); !errors.Is(err, ErrHTTPToolNameTaken) {
+		getOrder := "get_order_" + NewID()[28:] // the Postgres database is shared by the tests: names are unique per run
+		first := newHTTPTool(t, s, getOrder, "h1")
+		if err := s.HTTPTools().Create(ctx, HTTPTool{ID: NewID(), Name: getOrder, CurrentHash: "h9", Enabled: true}, []byte(`{}`)); !errors.Is(err, ErrHTTPToolNameTaken) {
 			t.Fatalf("duplicate create: %v", err)
 		}
-		other := newHTTPTool(t, s, "add_note", "h2")
-		if err := s.HTTPTools().NewDefinition(ctx, other.ID, "get_order", "h3", []byte(`{}`)); !errors.Is(err, ErrHTTPToolNameTaken) {
+		other := newHTTPTool(t, s, "add_note_"+NewID()[28:], "h2")
+		if err := s.HTTPTools().NewDefinition(ctx, other.ID, getOrder, "h3", []byte(`{}`)); !errors.Is(err, ErrHTTPToolNameTaken) {
 			t.Fatalf("rename onto a taken name: %v", err)
 		}
 		// a tool keeps its own name across edits
-		if err := s.HTTPTools().NewDefinition(ctx, first.ID, "get_order", "h4", []byte(`{}`)); err != nil {
+		if err := s.HTTPTools().NewDefinition(ctx, first.ID, getOrder, "h4", []byte(`{}`)); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -69,14 +71,15 @@ func TestHTTPToolNamesAreUnique(t *testing.T) {
 func TestHTTPToolSelectionsPinTheCurrentDefinition(t *testing.T) {
 	eachStore(t, func(t *testing.T, s *Store) {
 		ctx := context.Background()
+		getOrder := "get_order_" + NewID()[28:] // the Postgres database is shared by the tests: names are unique per run
 		r := newToolRig(t, s)
-		tool := newHTTPTool(t, s, "get_order", "h1")
-		sel := SelectedTool{ServerID: HTTPToolRefPrefix + tool.ID, RemoteName: "get_order", SchemaHash: "h1", Required: true}
+		tool := newHTTPTool(t, s, getOrder, "h1")
+		sel := SelectedTool{ServerID: HTTPToolRefPrefix + tool.ID, RemoteName: getOrder, SchemaHash: "h1", Required: true}
 		for label, bad := range map[string]SelectedTool{
-			"stale hash":   {ServerID: sel.ServerID, RemoteName: "get_order", SchemaHash: "old"},
+			"stale hash":   {ServerID: sel.ServerID, RemoteName: getOrder, SchemaHash: "old"},
 			"wrong name":   {ServerID: sel.ServerID, RemoteName: "other", SchemaHash: "h1"},
-			"unknown tool": {ServerID: HTTPToolRefPrefix + NewID(), RemoteName: "get_order", SchemaHash: "h1"},
-			"bad id":       {ServerID: HTTPToolRefPrefix + "nope", RemoteName: "get_order", SchemaHash: "h1"},
+			"unknown tool": {ServerID: HTTPToolRefPrefix + NewID(), RemoteName: getOrder, SchemaHash: "h1"},
+			"bad id":       {ServerID: HTTPToolRefPrefix + "nope", RemoteName: getOrder, SchemaHash: "h1"},
 		} {
 			if err := s.Agents().ValidateSelections(ctx, []SelectedTool{bad}); !errors.Is(err, ErrInvalidToolSelection) {
 				t.Errorf("%s accepted: %v", label, err)
@@ -101,7 +104,7 @@ func TestHTTPToolSelectionsPinTheCurrentDefinition(t *testing.T) {
 		}
 		// an edit moves the current hash: the old pin must be reviewed again
 		_ = s.HTTPTools().SetEnabled(ctx, tool.ID, true)
-		_ = s.HTTPTools().NewDefinition(ctx, tool.ID, "get_order", "h2", []byte(`{}`))
+		_ = s.HTTPTools().NewDefinition(ctx, tool.ID, getOrder, "h2", []byte(`{}`))
 		if err := s.Agents().ValidateSelections(ctx, []SelectedTool{sel}); !errors.Is(err, ErrInvalidToolSelection) {
 			t.Fatalf("an edited tool kept its old pin: %v", err)
 		}
@@ -117,7 +120,7 @@ func TestHTTPToolSelectionsPinTheCurrentDefinition(t *testing.T) {
 			t.Fatalf("delete with history: %v", err)
 		}
 		// a tool nothing ever pinned can go, with its definitions
-		fresh := newHTTPTool(t, s, "never_used", "hx")
+		fresh := newHTTPTool(t, s, "never_used_"+NewID()[28:], "hx")
 		if err := s.HTTPTools().Delete(ctx, fresh.ID); err != nil {
 			t.Fatalf("delete never used: %v", err)
 		}
