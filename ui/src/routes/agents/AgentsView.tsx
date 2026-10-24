@@ -21,6 +21,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
   const [filter, setFilter] = useState("");
   const [dialog, setDialog] = useState<Dialog>(null);
   const [actionError, setActionError] = useState<ApiError | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
 
   const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: () => client.getAgents(), enabled: !!keyValue, retry: false });
   const active = useActiveSessions(client, keyValue);
@@ -59,8 +60,18 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
     onError: (err) => setActionError(asApiError(err, "Archive failed")),
   });
 
+  const unarchiveMutation = useMutation({
+    mutationFn: (id: string) => client.unarchiveAgent(id),
+    onSuccess: () => {
+      setActionError(null);
+      refresh();
+    },
+    onError: (err) => setActionError(asApiError(err, "Could not unarchive the agent")),
+  });
+
   const all = agentsQuery.data ?? [];
   const agents = all.filter((f) => !f.archived);
+  const archived = all.filter((f) => f.archived);
   const q = filter.trim().toLowerCase();
   const shown = q ? agents.filter((f) => f.name.toLowerCase().includes(q)) : agents;
   const enabledCount = agents.filter((f) => f.enabled).length;
@@ -234,6 +245,33 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
             })}
           </ul>
         </div>
+      )}
+
+      {keyValue && archived.length > 0 && (
+        <section className="archived-agents" aria-label="Archived agents">
+          <button type="button" className="action-button-small" aria-expanded={showArchived} onClick={() => setShowArchived(!showArchived)}>
+            {showArchived ? "Hide" : "Show"} archived agents ({archived.length})
+          </button>
+          {showArchived && (
+            <>
+              <p className="subtext">An unarchived agent comes back disabled, with its versions and call history. Enable it when it is ready.</p>
+              <ul className="plain-list">
+                {archived.map((f) => (
+                  <li key={f.id} className="agent-row">
+                    <div className="agent-row__main">
+                      <b>{f.name}</b> <span className="chip">v{f.current_version?.number ?? 1}</span>
+                    </div>
+                    <div className="agent-row__actions">
+                      <button type="button" className="action-button-small" aria-label={`Unarchive ${f.name}`} disabled={unarchiveMutation.isPending} onClick={() => unarchiveMutation.mutate(f.id)}>
+                        Unarchive
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </section>
       )}
 
       {dialog?.kind === "new" && (

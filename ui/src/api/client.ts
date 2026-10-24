@@ -194,6 +194,17 @@ const agentsEnvelope = z.object({
   data: z.array(agentSchema),
 });
 const agentVersionEnvelope = z.object({ data: agentVersionSchema });
+/** One publish in an agent's history, without its config. The newest is the current version. */
+export const agentVersionSummarySchema = z.object({
+  number: z.number(),
+  config_hash: z.string(),
+  created_at: z.string(),
+  tool_count: z.number(),
+  mcp_review_required: z.boolean().optional(),
+  current: z.boolean(),
+});
+export type AgentVersionSummary = z.infer<typeof agentVersionSummarySchema>;
+const agentVersionsEnvelope = z.object({ data: z.array(agentVersionSummarySchema) });
 const agentEnvelope = z.object({
   data: agentSchema,
 });
@@ -630,6 +641,12 @@ export function createApiClient(
     /** One earlier publish of an agent (config and tools), read-only: a rollback publishes it again. */
     getAgentVersion: async (id: string, number: number) =>
       (await request(`/agents/${encodeURIComponent(id)}/versions/${number}`, agentVersionEnvelope)).data,
+    getAgentVersions: async (id: string) => (await request(`/agents/${encodeURIComponent(id)}/versions`, agentVersionsEnvelope)).data,
+    /** Publishes an earlier version's content as the next version and returns the agent. */
+    restoreAgentVersion: async (id: string, number: number) =>
+      (await request(`/agents/${encodeURIComponent(id)}/versions/${number}/restore`, agentEnvelope, { method: "POST" })).data,
+    unarchiveAgent: async (id: string) =>
+      (await request(`/agents/${encodeURIComponent(id)}/unarchive`, archiveEnvelope, { method: "POST" })).data,
     createAgent: async (input: CreateAgentInput) =>
       (
         await request("/agents", agentEnvelope, {

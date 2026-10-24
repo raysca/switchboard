@@ -103,6 +103,7 @@ export function AgentPage({ client, keyValue }: AgentPageProps) {
         pending={createMutation.isPending || updateMutation.isPending}
         onSubmit={(input) => (agent ? updateMutation.mutate({ id: agent.id, payload: input }) : createMutation.mutate(input))}
         onCancel={() => navigate("/agents")}
+        onRestored={published}
         callsInProgress={agent ? (({ live, onOlderVersion }) => live - onOlderVersion)(liveCalls(active.data ?? [], agent)) : 0}
       />
     </div>

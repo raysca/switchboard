@@ -52,6 +52,8 @@ export type AgentEditorProps = {
   pending: boolean;
   onSubmit: (input: CreateAgentInput) => void;
   onCancel: () => void;
+  /** An earlier version was restored on the server: the agent as it is now. */
+  onRestored?: (agent: AgentDTO) => void;
   /** Calls running on the published version right now (for the Publish dialog). */
   callsInProgress?: number;
 };
@@ -63,7 +65,7 @@ const sameTools = (a: ToolSelection[], b: ToolSelection[]) => {
 };
 
 /** One page for an agent: the agent stays put; steps, settings and test calls slide in from the right. */
-export function AgentEditor({ agent, providers, client, keyValue, pending, onSubmit, onCancel, initialName, initialPanel, callsInProgress, serverConfig }: AgentEditorProps) {
+export function AgentEditor({ agent, providers, client, keyValue, pending, onSubmit, onCancel, onRestored, initialName, initialPanel, callsInProgress, serverConfig }: AgentEditorProps) {
   const publishedTools = useMemo(() => agent?.current_version?.mcp_tools ?? [], [agent]);
   const published = useMemo(() => (agent?.current_version ? fromAgentConfig(agent.current_version.config, publishedTools.map(toolKey)) : null), [agent, publishedTools]);
   // The agent's MCP tool selection is part of the draft: it is published and tested with the config.
@@ -176,17 +178,23 @@ export function AgentEditor({ agent, providers, client, keyValue, pending, onSub
       }
     } else if (panel?.kind === "step") close();
   };
-  // Roll back: read the previous publish and publish it again as the next version (history stays append-only).
-  const restorePrevious = async () => {
-    if (!agent?.current_version || agent.current_version.number < 2) return;
-    const old = await client.getAgentVersion(agent.id, agent.current_version.number - 1);
-    setTools(old.mcp_tools);
-    // Through the editor's own model, so a setting the server now refuses on a step (a pre-7b copy of clean_text or failover) is dropped.
-    const restored = fromAgentConfig(old.config, old.mcp_tools.map(toolKey));
-    setGraph(restored);
-    onSubmit({ name: name.trim(), description: description.trim(), enabled: agent.enabled, config: toPayload(restored) as CreateAgentInput["config"], mcp_tools: old.mcp_tools });
-    close();
-  };
+  // Restore: the server publishes an earlier version's content as the next version (history stays append-only); the
+  // editor then shows what was published.
+  const history = agent
+    ? {
+        load: () => client.getAgentVersions(agent.id),
+        restore: async (number: number) => {
+          const restored = await client.restoreAgentVersion(agent.id, number);
+          const version = restored.current_version;
+          if (version) {
+            setTools(version.mcp_tools);
+            setGraph(fromAgentConfig(version.config, version.mcp_tools.map(toolKey)));
+          }
+          onRestored?.(restored);
+          close();
+        },
+      }
+    : undefined;
   const publish = () => {
     onSubmit({
       name: name.trim(),
@@ -318,7 +326,7 @@ export function AgentEditor({ agent, providers, client, keyValue, pending, onSub
                 ? { number: agent.current_version.number, createdAt: agent.current_version.created_at, hash: agent.current_version.config_hash }
                 : undefined
             }
-            onRestore={restorePrevious}
+            history={history}
             graph={graph}
             providers={providers}
             serverConfig={serverConfig}

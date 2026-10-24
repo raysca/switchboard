@@ -260,6 +260,73 @@ func (s *Service) VersionByNumber(ctx context.Context, id string, number int) (V
 	return toVersion(v), nil
 }
 
+// VersionSummary is one publish in an agent's history. The newest is the current version.
+type VersionSummary struct {
+	Number            int       `json:"number"`
+	ConfigHash        string    `json:"config_hash"`
+	CreatedAt         time.Time `json:"created_at"`
+	ToolCount         int       `json:"tool_count"`
+	MCPReviewRequired bool      `json:"mcp_review_required"`
+	Current           bool      `json:"current"`
+}
+
+// Versions lists an agent's publishes, newest first (the first is current), at most storage.MaxVersionList.
+func (s *Service) Versions(ctx context.Context, id string) ([]VersionSummary, error) {
+	if _, err := s.store.Agents().Current(ctx, id); err != nil {
+		return nil, err
+	}
+	rows, err := s.store.Agents().ListVersions(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]VersionSummary, 0, len(rows))
+	for i, v := range rows {
+		out = append(out, VersionSummary{Number: v.Number, ConfigHash: v.ConfigHash, CreatedAt: v.CreatedAt, ToolCount: v.ToolCount, MCPReviewRequired: v.MCPReviewRequired, Current: i == 0})
+	}
+	return out, nil
+}
+
+// ErrAlreadyCurrent: restoring the newest version would publish the same content again.
+var ErrAlreadyCurrent = errors.New("that is already the current version")
+
+// Restore publishes an earlier version's content (config and tool selection) as the next version, so history stays
+// append-only and calls in progress keep the version they started with. It is validated like any publish: a tool the
+// version pinned that has changed or gone since refuses the restore, naming nothing but the reason.
+func (s *Service) Restore(ctx context.Context, id string, number int) (Agent, error) {
+	old, err := s.store.Agents().VersionByNumber(ctx, id, number)
+	if err != nil {
+		return Agent{}, err
+	}
+	latest, err := s.store.Agents().ListVersions(ctx, id)
+	if err != nil {
+		return Agent{}, err
+	}
+	if len(latest) > 0 && latest[0].Number == number {
+		return Agent{}, ErrAlreadyCurrent
+	}
+	config, err := s.attachedConfig(ctx, withoutDeadStepSettings(json.RawMessage(old.ConfigJSON)), true)
+	if err != nil {
+		return Agent{}, err
+	}
+	selection := fromStorageSelections(old.MCPTools)
+	if err := s.checkConfigTools(ctx, id, config, &selection); err != nil {
+		return Agent{}, err
+	}
+	stored := old.MCPTools
+	if stored == nil {
+		stored = []storage.SelectedTool{} // an empty selection replaces the current one
+	}
+	if _, _, err := s.store.Agents().MutateAndPublish(ctx, id, storage.AgentMutation{Tools: &stored}, config); err != nil {
+		return Agent{}, err
+	}
+	return s.Get(ctx, id)
+}
+
+// Unarchive brings an archived agent back. It stays disabled until someone enables it.
+func (s *Service) Unarchive(ctx context.Context, id string) error {
+	return s.store.Agents().Unarchive(ctx, id)
+}
+
 func (s *Service) Archive(ctx context.Context, id string) error {
 	return s.store.Agents().Archive(ctx, id)
 }

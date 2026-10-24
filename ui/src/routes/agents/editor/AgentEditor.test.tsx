@@ -312,26 +312,23 @@ describe("AgentEditor MCP tools", () => {
     await openTools(user);
     expect(await screen.findByRole("checkbox", { name: "Background: echo" })).toBeChecked();
   });
-  it("restores a previous version without the call-wide settings it kept on a later step", async () => {
-    const legacy = {
-      start: "a",
-      steps: [
-        { id: "a", name: "Front", config: { ...flat, tts: { ...flat.tts, clean_text: false }, failover: { on: ["client_error"] } } },
-        { id: "b", name: "Sales", config: { llm: flat.llm, tts: { ...flat.tts, clean_text: false }, failover: { on: ["timeout"] } } },
-      ],
-      handoffs: [{ id: "e1", from: "a", to: "b", condition: "buy" }],
-    };
-    const getAgentVersion = vi.fn().mockResolvedValue({ id: "v1", number: 1, schema_version: 1, config: legacy, config_hash: "h", created_at: "", mcp_tools: [] });
+  it("restores an earlier version through the server and shows what it published", async () => {
+    const restoredConfig = { ...flat, llm: { ...flat.llm, system_prompt: "the old prompt" } };
+    const restored: AgentDTO = { ...agent, current_version: { ...agent.current_version!, number: 3, config: restoredConfig, mcp_tools: [] } };
+    const getAgentVersions = vi.fn().mockResolvedValue([
+      { number: 2, config_hash: "h2", created_at: "2026-10-02T10:00:00Z", tool_count: 0, current: true },
+      { number: 1, config_hash: "h1", created_at: "2026-10-01T10:00:00Z", tool_count: 0, current: false },
+    ]);
+    const restoreAgentVersion = vi.fn().mockResolvedValue(restored);
+    const onRestored = vi.fn();
     const twice: AgentDTO = { ...agent, current_version: { ...agent.current_version!, number: 2 } };
-    const { user, onSubmit } = setup({ agent: twice, client: { ...client, getAgentVersion } as unknown as ApiClient });
+    const { user, onSubmit } = setup({ agent: twice, onRestored, client: { ...client, getAgentVersions, restoreAgentVersion } as unknown as ApiClient });
     await user.click(screen.getByRole("button", { name: "Agent settings" }));
-    await user.click(screen.getByRole("button", { name: "Restore v1…" }));
+    await user.click(screen.getByRole("button", { name: "Version history" }));
+    await user.click(await screen.findByRole("button", { name: "Restore v1…" }));
     await user.click(screen.getByRole("button", { name: "Restore v1" }));
-    const sent = onSubmit.mock.calls[0][0] as { config: { steps: { id: string; config: { tts: Record<string, unknown>; failover?: unknown } }[] } };
-    const [front, sales] = sent.config.steps;
-    expect(front.config.tts.clean_text).toBe(false);
-    expect(front.config.failover).toEqual({ on: ["client_error"] });
-    expect(sales.config.tts).not.toHaveProperty("clean_text");
-    expect(sales.config).not.toHaveProperty("failover");
+    expect(restoreAgentVersion).toHaveBeenCalledWith(twice.id, 1);
+    expect(onRestored).toHaveBeenCalledWith(restored);
+    expect(onSubmit).not.toHaveBeenCalled(); // the server published it; the editor does not publish again
   });
 });

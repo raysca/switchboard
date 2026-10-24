@@ -20,6 +20,9 @@ type AgentService interface {
 	Archive(context.Context, string) error
 	Duplicate(context.Context, string, string) (agent.Agent, error)
 	VersionByNumber(context.Context, string, int) (agent.Version, error)
+	Versions(context.Context, string) ([]agent.VersionSummary, error)
+	Restore(context.Context, string, int) (agent.Agent, error)
+	Unarchive(context.Context, string) error
 }
 
 // NewAgentHandler constructs the authenticated management route handler for
@@ -57,6 +60,35 @@ func (h agentsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		WriteJSON(w, http.StatusOK, SuccessResponse[map[string]bool]{Data: map[string]bool{"archived": true}})
+		return
+	}
+	if len(parts) == 2 && parts[1] == "unarchive" {
+		if r.Method != http.MethodPost {
+			agentMethodNotAllowed(w, requestID, "POST")
+			return
+		}
+		if err := h.service.Unarchive(r.Context(), parts[0]); err != nil {
+			h.writeServiceError(w, err, requestID)
+			return
+		}
+		WriteJSON(w, http.StatusOK, SuccessResponse[map[string]bool]{Data: map[string]bool{"archived": false}})
+		return
+	}
+	if len(parts) == 2 && parts[1] == "versions" {
+		if r.Method != http.MethodGet {
+			agentMethodNotAllowed(w, requestID, "GET")
+			return
+		}
+		items, err := h.service.Versions(r.Context(), parts[0])
+		if err != nil {
+			h.writeServiceError(w, err, requestID)
+			return
+		}
+		WriteJSON(w, http.StatusOK, SuccessResponse[[]agent.VersionSummary]{Data: items})
+		return
+	}
+	if len(parts) == 4 && parts[1] == "versions" && parts[3] == "restore" {
+		h.restore(w, r, parts[0], parts[2], requestID)
 		return
 	}
 	if len(parts) == 3 && parts[1] == "versions" {
@@ -120,6 +152,25 @@ func (h agentsHandler) version(w http.ResponseWriter, r *http.Request, id, numbe
 	WriteJSON(w, http.StatusOK, SuccessResponse[agent.Version]{Data: v})
 }
 
+// restore serves POST /api/v1/agents/{id}/versions/{number}/restore: publish an earlier version's content again.
+func (h agentsHandler) restore(w http.ResponseWriter, r *http.Request, id, number, requestID string) {
+	if r.Method != http.MethodPost {
+		agentMethodNotAllowed(w, requestID, "POST")
+		return
+	}
+	n, err := strconv.Atoi(number)
+	if err != nil || n < 1 {
+		WriteError(w, http.StatusBadRequest, "invalid_request", "version must be a positive number", requestID)
+		return
+	}
+	restored, err := h.service.Restore(r.Context(), id, n)
+	if err != nil {
+		h.writeServiceError(w, err, requestID)
+		return
+	}
+	WriteJSON(w, http.StatusOK, SuccessResponse[agent.Agent]{Data: restored})
+}
+
 func (h agentsHandler) item(w http.ResponseWriter, r *http.Request, id, requestID string) {
 	switch r.Method {
 	case http.MethodGet:
@@ -180,6 +231,10 @@ func (h agentsHandler) writeServiceError(w http.ResponseWriter, err error, reque
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		WriteError(w, http.StatusNotFound, "not_found", "agent not found", requestID)
+		return
+	}
+	if errors.Is(err, agent.ErrAlreadyCurrent) {
+		WriteError(w, http.StatusConflict, "already_current", err.Error(), requestID)
 		return
 	}
 	if errors.Is(err, agent.ErrNotAttached) {

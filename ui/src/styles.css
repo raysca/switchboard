@@ -2617,6 +2617,24 @@ main:has(.mcp-page) {
     border-right: 0;
   }
 }
+.version-history {
+  margin-top: 12px;
+}
+.version-history__list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.archived-agents {
+  margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
 .http-tool {
   display: flex;
   flex-direction: column;

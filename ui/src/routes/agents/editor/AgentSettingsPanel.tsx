@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ProviderStatus, ServerConfigDTO } from "../../../api/client";
+import { VersionHistory, type VersionHistoryProps } from "./VersionHistory";
 import { SidePanel } from "../../../components/SidePanel";
 import { StageFields, type StageValue } from "../StageFields";
 import { AudioFields, QuietCallerBasics, QuietCallerDetails } from "./CallBehaviorFields";
@@ -20,8 +21,8 @@ const numberOrNothing = (raw: string): number | null => (raw.trim() === "" ? nul
 export type AgentSettingsPanelProps = {
   /** The published version, shown read-only: what is live, and its content hash. */
   published?: { number: number; createdAt: string; hash: string };
-  /** Publish the previous version again as the next one. Absent when there is nothing to go back to. */
-  onRestore?: () => Promise<void>;
+  /** Read the version history and publish an earlier version again. Absent for an agent that is not saved yet. */
+  history?: VersionHistoryProps;
   graph: AgentDraft;
   providers: ProviderStatus[];
   /** What the server offers and defaults to; absent while it loads or if it cannot be read. */
@@ -37,10 +38,7 @@ export type AgentSettingsPanelProps = {
 };
 
 /** What the whole call shares. Stored on the start step (server: call-level config). */
-export function AgentSettingsPanel({ graph, providers, serverConfig, name, description, onName, onDescription, onChange, onClose, returnFocusTo, fallbackFocusId, published, onRestore }: AgentSettingsPanelProps) {
-  const [restoring, setRestoring] = useState(false);
-  const [restoreBusy, setRestoreBusy] = useState(false);
-  const [restoreError, setRestoreError] = useState<string | null>(null);
+export function AgentSettingsPanel({ graph, providers, serverConfig, name, description, onName, onDescription, onChange, onClose, returnFocusTo, fallbackFocusId, published, history }: AgentSettingsPanelProps) {
   const start = graph.steps.find((n) => n.id === graph.start);
   const cfg: StepConfig = start?.config ?? {};
   const stt = rec(cfg.stt);
@@ -408,45 +406,7 @@ export function AgentSettingsPanel({ graph, providers, serverConfig, name, descr
           <p className="subtext">
             Config hash <code>{published.hash}</code>
           </p>
-          {onRestore && published.number > 1 &&
-            (restoring ? (
-              <div role="group" aria-label="Confirm restore" className="restore-confirm">
-                <p>
-                  Publish v{published.number - 1}'s settings as v{published.number + 1}? Calls already in progress finish on the version they started with. Changes you have not published here are replaced.
-                </p>
-                <div className="row">
-                  <button
-                    type="button"
-                    className="action-button"
-                    disabled={restoreBusy}
-                    onClick={() => {
-                      setRestoreError(null);
-                      setRestoreBusy(true);
-                      onRestore()
-                        .catch((e: unknown) => {
-                          setRestoring(false);
-                          setRestoreError(e instanceof Error ? e.message : "The previous version could not be restored.");
-                        })
-                        .finally(() => setRestoreBusy(false));
-                    }}
-                  >
-                    Restore v{published.number - 1}
-                  </button>
-                  <button type="button" className="action-button-small" onClick={() => setRestoring(false)}>
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button type="button" className="action-button-small" onClick={() => setRestoring(true)}>
-                Restore v{published.number - 1}…
-              </button>
-            ))}
-          {restoreError && (
-            <p role="alert" className="note note--bad">
-              {restoreError}
-            </p>
-          )}
+          {history && <VersionHistory {...history} />}
         </fieldset>
       )}
     </SidePanel>

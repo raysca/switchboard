@@ -306,4 +306,23 @@ describe("AgentsView", () => {
     await screen.findByRole("heading", { name: "No agents yet." });
     expect(screen.queryByText(/ready to use|No provider is set up/)).toBeNull();
   });
+
+  it("lists archived agents on request and brings one back", async () => {
+    const getAgents = vi.fn().mockResolvedValue([agent({}, graph), agent({ id: "a2", name: "Old line", archived: true, enabled: false })]);
+    const unarchiveAgent = vi.fn().mockResolvedValue({ archived: false });
+    const { user } = setup({ getAgents, unarchiveAgent });
+    expect(await screen.findByRole("link", { name: "Front desk" })).toBeVisible();
+    expect(screen.queryByText("Old line")).toBeNull(); // hidden until asked for
+    await user.click(screen.getByRole("button", { name: "Show archived agents (1)" }));
+    expect(screen.getByText("Old line")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Unarchive Old line" }));
+    await waitFor(() => expect(unarchiveAgent).toHaveBeenCalledWith("a2"));
+    await waitFor(() => expect(getAgents.mock.calls.length).toBeGreaterThan(1)); // the list is read again
+  });
+
+  it("offers archived agents even when no agent is active", async () => {
+    setup({ getAgents: vi.fn().mockResolvedValue([agent({ id: "a2", name: "Old line", archived: true, enabled: false })]) });
+    expect(await screen.findByRole("heading", { name: "No agents yet." })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Show archived agents (1)" })).toBeVisible();
+  });
 });

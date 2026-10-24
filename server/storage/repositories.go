@@ -191,6 +191,54 @@ func (r AgentRepository) VersionByNumber(ctx context.Context, agentID string, nu
 	}
 	return r.Version(ctx, id)
 }
+
+// AgentVersionSummary is one publish without its config: what a history list shows.
+type AgentVersionSummary struct {
+	Number            int
+	ConfigHash        string
+	CreatedAt         time.Time
+	MCPReviewRequired bool
+	ToolCount         int
+}
+
+// MaxVersionList bounds a history list; older publishes stay readable one by one (VersionByNumber).
+const MaxVersionList = 100
+
+// ListVersions returns an agent's publishes newest first, at most MaxVersionList of them.
+func (r AgentRepository) ListVersions(ctx context.Context, agentID string) ([]AgentVersionSummary, error) {
+	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT v.version,v.config_hash,v.created_at,v.mcp_review_required,(SELECT count(*) FROM agent_mcp_tools t WHERE t.agent_version_id=v.id) FROM agent_versions v WHERE v.agent_id=? ORDER BY v.version DESC LIMIT ?"), agentID, MaxVersionList)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AgentVersionSummary
+	for rows.Next() {
+		var v AgentVersionSummary
+		var created string
+		if err := rows.Scan(&v.Number, &v.ConfigHash, &created, &v.MCPReviewRequired, &v.ToolCount); err != nil {
+			return nil, err
+		}
+		if v.CreatedAt, err = parseTime(created); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// Unarchive makes an archived agent editable again. It stays disabled until it is enabled on purpose; sql.ErrNoRows
+// when the agent does not exist.
+func (r AgentRepository) Unarchive(ctx context.Context, id string) error {
+	result, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE agents SET archived=?,updated_at=? WHERE id=?"), boolValue(r.s.dialect, false), utc(time.Now()), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (r AgentRepository) Archive(ctx context.Context, id string) error {
 	result, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE agents SET archived=?,enabled=?,updated_at=? WHERE id=?"), boolValue(r.s.dialect, true), boolValue(r.s.dialect, false), utc(time.Now()), id)
 	if err != nil {
