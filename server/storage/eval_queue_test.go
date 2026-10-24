@@ -1395,3 +1395,55 @@ func TestFinishRunIfDoneIsOnce(t *testing.T) {
 		}
 	})
 }
+
+// The owner is part of the claim: the right attempt under another owner string is refused.
+func TestQueueWritesNeedTheClaimingOwner(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		e := s.Eval()
+		t0 := time.Now()
+		run, jobs, versionID := seedRun(t, s, 1, t0.Add(-time.Second))
+		j, ok, err := e.Claim(ctx, "w", t0, testLease)
+		if err != nil || !ok {
+			t.Fatalf("claim: %v %v", err, ok)
+		}
+		forged := j
+		forged.LeaseOwner = "other"
+		if err := e.Heartbeat(ctx, forged, t0, testLease); !errors.Is(err, ErrLeaseLost) {
+			t.Fatalf("heartbeat: %v", err)
+		}
+		if _, err := e.Complete(ctx, forged, t0, []EvalResult{resultFor(run, jobs[0], versionID, "expectations", "pass")}); !errors.Is(err, ErrLeaseLost) {
+			t.Fatalf("complete: %v", err)
+		}
+		if _, _, err := e.Fail(ctx, forged, t0, "x", 0, true); !errors.Is(err, ErrLeaseLost) {
+			t.Fatalf("fail: %v", err)
+		}
+		if got := jobByID(t, s, run, j.ID); got.Status != "running" || got.LeaseOwner != "w" {
+			t.Fatalf("job: %+v", got)
+		}
+	})
+}
+
+// Claim takes the job that is due longest first, even when more than claimCandidates jobs are due.
+func TestEvalClaimOrder(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		t0 := time.Now().Truncate(time.Second)
+		agentID, versionID := evalAgent(t, s)
+		run, jobs := queueRun(agentID, versionID, claimCandidates+4)
+		for i := range jobs { // inserted latest-due first, so storage order is the opposite of claim order
+			jobs[i].ID, jobs[i].RunAfter = NewID(), t0.Add(-time.Duration(i+1)*time.Minute)
+		}
+		if _, err := s.Eval().CreateRun(ctx, run, jobs); err != nil {
+			t.Fatal(err)
+		}
+		for i := len(jobs) - 1; i >= 0; i-- {
+			j, ok, err := s.Eval().Claim(ctx, "w", t0, testLease)
+			if err != nil || !ok || j.ID != jobs[i].ID {
+				t.Fatalf("claim %d: %v %v got %s want %s", i, err, ok, j.ID, jobs[i].ID)
+			}
+		}
+	})
+}
