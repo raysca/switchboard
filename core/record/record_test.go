@@ -318,7 +318,7 @@ func TestSweepExpiresAndRecoversCrashedPartial(t *testing.T) {
 	}
 	_ = os.Chtimes(filepath.Join(dir, "other.txt"), now.Add(-30*day), now.Add(-30*day))
 	mk("crash.wav.part", time.Hour, append(wavHeader(16000, 0), make([]byte, 4*100+3)...))
-	n, err := s.Sweep(now, 7*day)
+	n, err := s.Sweep(now, 7*day, nil)
 	if err != nil || n != 2 {
 		t.Fatalf("removed=%d err=%v", n, err)
 	}
@@ -362,5 +362,47 @@ func TestSinkRefusesSymlinkedDir(t *testing.T) {
 	}
 	if fi, _ := os.Stat(open); fi.Mode().Perm() != 0o700 {
 		t.Fatalf("dir mode %v", fi.Mode().Perm())
+	}
+}
+
+func TestSweepSparesRecordingsKeepNamesAndRemoveDeletesOnlyThatRecording(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := NewLocalSink(dir)
+	now := time.Now()
+	old := now.Add(-30 * 24 * time.Hour)
+	for _, name := range []string{"held.wav", "held.json", "gone.wav", "gone.json", "other.wav", "gone.wav.part"} {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_ = os.Chtimes(p, old, old)
+	}
+	n, err := s.Sweep(now, time.Hour, func(id string) bool { return id == "held" })
+	if err != nil || n != 4 {
+		t.Fatalf("removed=%d err=%v", n, err)
+	}
+	for _, name := range []string{"held.wav", "held.json"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Fatal(name, "removed despite keep")
+		}
+	}
+	// Remove takes the audio and the sidecar of one id and nothing else; an absent id is not an error.
+	if n, err := s.Remove("held"); err != nil || n != 2 {
+		t.Fatalf("remove = %d, %v", n, err)
+	}
+	if n, err := s.Remove("held"); err != nil || n != 0 {
+		t.Fatalf("second remove = %d, %v", n, err)
+	}
+	for _, bad := range []string{"", "../x", "a/b", "x.wav"} {
+		if _, err := s.Remove(bad); !errors.Is(err, ErrInvalidID) {
+			t.Fatalf("Remove(%q) = %v", bad, err)
+		}
+	}
+	// a symlink named like a recording is not followed or removed
+	if err := os.Symlink(filepath.Join(dir, "other.wav"), filepath.Join(dir, "link.wav")); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := s.Remove("link"); n != 0 {
+		t.Fatal("removed a symlink")
 	}
 }

@@ -170,7 +170,13 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 		s.recSink = sink
 		jctx, stop := context.WithCancel(context.Background())
 		m.recStop = stop
-		go sink.Janitor(jctx, time.Duration(s.cfg.Recording.RetentionDays)*24*time.Hour, time.Hour, s.logger)
+		go sink.Janitor(jctx, time.Duration(s.cfg.Recording.RetentionDays)*24*time.Hour, time.Hour, s.logger, func(id string) bool {
+			// A recording of a held call outlives its age; a lookup that fails keeps the file, since deleting is the one-way choice.
+			ctx, cancel := context.WithTimeout(jctx, 5*time.Second)
+			defer cancel()
+			held, err := store.Retention().IsHeld(ctx, id)
+			return held || err != nil
+		})
 	}
 	s.mgmt.Store(m)
 	s.logger.Info("management plane enabled", slog.String("dialect", s.cfg.Storage.Dialect), slog.Bool("retention", m.retention != nil))

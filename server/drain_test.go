@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -233,6 +234,40 @@ func TestFinishCallWaitsForRecordingWhenReleasePanics(t *testing.T) {
 		t.Fatalf("admission not released: %v", err)
 	}
 	s.admission.ReleaseSession(principal, agentID)
+}
+
+// The stored call ends in release; a janitor or an erasure that sees it ended must find the recording finished.
+func TestFinishCallWritesTheRecordingBeforeTheCallIsReleased(t *testing.T) {
+	s := apiTestServer(t)
+	sessionID := uint64(10001)
+	principal, agentID := "order-principal", "order-agent"
+	if err := s.admission.AcquireSession(principal, agentID, true); err != nil {
+		t.Fatal(err)
+	}
+	pipe, err := core.NewPipeline(&coretest.PassthroughProcessor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := core.NewSession(sessionID, pipe, core.DefaultResourceBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sess.Close() })
+	var mu sync.Mutex
+	var order []string
+	note := func(what string) { mu.Lock(); order = append(order, what); mu.Unlock() }
+	s.finishCall(sessionID, principal, agentID, sess, nil, s.timelines.GetOrCreate(sessionID), nil, nil,
+		func() { note("release") },
+		func() { time.Sleep(50 * time.Millisecond); note("recording") },
+	)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(order) != 2 || order[0] != "recording" || order[1] != "release" {
+		t.Fatalf("order = %v", order)
+	}
 }
 
 func TestFinishCallRecordingPanicDoesNotStick(t *testing.T) {
