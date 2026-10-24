@@ -31,6 +31,9 @@
   "Timeout": 15000000000,
   "SyncInterval": 300000000000
  },
+ "Secrets": {
+  "Dir": ""
+ },
  "Demo": {
   "AutoInstall": ""
  },

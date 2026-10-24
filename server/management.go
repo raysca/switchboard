@@ -63,7 +63,7 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	}
 	m.secrets = secrets.Store{Repo: store.Secrets(), Keys: keys}
 	mcpTokens := mcp.ResolverTokens(secrets.Chain{
-		secrets.Env{Getenv: s.env},
+		secrets.Env{Getenv: func(k string) string { return s.env(k) }},
 		secrets.Dir{Path: s.cfg.Secrets.Dir},
 		m.secrets,
 	})
@@ -119,7 +119,7 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	s.agents = agents
 	s.setAgentManagementAPI(api.NewAgentsHandler(s.agents))
 	s.setMCPManagementAPI(mcp.Handler(mcpService))
-	s.setSecretsManagementAPI(secrets.Handler(secrets.Sources{Env: secrets.Env{Getenv: s.env}, Dir: secrets.Dir{Path: s.cfg.Secrets.Dir}, Store: m.secrets, Logger: s.logger}))
+	s.setSecretsManagementAPI(secrets.Handler(secrets.Sources{Env: secrets.Env{Getenv: func(k string) string { return s.env(k) }}, Dir: secrets.Dir{Path: s.cfg.Secrets.Dir}, Store: m.secrets, Logger: s.logger}))
 	s.setSessionManagementAPI(api.NewTracesHandler(store.Sessions(), store.Traces()))
 
 	if policy != nil {
