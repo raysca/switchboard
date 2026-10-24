@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"govoice/server/api"
+	"govoice/server/retention"
 	"govoice/server/storage"
 )
 
@@ -116,7 +118,7 @@ func setupTracesHandler(t *testing.T) (*storage.Store, http.Handler, string, str
 		t.Fatal(err)
 	}
 
-	handler := api.NewTracesHandler(s.Sessions(), s.Traces())
+	handler := api.NewTracesHandler(s.Sessions(), s.Traces(), retention.NewLifecycle(s.Retention(), nil, slog.Default(), nil))
 	return s, handler, sessID, turnID
 }
 
@@ -369,7 +371,7 @@ func TestSessionsCarryTheCallerTheEndReasonAndAMedianReply(t *testing.T) {
 	if err := s.Sessions().Create(ctx, storage.SessionRecord{ID: idle, AgentID: agentID, AgentVersionID: vID, ConfigHash: hash, Status: "active", StartedAt: now.Add(time.Second)}); err != nil {
 		t.Fatal(err)
 	}
-	handler := api.NewTracesHandler(s.Sessions(), s.Traces())
+	handler := api.NewTracesHandler(s.Sessions(), s.Traces(), retention.NewLifecycle(s.Retention(), nil, slog.Default(), nil))
 	get := func(path string, out any) {
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))

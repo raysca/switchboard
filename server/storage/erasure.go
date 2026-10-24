@@ -109,6 +109,12 @@ func (r RetentionRepository) audit(ctx context.Context, tx *sql.Tx, action, subj
 	return err
 }
 
+// RecordAction audits something that happened outside the transactions here, such as a recording removal that was
+// retried after an erasure.
+func (r RetentionRepository) RecordAction(ctx context.Context, action, subject, detail, requestID string) error {
+	return r.s.WithTx(ctx, func(tx *sql.Tx) error { return r.audit(ctx, tx, action, subject, detail, requestID) })
+}
+
 // RecentActions returns the audit trail, newest first, at most MaxRetentionActions.
 func (r RetentionRepository) RecentActions(ctx context.Context, limit int) ([]RetentionAction, error) {
 	if limit <= 0 || limit > MaxRetentionActions {

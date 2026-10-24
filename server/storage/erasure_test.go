@@ -351,3 +351,23 @@ func TestNoTableHoldsAnErasedCallOrItsCaller(t *testing.T) {
 		}
 	})
 }
+
+// A call held while it was live, then ended by the restart cleanup, is still protected from the purge.
+func TestHeldCallSurvivesOrphanCleanupAndAPurge(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		ctx := context.Background()
+		id := seedSession(t, s, time.Now().Add(-90*24*time.Hour), "active")
+		if _, err := s.Retention().SetHold(ctx, id, true, "live", "r"); err != nil {
+			t.Fatal(err)
+		}
+		if n, err := s.Sessions().EndOrphans(ctx, time.Now()); err != nil || n != 1 {
+			t.Fatalf("orphans ended %d, %v", n, err)
+		}
+		if _, err := s.Retention().PurgeMetadata(ctx, time.Now(), 500); err != nil {
+			t.Fatal(err)
+		}
+		if rec := sessionOf(t, s, id); rec.Status != "ended" || !rec.Held {
+			t.Fatalf("record = %+v", rec)
+		}
+	})
+}

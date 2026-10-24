@@ -132,7 +132,9 @@ type Metrics struct {
 	RetentionIntervalSeconds                            atomic.Int64
 	RetentionRunsOK, RetentionRunsFailed                atomic.Uint64
 	RetentionTurnsPurgedTotal, RetentionSessionsDeleted atomic.Uint64
-	retentionLastOK                                     atomic.Pointer[time.Time] // monotonic reading kept: ages are durations
+	// Calls erased on request: one at a time, or by caller.
+	RetentionErasedCalls, RetentionErasedByCaller atomic.Uint64
+	retentionLastOK                               atomic.Pointer[time.Time] // monotonic reading kept: ages are durations
 
 	filters filterMetrics
 	summary summaryMetrics
@@ -372,6 +374,9 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "voice_retention_runs_total{result=\"failed\"} %d\n", m.RetentionRunsFailed.Load())
 	fmt.Fprintf(w, "# HELP voice_retention_turns_purged_total Turns whose transcript and assistant text the retention job blanked.\n# TYPE voice_retention_turns_purged_total counter\nvoice_retention_turns_purged_total %d\n", m.RetentionTurnsPurgedTotal.Load())
 	fmt.Fprintf(w, "# HELP voice_retention_sessions_deleted_total Sessions (with their turns, spans and tool calls) the retention job deleted.\n# TYPE voice_retention_sessions_deleted_total counter\nvoice_retention_sessions_deleted_total %d\n", m.RetentionSessionsDeleted.Load())
+	fmt.Fprintf(w, "# HELP voice_retention_erasures_total Calls erased on request, by how they were asked for.\n# TYPE voice_retention_erasures_total counter\n")
+	fmt.Fprintf(w, "voice_retention_erasures_total{kind=\"call\"} %d\n", m.RetentionErasedCalls.Load())
+	fmt.Fprintf(w, "voice_retention_erasures_total{kind=\"caller\"} %d\n", m.RetentionErasedByCaller.Load())
 	fmt.Fprintf(w, "# HELP voice_retention_last_success_age_seconds Seconds since the retention job last completed a run (the uptime before the first one).\n# TYPE voice_retention_last_success_age_seconds gauge\nvoice_retention_last_success_age_seconds %.0f\n", age.Seconds())
 
 	for _, c := range []struct {
@@ -548,6 +553,15 @@ func (p *providerErrors) write(w io.Writer) {
 	for _, k := range keys {
 		fmt.Fprintf(w, "voice_provider_errors_total{provider=%q,stage=%q} %d\n", k[0], k[1], vals[k])
 	}
+}
+
+// ObserveErasure counts calls erased on request; kind is "call" or "caller".
+func (m *Metrics) ObserveErasure(kind string, n int) {
+	if kind == "caller" {
+		m.RetentionErasedByCaller.Add(uint64(n))
+		return
+	}
+	m.RetentionErasedCalls.Add(uint64(n))
 }
 
 // ObserveRetention records a finished retention run.

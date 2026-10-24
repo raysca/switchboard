@@ -40,6 +40,9 @@ type SessionDTO struct {
 	TurnCount      int        `json:"turn_count"`
 	SafeSummary    string     `json:"safe_summary"`
 	Draft          bool       `json:"draft"` // a test call on an unpublished config
+	// Held keeps retention and erasure away from the call; HoldReason is the operator's note.
+	Held       bool   `json:"held"`
+	HoldReason string `json:"hold_reason"`
 	// Caller is the label the integration chose for the call (the voice token's principal).
 	Caller string `json:"caller"`
 	// EndReason is why the call ended (empty while it is live): caller_hung_up, silent_caller,
@@ -129,13 +132,14 @@ type ToolCallDTO struct {
 }
 
 // NewTracesHandler constructs the HTTP handler for sessions and traces query endpoints.
-func NewTracesHandler(sessions SessionRepository, traces TraceRepository) http.Handler {
-	return tracesHandler{sessions: sessions, traces: traces}
+func NewTracesHandler(sessions SessionRepository, traces TraceRepository, lifecycle SessionLifecycle) http.Handler {
+	return tracesHandler{sessions: sessions, traces: traces, lifecycle: lifecycle}
 }
 
 type tracesHandler struct {
-	sessions SessionRepository
-	traces   TraceRepository
+	sessions  SessionRepository
+	traces    TraceRepository
+	lifecycle SessionLifecycle
 }
 
 func (h tracesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -152,9 +156,22 @@ func (h tracesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if path == "erase" { // before the item lookup: "erase" is not a call id
+		if r.Method != http.MethodPost {
+			WriteError(w, http.StatusNotFound, "not_found", "route not found", requestID)
+			return
+		}
+		h.eraseCaller(w, r, requestID)
+		return
+	}
+
 	parts := strings.Split(path, "/")
 	if len(parts) == 1 {
 		h.item(w, r, parts[0], requestID)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "hold" {
+		h.hold(w, r, parts[0], requestID)
 		return
 	}
 	if len(parts) == 2 && parts[1] == "turns" {
@@ -179,7 +196,7 @@ func (h tracesHandler) collection(w http.ResponseWriter, r *http.Request, reques
 	// An unknown query key is refused, never ignored: a stale filter name would otherwise list every call.
 	for key := range r.URL.Query() {
 		switch key {
-		case "limit", "offset", "status", "agent_id":
+		case "limit", "offset", "status", "agent_id", "held":
 		default:
 			WriteError(w, http.StatusBadRequest, "invalid_request", "unknown query parameter "+strconv.Quote(key), requestID)
 			return
@@ -197,6 +214,15 @@ func (h tracesHandler) collection(w http.ResponseWriter, r *http.Request, reques
 		Offset:  page.Offset,
 		Status:  r.URL.Query().Get("status"),
 		AgentID: r.URL.Query().Get("agent_id"),
+	}
+	switch r.URL.Query().Get("held") {
+	case "":
+	case "true", "false":
+		held := r.URL.Query().Get("held") == "true"
+		filter.Held = &held
+	default:
+		WriteError(w, http.StatusBadRequest, "invalid_request", "held must be true or false", requestID)
+		return
 	}
 
 	records, err := h.sessions.List(r.Context(), filter)
@@ -224,8 +250,12 @@ func (h tracesHandler) collection(w http.ResponseWriter, r *http.Request, reques
 }
 
 func (h tracesHandler) item(w http.ResponseWriter, r *http.Request, id, requestID string) {
+	if r.Method == http.MethodDelete {
+		h.erase(w, r, id, requestID)
+		return
+	}
 	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET")
+		w.Header().Set("Allow", "GET, DELETE")
 		WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not supported", requestID)
 		return
 	}
@@ -368,6 +398,8 @@ func toSessionDTO(r storage.SessionRecord) SessionDTO {
 		TurnCount:      r.TurnCount,
 		SafeSummary:    r.SafeSummary,
 		Draft:          r.Draft,
+		Held:           r.Held,
+		HoldReason:     r.HoldReason,
 		Caller:         r.Caller,
 		EndReason:      r.EndReason,
 	}

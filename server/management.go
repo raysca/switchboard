@@ -27,6 +27,7 @@ type management struct {
 	store     *storage.Store
 	traces    *trace.Adapter
 	retention *retention.Job
+	lifecycle *retention.Lifecycle
 	mcpSync   *mcp.Syncer
 	recStop   context.CancelFunc // ends the recording janitor
 	mcp       *mcp.Service       // its pooled connections close with the management plane
@@ -145,7 +146,12 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	s.setMCPManagementAPI(mcp.Handler(mcpService))
 	s.setHTTPToolsManagementAPI(httptool.Handler(httpTools))
 	s.setSecretsManagementAPI(secrets.Handler(secrets.Sources{Env: secrets.Env{Getenv: func(k string) string { return s.env(k) }}, Dir: secrets.Dir{Path: s.cfg.Secrets.Dir}, Store: m.secrets, Uses: httpTools.SecretUses, Logger: s.logger}))
-	s.setSessionManagementAPI(api.NewTracesHandler(store.Sessions(), store.Traces()))
+	var recordings retention.Recordings // an explicit nil: a nil *LocalSink in the interface would not be nil
+	if sink != nil {
+		recordings = sink
+	}
+	m.lifecycle = retention.NewLifecycle(store.Retention(), recordings, s.logger, s.metrics.ObserveErasure)
+	s.setSessionManagementAPI(api.NewTracesHandler(store.Sessions(), store.Traces(), m.lifecycle))
 
 	if policy != nil {
 		m.retention = retention.NewJob(store.Retention(), *policy, retention.WithInterval(s.cfg.Retention.Interval), retention.WithLogger(s.logger), retention.WithObserver(s.metrics.ObserveRetention))
@@ -155,7 +161,7 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	} else {
 		s.logger.Warn("retention disabled: stored transcripts and traces are kept indefinitely")
 	}
-	s.setRetentionManagementAPI(retention.Handler(s.retentionSettings(policy), m.retention))
+	s.setRetentionManagementAPI(retention.Handler(s.retentionSettings(policy), m.retention, store.Retention()))
 	if d := s.cfg.MCP.SyncInterval; d > 0 {
 		m.mcpSync = mcp.NewSyncer(mcpService, d, s.logger, func(ok bool) {
 			if ok {
