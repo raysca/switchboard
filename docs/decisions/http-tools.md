@@ -132,7 +132,7 @@ Each slice is a commit set that passes `make verify` and `make e2e-echo`, follow
 2. **Executor and API.** The HTTP executor with limits and error mapping; the `/http-tools` handlers and the test endpoint; the `sessionExecutor` interface refactor; Go end-to-end test with a loopback fixture (a `cmd` or `mcptest` sibling that records what it received); endpoint-table and secret-leak tests.
 3. **Agents.** `http_tools` pins on create and update, step refs, publish validation, session capture, readiness states, `tool_calls` columns; end-to-end call test where the model calls an HTTP tool and the fixture sees the request.
 4. **UI.** HTTP tools page, picker section, publish diff, call detail; vitest and Playwright tests (`e2e/tests-agents/`), a seeded example tool in `make dev` against the fixture.
-5. **Docs.** `docs/api/http-tools.md`, `docs/operations/http-tools.md`, `docs/security/http-tools.md`, `docs/providers`-style example, roadmap rows updated.
+5. **Docs.** An API page, an operations page and a security page for HTTP tools beside the MCP ones, a worked example, and the roadmap rows updated.
 
 ## Risks and open points
 
