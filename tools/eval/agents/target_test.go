@@ -1,11 +1,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"govoice/server/api"
+	"govoice/server/eval"
+	"govoice/tools/internal/stack"
 )
 
 func fixture[T any](t *testing.T, name string) (v T) {
@@ -44,5 +51,27 @@ func TestToStored(t *testing.T) {
 	open.EndedAt = nil
 	if !toStored(open, nil, tr).Session.EndedAt.IsZero() {
 		t.Error("a live session has an end time")
+	}
+}
+
+// The target's reads end with the call's context, and a failed read names its endpoint.
+func TestHTTPTargetHonoursContext(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+	defer srv.Close()
+	defer close(release)
+	tg := httpTarget{&stack.Server{Admin: srv.URL, Key: "k"}}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := tg.Stored(ctx, "s1")
+	if err == nil || time.Since(start) > 3*time.Second {
+		t.Fatalf("Stored: %v after %v", err, time.Since(start))
+	}
+	if want := "GET sessions/s1"; !strings.Contains(err.Error(), want) {
+		t.Errorf("err = %v, want it to name %q", err, want)
+	}
+	if _, err := tg.DraftToken(ctx, eval.Agent{ID: "a"}); err == nil {
+		t.Error("DraftToken ignored the cancelled context")
 	}
 }

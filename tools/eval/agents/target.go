@@ -26,12 +26,12 @@ func (t httpTarget) PublicAddr() string { return t.srv.Public }
 
 // DraftToken mints a voice token for a call on the rewritten draft of the resolved version. The
 // version's own tool selection is the draft's, so an older version runs with its own tools.
-func (t httpTarget) DraftToken(_ context.Context, a eval.Agent) (string, error) {
+func (t httpTarget) DraftToken(ctx context.Context, a eval.Agent) (string, error) {
 	tools := a.Tools
 	if tools == nil {
 		tools = []agent.ToolSelection{}
 	}
-	d, err := t.srv.Call("POST", "voice-tokens", api.VoiceTokenRequest{
+	d, err := t.srv.CallCtx(ctx, "POST", "voice-tokens", api.VoiceTokenRequest{
 		Principal: eval.Principal, AgentID: a.ID, Draft: &api.DraftRequest{Config: a.Draft, MCPTools: &tools}})
 	if err != nil {
 		return "", fmt.Errorf("voice token: %w", err)
@@ -44,7 +44,7 @@ func (t httpTarget) DraftToken(_ context.Context, a eval.Agent) (string, error) 
 }
 
 // Stored reads the call's session, turns and traces from the management API.
-func (t httpTarget) Stored(_ context.Context, id string) (eval.Stored, error) {
+func (t httpTarget) Stored(ctx context.Context, id string) (eval.Stored, error) {
 	var (
 		sess  api.SessionDTO
 		turns []api.TurnDTO
@@ -54,12 +54,12 @@ func (t httpTarget) Stored(_ context.Context, id string) (eval.Stored, error) {
 		path string
 		into any
 	}{{"sessions/" + id, &sess}, {"sessions/" + id + "/turns", &turns}, {"sessions/" + id + "/traces", &tr}} {
-		d, err := t.srv.Call("GET", g.path, nil)
+		d, err := t.srv.CallCtx(ctx, "GET", g.path, nil)
 		if err == nil {
 			err = json.Unmarshal(d, g.into)
 		}
 		if err != nil {
-			return eval.Stored{}, err
+			return eval.Stored{}, fmt.Errorf("GET %s: %w", g.path, err)
 		}
 	}
 	return toStored(sess, turns, tr), nil

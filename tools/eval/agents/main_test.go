@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -124,6 +126,30 @@ func TestScoreCallFailureLines(t *testing.T) {
 	_, fails = scoreCall(context.Background(), in, bad)
 	if !slices.Contains(fails, "correctness: off topic") || !slices.Contains(fails, "answer_relevancy: off topic") {
 		t.Errorf("judged failures = %q", fails)
+	}
+}
+
+// A reason holding "; " is one failure line; a skipped scorer has a null score, a graded one a number.
+func TestScoreCallKeepsReasonsWhole(t *testing.T) {
+	in := eval.Input{Turns: []eval.Line{{Who: "caller", Text: "hi"}, {Who: "agent", Text: "hello"}}}
+	judge := &eval.Judge{Model: "m", Ask: func(context.Context, string, string) (string, error) {
+		return `{"score":0.1,"reason":"off topic; rambling"}`, nil
+	}}
+	scores, fails := scoreCall(context.Background(), in, judge)
+	if !slices.Contains(fails, "correctness: off topic; rambling") {
+		t.Errorf("failures = %q", fails)
+	}
+	broken := &eval.Judge{Model: "m", Ask: func(context.Context, string, string) (string, error) { return "", errors.New("boom") }}
+	if _, fails = scoreCall(context.Background(), in, broken); !slices.Contains(fails, "correctness: judge: boom") {
+		t.Errorf("errored judge failures = %q", fails)
+	}
+	skipped, _ := scoreCall(context.Background(), in, nil)
+	for _, s := range append(scores, skipped...) {
+		b, _ := json.Marshal(s)
+		wantNull := s.Outcome == "skipped" || s.Outcome == "error"
+		if got := strings.Contains(string(b), `"score":null`); got != wantNull {
+			t.Errorf("%s: %s", s.Outcome, b)
+		}
 	}
 }
 

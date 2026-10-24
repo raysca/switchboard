@@ -156,12 +156,17 @@ func (s *Server) Stop() {
 // Call sends one management API request with the generated key and returns the
 // response's data field. Response bodies are never echoed: they could contain secrets.
 func (s *Server) Call(method, path string, body any) (json.RawMessage, error) {
+	return s.CallCtx(context.Background(), method, path, body)
+}
+
+// CallCtx is Call that ends with ctx.
+func (s *Server) CallCtx(ctx context.Context, method, path string, body any) (json.RawMessage, error) {
 	var rd io.Reader
 	if body != nil {
 		b, _ := json.Marshal(body)
 		rd = bytes.NewReader(b)
 	}
-	req, err := http.NewRequest(method, s.Admin+"/api/v1/"+path, rd)
+	req, err := http.NewRequestWithContext(ctx, method, s.Admin+"/api/v1/"+path, rd)
 	if err != nil {
 		return nil, fmt.Errorf("%s %s: bad request", method, path)
 	}

@@ -51,10 +51,10 @@ type RunResult struct {
 
 // ScoreLine is one scorer's verdict on a run: pass, fail, skipped or error.
 type ScoreLine struct {
-	Scorer  string  `json:"scorer"`
-	Outcome string  `json:"outcome"`
-	Score   float64 `json:"score"`
-	Reason  string  `json:"reason"`
+	Scorer  string   `json:"scorer"`
+	Outcome string   `json:"outcome"`
+	Score   *float64 `json:"score"` // null when the scorer was skipped or errored: there is no score
+	Reason  string   `json:"reason"`
 }
 
 // OK reports whether the run had no harness error and no scorer failed or errored (Failures is

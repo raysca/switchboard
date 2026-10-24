@@ -192,12 +192,16 @@ func runCase(ctx context.Context, srv *stack.Server, ref eval.Agent, cs eval.Cas
 }
 
 // scoreCall runs the built-in scorers; the failure lines are the reasons of every result that failed
-// or errored, one per check. The deterministic scorers' reasons carry their own prefixes (path:, say:,
+// or errored, one per check (a result's reasons are newline-separated). The deterministic scorers' reasons carry their own prefixes (path:, say:,
 // tools_called: ...); a judged scorer's are prefixed with its name.
 func scoreCall(ctx context.Context, in eval.Input, judge *eval.Judge) (scores []ScoreLine, failures []string) {
 	rs := eval.RunScorers(ctx, in, func(string) *eval.Judge { return judge }, nil)
 	for _, r := range rs {
-		scores = append(scores, ScoreLine{Scorer: r.Scorer, Outcome: string(r.Outcome), Score: r.Score, Reason: r.Reason})
+		line := ScoreLine{Scorer: r.Scorer, Outcome: string(r.Outcome), Reason: r.Reason}
+		if r.Outcome == eval.Pass || r.Outcome == eval.Fail {
+			line.Score = &r.Score
+		}
+		scores = append(scores, line)
 	}
 	if eval.CaseRunPassed(rs) {
 		return scores, nil
@@ -207,10 +211,10 @@ func scoreCall(ctx context.Context, in eval.Input, judge *eval.Judge) (scores []
 			continue
 		}
 		prefix := ""
-		if s, _ := eval.Lookup(r.Scorer); r.Outcome == eval.Errored || s.Judged() {
+		if s, ok := eval.Lookup(r.Scorer); !ok || r.Outcome == eval.Errored || s.Judged() {
 			prefix = r.Scorer + ": "
 		}
-		for l := range strings.SplitSeq(r.Reason, "; ") {
+		for l := range strings.SplitSeq(r.Reason, "\n") {
 			failures = append(failures, prefix+l)
 		}
 	}

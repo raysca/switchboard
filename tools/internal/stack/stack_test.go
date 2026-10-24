@@ -33,6 +33,20 @@ func TestCallErrorDoesNotEchoBody(t *testing.T) {
 	}
 }
 
+// CallCtx ends with its context.
+func TestCallCtxHonoursCancel(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+	defer srv.Close()
+	defer close(release)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := (&Server{Admin: srv.URL, Key: "k"}).CallCtx(ctx, "GET", "agents", nil); err == nil || time.Since(start) > 3*time.Second {
+		t.Fatalf("err = %v after %v", err, time.Since(start))
+	}
+}
+
 // A server that exits during start must not leave its children running.
 func TestStartSweepsTheGroupOfAServerThatExited(t *testing.T) {
 	dir := t.TempDir()
