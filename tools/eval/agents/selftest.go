@@ -201,7 +201,7 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 		return fail("%v", err)
 	}
 	c := config{Mode: modeEcho, Runs: 1, MinPass: 1, Opts: opts{TurnTimeout: 30 * time.Second, Quiet: selftestQuiet}}
-	run := func(srv *stack.Server, cs []Case, hand map[string]func(map[string]any)) (Report, error) {
+	run := func(srv *stack.Server, cs []Case, hand map[string]func(map[string]any), ask AskFunc) (Report, error) {
 		refs, _, err := prepare(srv, cs, c)
 		if err != nil {
 			return Report{}, err
@@ -211,10 +211,10 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 				return Report{}, err
 			}
 		}
-		return execute(ctx, srv, cs, refs, c), nil
+		return execute(ctx, srv, cs, refs, c, ask), nil
 	}
 
-	good, err := run(srv, cases, nil)
+	good, err := run(srv, cases, nil, nil)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -246,7 +246,7 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 		}
 		broken = append(broken, mc)
 	}
-	bad, err := run(srv, broken, hand)
+	bad, err := run(srv, broken, hand, nil)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -272,6 +272,22 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 		return fail("%d of %d broken agents failed as expected", failed, len(mutations))
 	}
 
+	// The persona caller on echo, with a scripted persona model (no Ollama): one that asks for the
+	// handoff and then says DONE must pass; one that never gets to the point must fail the same case.
+	pc := Case{Name: "echo-persona-handoff", Agent: "Eval desk",
+		Caller: Caller{Persona: &Persona{Who: "a caller", Goal: "reach sales", MaxTurns: 3}},
+		Expect: Expect{Path: []string{"front", "sales"}, ToolsCalled: []string{"transfer_to_sales"}}}
+	goal := scriptedAsk("please transfer to sales", "DONE")
+	if rep, err := run(srv, []Case{pc}, nil, goal); err != nil || len(rep.Results) != 1 || !rep.Results[0].Passed {
+		WriteText(stderr, rep)
+		return fail("the persona caller did not reach its goal on echo: %v", err)
+	}
+	if rep, err := run(srv, []Case{pc}, nil, scriptedAsk("hello there")); err != nil || len(rep.Results) != 1 || rep.Results[0].Passed ||
+		len(rep.Results[0].Runs[0].Errors) > 0 || rep.Results[0].Runs[0].TurnCount < 3 {
+		WriteText(stderr, rep)
+		return fail("a persona that never reaches its goal was not failed on an assertion within max_turns: %v", err)
+	}
+
 	// A slow model: the reply pieces come 1.5 s apart, longer than the quiet window, and the call must
 	// still be read as one reply (a cut turn would be a harness error, never a verdict on the agent).
 	slow, err := startServer(ctx, stderr, root, bin, work, "slow", ", llm_extra_delay: 1500ms")
@@ -288,7 +304,7 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 			replies = append(replies, cs)
 		}
 	}
-	slowRep, err := run(slow, replies, nil)
+	slowRep, err := run(slow, replies, nil, nil)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -310,8 +326,17 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 	if fi, err := os.Stat(report); err != nil || fi.Mode().Perm() != reportFileMode {
 		return fail("the JSON report is missing or not mode 0600: %v", err)
 	}
-	fmt.Fprintf(stdout, "agent-eval selftest: %d passed, %d mutations failed as expected, slow model read as one reply\n", passed, failed)
+	fmt.Fprintf(stdout, "agent-eval selftest: %d passed, %d mutations failed as expected, persona caller driven, goal-less persona failed, slow model read as one reply\n", passed, failed)
 	return 0
 }
 
 func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }
+
+// scriptedAsk is a persona model that replays replies, repeating the last one.
+func scriptedAsk(replies ...string) AskFunc {
+	n := 0
+	return func(context.Context, string, string) (string, error) {
+		n++
+		return replies[min(n, len(replies))-1], nil
+	}
+}

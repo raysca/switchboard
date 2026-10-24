@@ -129,7 +129,7 @@ func TestExampleCasesLoad(t *testing.T) {
 	for _, c := range cs {
 		names = append(names, c.Name)
 	}
-	if want := []string{"dealership-buyer-reaches-sales", "dev-assistant-answers"}; !slices.Equal(names, want) {
+	if want := []string{"dealership-buyer-reaches-sales", "dental-new-patient-books", "dev-assistant-answers"}; !slices.Equal(names, want) {
 		t.Errorf("cases = %v, want %v", names, want)
 	}
 }

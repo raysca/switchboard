@@ -19,8 +19,11 @@ func TestPlanAndGate(t *testing.T) {
 	if err := checkPlan([]Case{script}, 3, 5); err == nil || !strings.Contains(err.Error(), "-max-turns") {
 		t.Errorf("over the cap accepted: %v", err)
 	}
-	if err := checkPlan([]Case{persona}, 1, 40); err == nil || !strings.Contains(err.Error(), "persona") {
-		t.Errorf("persona caller accepted before it exists: %v", err)
+	if err := checkPlan([]Case{persona}, 1, 40); err != nil {
+		t.Errorf("persona case refused: %v", err)
+	}
+	if err := checkPlan([]Case{persona}, 2, 15); err == nil || !strings.Contains(err.Error(), "-max-turns") {
+		t.Errorf("persona max_turns x runs over the cap accepted: %v", err)
 	}
 	if err := liveGate(true, ""); err == nil || !strings.Contains(err.Error(), "GOVOICE_LIVE=1") {
 		t.Errorf("paid run allowed without the gate: %v", err)
@@ -32,7 +35,7 @@ func TestPlanAndGate(t *testing.T) {
 
 func TestParseFlagsRefusals(t *testing.T) {
 	for _, args := range [][]string{{"-providers", "live"}, {"-runs", "0"}, {"-runs", "2", "-min-pass", "3"}, {"-min-pass", "0"},
-		{"-max-turns", "0"}, {"-version", "-1"}, {"-turn-timeout", "0s"}, {"-bogus"}} {
+		{"-max-turns", "0"}, {"-caller-llm", "gpt"}, {"-caller-llm", "xai", "-caller-url", "https://evil.example/v1"}, {"-version", "-1"}, {"-turn-timeout", "0s"}, {"-bogus"}} {
 		if _, err := parseFlags(args, io.Discard); err == nil {
 			t.Errorf("parseFlags(%v) accepted", args)
 		}
