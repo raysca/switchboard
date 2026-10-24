@@ -251,6 +251,9 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 		return fail("%v", err)
 	}
 	if len(bad.Results) != len(mutations) {
+		if ctx.Err() != nil {
+			return fail("interrupted")
+		}
 		return fail("the mutation run stopped early")
 	}
 	failed := 0
@@ -309,6 +312,9 @@ func selftest(ctx context.Context, stdout, stderr io.Writer) int {
 		return fail("%v", err)
 	}
 	if len(slowRep.Results) != 1 || !slowRep.Results[0].Passed {
+		if ctx.Err() != nil {
+			return fail("interrupted")
+		}
 		WriteText(stderr, slowRep)
 		return fail("a slow model was not read as one reply per turn")
 	}

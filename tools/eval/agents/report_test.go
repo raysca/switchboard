@@ -41,6 +41,18 @@ note: echo mode checks the plumbing (handoffs, tools, hang-up), never prompts or
 agent-eval: 1 passed, 1 failed (echo)
 `
 
+// Path, tools and end reason come from the server: control characters in them cannot forge report lines.
+func TestReportTextEscapesServerStrings(t *testing.T) {
+	r := fixedReport()
+	run := &r.Results[0].Runs[0]
+	run.Path, run.Tools, run.EndReason = []string{"a\nFAKE: pass"}, []string{"t\nFAKE: pass"}, "e\nFAKE: pass"
+	var b bytes.Buffer
+	WriteText(&b, r)
+	if strings.Contains(b.String(), "\nFAKE") {
+		t.Errorf("a server string broke out of its line:\n%s", b.String())
+	}
+}
+
 func TestReportText(t *testing.T) {
 	var b bytes.Buffer
 	WriteText(&b, fixedReport())

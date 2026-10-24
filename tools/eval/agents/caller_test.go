@@ -189,3 +189,25 @@ func TestNewAskSendsPromptAndKeepsKeyOut(t *testing.T) {
 		t.Error("401 accepted")
 	}
 }
+
+// The persona model client never follows a redirect: the second server must see nothing.
+func TestNewAskDoesNotFollowRedirects(t *testing.T) {
+	hit := false
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		fmt.Fprint(w, `{"output_text":"leaked"}`)
+	}))
+	defer target.Close()
+	redir := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer redir.Close()
+	ask, closeAsk, err := newAsk(config{CallerLLM: callerOffline, CallerURL: redir.URL + "/v1/responses"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeAsk()
+	if got, err := ask(context.Background(), "s", "u"); err == nil || hit {
+		t.Errorf("redirect followed or accepted: reply %q, err %v, target hit %v", got, err, hit)
+	}
+}

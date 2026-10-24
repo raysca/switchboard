@@ -135,16 +135,18 @@ func jti(token string) (string, error) {
 	return p.JTI, nil
 }
 
-// activity reports whether an event shows the agent working (text, a tool call, a new step's greeting).
+// activity reports whether an event shows the agent working (text, a tool call, a new step's greeting, an error).
 func activity(kind string) bool {
-	return kind == "audio" || strings.HasPrefix(kind, "bot-") || strings.HasPrefix(kind, "llm-function-call")
+	return kind == "audio" || kind == "error" || strings.HasPrefix(kind, "bot-") || strings.HasPrefix(kind, "llm-function-call")
 }
 
 // turnState reads the events after mark: when the agent last showed activity, whether it has said
-// anything, and whether a reply is still open. bot-llm-started comes only with a reply's first text
-// piece, so a slow model or tool leaves gaps inside a reply: it is open from its start to its
-// bot-llm-stopped, while a tool call is in flight, and after a tool call ends until the reply that
-// follows it (a transfer's greeting included) stops.
+// anything, and whether a reply is still open. A reply is bracketed by bot-llm-started (sent with its
+// first text piece, or, for a reply with no text, just before its stop) and bot-llm-stopped, and a slow
+// model or tool leaves gaps inside it: it is open from its start to its stop, while a tool call is in
+// flight, and after a tool call ends until the reply that follows it (a transfer's greeting included)
+// stops. An RTVI error after a tool call ends closes that reply too: a model call that failed sends no
+// stop, and the turn must not wait out -turn-timeout for it.
 func turnState(ev []stack.Event, mark time.Time) (last time.Time, text, open bool) {
 	last = mark
 	reply, calls, afterCall := false, 0, false
@@ -165,6 +167,10 @@ func turnState(ev []stack.Event, mark time.Time) (last time.Time, text, open boo
 		case "llm-function-call-stopped":
 			calls = max(calls-1, 0)
 			afterCall = true
+		case "error":
+			if calls == 0 {
+				reply, afterCall = false, false
+			}
 		}
 	}
 	return last, text, reply || calls > 0 || afterCall

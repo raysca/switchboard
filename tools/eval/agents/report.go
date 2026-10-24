@@ -119,8 +119,8 @@ func WriteText(w io.Writer, r Report) {
 			if len(run.Tools) > 0 {
 				tools = strings.Join(run.Tools, ", ")
 			}
-			fmt.Fprintf(w, "    path: %s\n    tools: %s\n", strings.Join(run.Path, " > "), tools)
-			fmt.Fprintf(w, "    end: %s, %d turns, median reply %d ms\n", run.EndReason, run.TurnCount, run.MedianReplyMS)
+			fmt.Fprintf(w, "    path: %s\n    tools: %s\n", visible(strings.Join(run.Path, " > ")), visible(tools))
+			fmt.Fprintf(w, "    end: %s, %d turns, median reply %d ms\n", visible(run.EndReason), run.TurnCount, run.MedianReplyMS)
 			for _, l := range run.Transcript {
 				fmt.Fprintf(w, "    %s: %s\n", l.Who, visible(l.Text))
 			}

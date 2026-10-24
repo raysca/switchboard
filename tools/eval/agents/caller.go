@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -151,6 +152,10 @@ func newAsk(c config) (AskFunc, func(), error) {
 			cfg.Model = defaultCallerLLM
 		}
 	}
+	// A redirect is never followed: the key and the prompt go only where the operator pointed them. The
+	// 3xx then reads as a non-200 answer, an error.
+	cfg.HTTPClient = &http.Client{Timeout: callerTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	p, err := xai.NewProcessor(cfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("persona model: %w", err)

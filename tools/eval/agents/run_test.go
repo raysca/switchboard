@@ -41,6 +41,8 @@ func TestTurnState(t *testing.T) {
 		{"tool in flight", []string{"bot-llm-started", "bot-llm-stopped", "llm-function-call-started"}, true},
 		{"tool done, follow-up reply not yet stopped", []string{"bot-llm-started", "bot-llm-stopped", "llm-function-call-started", "llm-function-call-stopped"}, true},
 		{"tool done, follow-up reply stopped", []string{"llm-function-call-started", "llm-function-call-stopped", "bot-llm-started", "bot-llm-text", "bot-llm-stopped"}, false},
+		{"model failed after a tool call: error closes the reply", []string{"bot-llm-started", "bot-llm-stopped", "llm-function-call-started", "llm-function-call-stopped", "error"}, false},
+		{"error while a tool is still in flight", []string{"llm-function-call-started", "error"}, true},
 		{"cut-off reply replaced by a closed one", []string{"bot-llm-started", "bot-llm-text", "bot-llm-started", "bot-llm-stopped"}, false},
 	} {
 		if _, _, open := turnState(ev(c.kind...), t0); open != c.open {
