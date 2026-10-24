@@ -71,9 +71,8 @@ func Observe(sess api.SessionDTO, tr api.SessionTracesDTO, start string, ev []st
 		o.Tools = append(o.Tools, c.RemoteName+":"+c.Status)
 	}
 
-	for _, e := range ev {
-		// The server closes a call with an error message that carries the end reason: not a fault.
-		if e.Kind == "error" && (sess.EndReason == "" || e.Text != sess.EndReason) {
+	for i, e := range ev {
+		if e.Kind == "error" && !isEndMessage(sess.EndReason, e.Text, i == len(ev)-1) {
 			o.ErrorFrames++
 		}
 	}
@@ -127,6 +126,17 @@ func Observe(sess api.SessionDTO, tr api.SessionTracesDTO, start string, ev []st
 	}
 	o.Replies = strings.Join(replies, "\n")
 	return o
+}
+
+// endMessages is what the server sends as the closing RTVI error message when the stored end reason
+// is not the same word (server/server.go: idle controller reasons and the call time limit).
+var endMessages = map[string]string{"silent_caller": "user_idle", "agent_stuck": "bot_idle", "time_limit": "max_call_duration"}
+
+// isEndMessage reports whether an RTVI error message is the server closing the call with its end
+// reason, which is not a fault: the reason itself, or (as the last event before the close) the
+// word the server uses for it.
+func isEndMessage(endReason, text string, last bool) bool {
+	return endReason != "" && (text == endReason || (last && text == endMessages[endReason]))
 }
 
 // medianMS is the upper median of ms (0 for none).
