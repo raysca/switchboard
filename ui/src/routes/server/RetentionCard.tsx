@@ -4,18 +4,19 @@ import type { ApiClient, RetentionStatus } from "../../api/client";
 import { DataTable } from "../../components/primitives";
 import { ago } from "../mcp/mcpStats";
 
+const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 const days = (n: number) => (n > 0 ? `${n} ${n === 1 ? "day" : "days"}` : "Until deleted by hand");
 
 /** The retention policy in force, the last run, and a preview of what the next run would remove. Read-only. */
 export function RetentionCard({ client }: { client: ApiClient }) {
-  const query = useQuery({ queryKey: ["retention"], queryFn: () => client.getRetention(), retry: false });
-  const [preview, setPreview] = useState<RetentionStatus["dry_run"]>(null);
+  const query = useQuery({ queryKey: ["retention"], queryFn: () => client.getRetention(), retry: false, refetchInterval: 60_000 });
+  const [preview, setPreview] = useState<{ counts: NonNullable<RetentionStatus["dry_run"]>; at: Date } | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const dryRun = useMutation({
     mutationFn: () => client.getRetention(true),
     onSuccess: (r) => {
       setPreviewError(null);
-      setPreview(r.dry_run ?? null);
+      setPreview(r.dry_run ? { counts: r.dry_run, at: new Date() } : null);
     },
     onError: (e) => setPreviewError(e instanceof Error ? e.message : "The preview could not be counted."),
   });
@@ -65,7 +66,7 @@ export function RetentionCard({ client }: { client: ApiClient }) {
           )}
           {preview && (
             <p role="status">
-              The next run would blank {preview.content_turns} {preview.content_turns === 1 ? "turn" : "turns"} and delete {preview.metadata_sessions} {preview.metadata_sessions === 1 ? "call" : "calls"} ({preview.metadata_turns} turns, {preview.metadata_tool_calls} tool calls, {preview.metadata_spans} spans, {preview.metadata_events} events). Nothing was changed.
+              At {preview.at.toLocaleTimeString()}, the next run would blank {count(preview.counts.content_turns, "turn", "turns")} and delete {count(preview.counts.metadata_sessions, "call", "calls")} ({count(preview.counts.metadata_turns, "turn", "turns")}, {count(preview.counts.metadata_tool_calls, "tool call", "tool calls")}, {count(preview.counts.metadata_spans, "span", "spans")}, {count(preview.counts.metadata_events, "event", "events")}). Nothing was changed.
             </p>
           )}
         </div>

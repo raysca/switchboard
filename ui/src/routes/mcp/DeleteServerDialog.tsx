@@ -41,7 +41,7 @@ export function DeleteServerDialog({ name, agents, inUse, pending, error, onDele
           {agents !== undefined && agents.length > 0 && (
             <>
               <p>
-                {agents.length === 1 ? "This agent uses" : "These agents use"} its tools, so deleting is refused until you detach it, which takes the tools off {agents.length === 1 ? "it" : "them"}:
+                {agents.length === 1 ? "This agent uses" : "These agents use"} its tools, so deleting is refused until you detach the server, which takes its tools off {agents.length === 1 ? "this agent" : "these agents"}:
               </p>
               <ul className="drift-agents">
                 {agents.map((f) => (

@@ -51,7 +51,7 @@ describe("RetentionCard", () => {
     const getRetention = vi.fn().mockImplementation(async (dry?: boolean) => status(dry ? { dry_run: { content_sessions: 3, content_turns: 5, metadata_sessions: 2, metadata_turns: 4, metadata_tool_calls: 1, metadata_spans: 8, metadata_events: 9 } } : {}));
     const user = setup(getRetention);
     await user.click(await screen.findByRole("button", { name: "Preview the next run" }));
-    expect(await screen.findByRole("status")).toHaveTextContent("would blank 5 turns and delete 2 calls (4 turns, 1 tool call");
+    expect(await screen.findByRole("status")).toHaveTextContent("would blank 5 turns and delete 2 calls (4 turns, 1 tool call, 8 spans, 9 events). Nothing was changed.");
     expect(getRetention).toHaveBeenLastCalledWith(true);
   });
 

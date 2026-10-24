@@ -26,7 +26,7 @@ export function ArchiveAgentDialog({ name, pending, error, liveCalls = 0, tools 
       )}
       {tools.length > 0 && (
         <p className="subtext">
-          It uses {tools.length === 1 ? "this tool" : "these tools"}: {tools.map((t, i) => [i > 0 && ", ", <code key={t}>{t}</code>])}. Archiving does not release {tools.length === 1 ? "it" : "them"}: the agent's saved versions still use {tools.length === 1 ? "it" : "them"}, so {tools.length === 1 ? "it" : "they"} cannot be deleted while those versions exist.
+          It uses {tools.length === 1 ? "this tool" : "these tools"}: {tools.map((t, i) => [i > 0 && ", ", <code key={t}>{t}</code>])}. Archiving does not release {tools.length === 1 ? "it" : "them"}: the agent's current version keeps using {tools.length === 1 ? "it" : "them"}, so deleting {tools.length === 1 ? "its" : "their"} MCP server or HTTP tool is still refused (an HTTP tool any version has used can only be disabled).
         </p>
       )}
       {error && (

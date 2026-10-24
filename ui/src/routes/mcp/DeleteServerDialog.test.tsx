@@ -64,7 +64,7 @@ describe("DeleteServerDialog", () => {
 
   it("names the agents that use the server before the first delete, and says delete will be refused", () => {
     setup({ inUse: false, agents: [agent("a1", "Front desk"), agent("a2", "Billing")] });
-    expect(screen.getByText(/These agents use its tools, so deleting is refused until you detach it/)).toBeVisible();
+    expect(screen.getByText(/These agents use its tools, so deleting is refused until you detach the server/)).toBeVisible();
     expect(screen.getByRole("link", { name: "Front desk" })).toHaveAttribute("href", "/agents/a1");
     expect(screen.getByRole("link", { name: "Billing" })).toBeVisible();
   });

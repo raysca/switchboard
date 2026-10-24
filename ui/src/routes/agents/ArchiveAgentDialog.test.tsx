@@ -29,7 +29,7 @@ describe("ArchiveAgentDialog", () => {
     expect(screen.getByRole("note")).toHaveTextContent("2 calls are in progress. They finish normally; no new calls start.");
     const dialog = screen.getByRole("dialog");
     expect(dialog).toHaveTextContent("It uses these tools: lookup_order, get_order.");
-    expect(dialog).toHaveTextContent("Archiving does not release them");
+    expect(dialog).toHaveTextContent("Archiving does not release them: the agent's current version keeps using them");
   });
 
   it("adds nothing for an agent with no live calls and no tools", () => {

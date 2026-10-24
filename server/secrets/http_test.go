@@ -139,8 +139,9 @@ func TestStoredSecretChangesAreAuditedWithoutTheValue(t *testing.T) {
 	if w := do2("PUT", "/api/v1/secrets/Bad_Name", `{"value":"v"}`); w.Code != 400 { // a refused write leaves no entry
 		t.Fatal(w.Code)
 	}
-	if w := do2("DELETE", "/api/v1/secrets/crm-api", ""); w.Code != 204 {
-		t.Fatal(w.Code)
+	deleted := do2("DELETE", "/api/v1/secrets/crm-api", "")
+	if deleted.Code != 204 {
+		t.Fatal(deleted.Code)
 	}
 	if w := do2("DELETE", "/api/v1/secrets/crm-api", ""); w.Code != 404 { // nothing deleted, nothing recorded
 		t.Fatal(w.Code)
@@ -159,7 +160,7 @@ func TestStoredSecretChangesAreAuditedWithoutTheValue(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := env.Data.RecentChanges
-	if len(got) != 3 || got[0].Action != "delete" || got[1].Action != "replace" || got[2].Action != "create" || got[0].Name != "crm-api" || got[0].RequestID == "" {
+	if len(got) != 3 || got[0].Action != "delete" || got[1].Action != "replace" || got[2].Action != "create" || got[0].Name != "crm-api" || got[0].RequestID != deleted.Header().Get("X-Request-ID") || got[0].RequestID == "req-DELETE" {
 		t.Fatalf("changes = %+v", got)
 	}
 	if strings.Contains(w.Body.String(), sentinel) {
