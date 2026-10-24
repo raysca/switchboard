@@ -102,6 +102,7 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 		p := retention.Policy{
 			ContentRetention:  time.Duration(rc.ContentRetentionDays) * 24 * time.Hour,
 			MetadataRetention: time.Duration(rc.MetadataRetentionDays) * 24 * time.Hour,
+			EvalRetention:     time.Duration(rc.EvalRetentionDays) * 24 * time.Hour,
 			BatchSize:         rc.BatchSize,
 		}
 		if err := p.Validate(); err != nil {
@@ -291,6 +292,7 @@ func (s *Server) retentionSettings(policy *retention.Policy) retention.Settings 
 	settings := retention.Settings{Enabled: policy != nil, Interval: interval, Policy: retention.Policy{
 		ContentRetention:  time.Duration(rc.ContentRetentionDays) * 24 * time.Hour,
 		MetadataRetention: time.Duration(rc.MetadataRetentionDays) * 24 * time.Hour,
+		EvalRetention:     time.Duration(rc.EvalRetentionDays) * 24 * time.Hour,
 		BatchSize:         rc.BatchSize,
 	}}
 	if policy != nil {

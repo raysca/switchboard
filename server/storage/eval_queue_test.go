@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"sync"
@@ -526,6 +527,140 @@ func TestEvalRunListingAndStart(t *testing.T) {
 		}
 		if again, _ := e.GetRun(ctx, agentID, pub.ID); !again.StartedAt.Equal(*first.StartedAt) {
 			t.Fatal("a second start moved started_at")
+		}
+	})
+}
+
+// finishedRun makes a run of one case whose job completed at `at` with one result (all stamps use `at`).
+func finishedRun(t *testing.T, s *Store, at time.Time) (EvalRun, EvalJob) {
+	t.Helper()
+	ctx := context.Background()
+	run, jobs, versionID := seedRun(t, s, 1, at.Add(-time.Second))
+	j, ok, err := s.Eval().Claim(ctx, "w", at, testLease)
+	if err != nil || !ok || j.ID != jobs[0].ID {
+		t.Fatalf("claim: %v %v", err, ok)
+	}
+	if _, err := s.Eval().Complete(ctx, j.ID, "w", at, []EvalResult{resultFor(run, jobs[0], versionID, "expectations", "pass")}); err != nil {
+		t.Fatal(err)
+	}
+	return run, jobs[0]
+}
+
+func countRows(t *testing.T, s *Store, table string) int {
+	t.Helper()
+	var n int
+	if err := s.DB().QueryRowContext(context.Background(), "SELECT count(*) FROM "+table).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// eval_results points at its call by session id with no foreign key, so purging the ended session leaves the result.
+// Adding a foreign key to sessions makes PurgeMetadata fail here.
+func TestPurgeMetadataWithEvalResults(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		old := time.Now().Add(-48 * time.Hour)
+		sessionID := seedSession(t, s, old, "ended")
+		if _, err := s.DB().ExecContext(ctx, s.bind("UPDATE sessions SET ended_at=? WHERE id=?"), utc(old), sessionID); err != nil {
+			t.Fatal(err)
+		}
+		run, job := finishedRun(t, s, time.Now())
+		if _, err := s.DB().ExecContext(ctx, s.bind("UPDATE eval_results SET session_id=? WHERE run_id=?"), sessionID, run.ID); err != nil {
+			t.Fatal(err)
+		}
+		stats, err := s.Retention().PurgeMetadata(ctx, time.Now().Add(-24*time.Hour), 100)
+		if err != nil {
+			t.Fatalf("purge with an eval result pointing at the session: %v", err)
+		}
+		if stats.SessionsDeleted < 1 {
+			t.Fatalf("session not purged: %+v", stats)
+		}
+		got, err := s.Eval().RunResults(ctx, run.ID)
+		if err != nil || len(got) != 1 || got[0].SessionID != sessionID || got[0].SubjectID != EvalCaseRunSubject(run.ID, job.Subject) {
+			t.Fatalf("the result must survive its session: %v %+v", err, got)
+		}
+	})
+}
+
+func TestPurgeEval(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		now := time.Now()
+		r := s.Retention()
+		cut := func(d time.Duration) time.Time { return now.Add(-d) }
+		day := 24 * time.Hour
+
+		oldRun, _ := finishedRun(t, s, cut(100*day)) // finished 100 days ago
+		newRun, _ := finishedRun(t, s, cut(time.Hour))
+		openRun, _, _ := seedRun(t, s, 1, cut(200*day)) // old but still pending: never purged
+
+		// Jobs at 30 days, results at 180: the old run's job goes, its result and run stay.
+		st, err := r.PurgeEval(ctx, cut(180*day), cut(30*day), 100)
+		if err != nil || st != (PurgeEvalStats{Jobs: 1}) {
+			t.Fatalf("jobs only: %v %+v", err, st)
+		}
+		if got, _ := s.Eval().RunResults(ctx, oldRun.ID); len(got) != 1 {
+			t.Fatalf("the result must outlive its job: %d", len(got))
+		}
+		if _, err := s.Eval().GetRun(ctx, oldRun.AgentID, oldRun.ID); err != nil {
+			t.Fatalf("a run with results is kept: %v", err)
+		}
+		// Results at 50 days: now the old run's result and, in the same call, the emptied run go.
+		st, err = r.PurgeEval(ctx, cut(50*day), cut(30*day), 100)
+		if err != nil || st != (PurgeEvalStats{Results: 1, Runs: 1}) {
+			t.Fatalf("results and run: %v %+v", err, st)
+		}
+		if _, err := s.Eval().GetRun(ctx, oldRun.AgentID, oldRun.ID); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("old run still stored: %v", err)
+		}
+		if got, _ := s.Eval().RunResults(ctx, newRun.ID); len(got) != 1 {
+			t.Fatal("a recent result was purged")
+		}
+		if got, _ := s.Eval().RunJobs(ctx, openRun.ID); len(got) != 1 || got[0].Status != "pending" {
+			t.Fatalf("a pending job was purged: %+v", got)
+		}
+		if _, err := s.Eval().GetRun(ctx, openRun.AgentID, openRun.ID); err != nil {
+			t.Fatalf("an unfinished run was purged: %v", err)
+		}
+		// A zero cutoff leaves that pass out.
+		if st, err = r.PurgeEval(ctx, time.Time{}, time.Time{}, 100); err != nil || st != (PurgeEvalStats{}) {
+			t.Fatalf("zero cutoffs: %v %+v", err, st)
+		}
+	})
+}
+
+// Each call deletes at most `limit` rows per table, so a backlog is worked off in bounded batches.
+func TestPurgeEvalBatches(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		old := time.Now().Add(-100 * 24 * time.Hour)
+		for i := 0; i < 3; i++ {
+			finishedRun(t, s, old.Add(time.Duration(i)*time.Second))
+		}
+		cutoff := time.Now().Add(-time.Hour)
+		var jobs, results, runs int64
+		for calls := 0; ; calls++ {
+			st, err := s.Retention().PurgeEval(ctx, cutoff, cutoff, 2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if st.Jobs > 2 || st.Results > 2 || st.Runs > 2 {
+				t.Fatalf("a batch exceeded the limit: %+v", st)
+			}
+			jobs, results, runs = jobs+st.Jobs, results+st.Results, runs+st.Runs
+			if st == (PurgeEvalStats{}) {
+				break
+			}
+			if calls > 10 {
+				t.Fatal("purge does not drain")
+			}
+		}
+		if jobs != 3 || results != 3 || runs != 3 || countRows(t, s, "eval_jobs") != 0 || countRows(t, s, "eval_runs") != 0 {
+			t.Fatalf("drained %d/%d/%d", jobs, results, runs)
 		}
 	})
 }

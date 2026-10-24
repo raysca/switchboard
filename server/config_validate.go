@@ -262,6 +262,9 @@ func validateRetentionAndRecording(cfg *Config) error {
 		if cfg.Retention.MetadataRetentionDays > 0 && cfg.Retention.ContentRetentionDays > cfg.Retention.MetadataRetentionDays {
 			return fmt.Errorf("retention.content_retention_days (%d) cannot exceed retention.metadata_retention_days (%d): content must not outlive the metadata that describes it", cfg.Retention.ContentRetentionDays, cfg.Retention.MetadataRetentionDays)
 		}
+		if cfg.Retention.EvalRetentionDays < 1 {
+			return errors.New("retention.eval_retention_days must be >= 1")
+		}
 		if cfg.Retention.BatchSize < 0 {
 			return errors.New("retention.batch_size must be >= 0")
 		}

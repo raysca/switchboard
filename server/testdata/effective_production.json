@@ -191,6 +191,7 @@
   "Enabled": true,
   "Interval": 3600000000000,
   "MetadataRetentionDays": 30,
+  "EvalRetentionDays": 180,
   "ContentRetentionDays": 7,
   "BatchSize": 500
  },

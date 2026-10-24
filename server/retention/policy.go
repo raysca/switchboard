@@ -10,6 +10,7 @@ import (
 type Policy struct {
 	MetadataRetention time.Duration
 	ContentRetention  time.Duration
+	EvalRetention     time.Duration // eval runs and results; zero leaves them alone
 	BatchSize         int
 }
 
@@ -20,6 +21,9 @@ func (p Policy) Validate() error {
 	}
 	if p.ContentRetention < 0 {
 		return errors.New("content retention must be non-negative")
+	}
+	if p.EvalRetention < 0 {
+		return errors.New("eval retention must be non-negative")
 	}
 	if p.MetadataRetention > 0 && p.ContentRetention > p.MetadataRetention {
 		return fmt.Errorf("content retention (%s) cannot exceed metadata retention (%s)", p.ContentRetention, p.MetadataRetention)

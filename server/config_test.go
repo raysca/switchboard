@@ -225,6 +225,16 @@ func TestConfig_Retention(t *testing.T) {
 		t.Errorf("expected error for negative metadata retention days")
 	}
 
+	if cfg.Retention.EvalRetentionDays != 180 {
+		t.Errorf("expected default eval retention 180 days, got %d", cfg.Retention.EvalRetentionDays)
+	}
+	invalidEval := DefaultConfig(ProfileDevelopment)
+	invalidEval.Retention.Enabled = true
+	invalidEval.Retention.EvalRetentionDays = 0
+	if err := ValidateConfig(invalidEval); err == nil || !strings.Contains(err.Error(), "retention.eval_retention_days") {
+		t.Errorf("eval retention below 1 day must be refused naming the key: %v", err)
+	}
+
 	invalidContent := DefaultConfig(ProfileDevelopment)
 	invalidContent.Retention.Enabled = true
 	invalidContent.Retention.MetadataRetentionDays = 7

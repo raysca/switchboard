@@ -55,7 +55,7 @@ func TestLoadConfig_DocumentedDefaults(t *testing.T) {
 		"warmup shared":         c.Warmup.shared() && !c.Warmup.Predial && !c.Warmup.OnStart && c.Warmup.WarmTimeout() == 3*time.Second && c.Warmup.SpareTTL == 10*time.Second,
 		"otel defaults":         c.OTel.QueueSize == 2048 && c.OTel.ShutdownTimeout == 5*time.Second && c.OTel.SamplingRatio == nil,
 		"timeline 500/10m":      c.Observability.TimelineMaxEvents == 500 && c.Observability.TimelineTTL == 10*time.Minute,
-		"retention off":         !c.Retention.Enabled && c.Retention.ContentRetentionDays == 7 && c.Retention.MetadataRetentionDays == 30,
+		"retention off":         !c.Retention.Enabled && c.Retention.ContentRetentionDays == 7 && c.Retention.MetadataRetentionDays == 30 && c.Retention.EvalRetentionDays == 180,
 		"turn manager on":       c.Turn.Manager && c.VAD.StopMS == 200,
 	} {
 		if !ok {

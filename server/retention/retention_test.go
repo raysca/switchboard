@@ -589,6 +589,10 @@ func (b blockingStore) PurgeMetadata(ctx context.Context, _ time.Time, _ int) (s
 	return storage.PurgeMetadataStats{}, ctx.Err()
 }
 
+func (b blockingStore) PurgeEval(ctx context.Context, _, _ time.Time, _ int) (storage.PurgeEvalStats, error) {
+	return storage.PurgeEvalStats{}, ctx.Err()
+}
+
 func (b blockingStore) Preview(context.Context, time.Time, time.Time) (storage.RetentionPreview, error) {
 	return storage.RetentionPreview{}, nil
 }
@@ -624,4 +628,60 @@ func onlyTurn(ctx context.Context, s *storage.Store, sessionID string) (storage.
 func publishTestVersion(ctx context.Context, s *storage.Store, agentID string, config []byte, tools []storage.SelectedTool) (storage.AgentVersion, error) {
 	v, _, err := s.Agents().MutateAndPublish(ctx, agentID, storage.AgentMutation{Tools: &tools}, config)
 	return v, err
+}
+
+// evalRecorder records the PurgeEval calls of a run and the order they happen in.
+type evalRecorder struct {
+	blockingStore
+	calls []string
+	evalR time.Time
+	evalJ time.Time
+}
+
+func (e *evalRecorder) PurgeContent(context.Context, time.Time, int) (storage.ContentPurgeResult, error) {
+	e.calls = append(e.calls, "content")
+	return storage.ContentPurgeResult{}, nil
+}
+
+func (e *evalRecorder) PurgeMetadata(context.Context, time.Time, int) (storage.PurgeMetadataStats, error) {
+	e.calls = append(e.calls, "metadata")
+	return storage.PurgeMetadataStats{}, nil
+}
+
+func (e *evalRecorder) PurgeEval(_ context.Context, results, jobs time.Time, _ int) (storage.PurgeEvalStats, error) {
+	e.calls = append(e.calls, "eval")
+	e.evalR, e.evalJ = results, jobs
+	return storage.PurgeEvalStats{}, nil
+}
+
+// A run purges eval rows after the metadata pass: results at eval_retention, finished jobs at the metadata lifetime.
+func TestRunOncePurgesEval(t *testing.T) {
+	now := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	rec := &evalRecorder{}
+	job := retention.NewJob(rec, retention.Policy{ContentRetention: 7 * 24 * time.Hour, MetadataRetention: 30 * 24 * time.Hour, EvalRetention: 180 * 24 * time.Hour, BatchSize: 10},
+		retention.WithClock(func() time.Time { return now }))
+	if _, err := job.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(rec.calls) != "[content metadata eval]" {
+		t.Fatalf("calls: %v", rec.calls)
+	}
+	if !rec.evalR.Equal(now.Add(-180*24*time.Hour)) || !rec.evalJ.Equal(now.Add(-30*24*time.Hour)) {
+		t.Fatalf("cutoffs: results %v jobs %v", rec.evalR, rec.evalJ)
+	}
+	// Off when the policy gives eval rows no lifetime.
+	rec = &evalRecorder{}
+	job = retention.NewJob(rec, retention.Policy{ContentRetention: time.Hour, MetadataRetention: 2 * time.Hour, BatchSize: 10}, retention.WithClock(func() time.Time { return now }))
+	if _, err := job.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if rec.evalR.IsZero() == false {
+		t.Fatal("results purged without an eval retention")
+	}
+}
+
+func TestPolicyRejectsNegativeEvalRetention(t *testing.T) {
+	if err := (retention.Policy{EvalRetention: -time.Hour}).Validate(); err == nil {
+		t.Fatal("negative eval retention accepted")
+	}
 }

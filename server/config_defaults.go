@@ -97,6 +97,7 @@ func DefaultConfig(profile Profile) *Config {
 	cfg.Retention.Interval = 1 * time.Hour
 	cfg.Retention.MetadataRetentionDays = 30
 	cfg.Retention.ContentRetentionDays = 7
+	cfg.Retention.EvalRetentionDays = 180
 	cfg.Retention.BatchSize = 500
 	cfg.Recording.RetentionDays = 7
 	cfg.Recording.MaxDuration = time.Hour

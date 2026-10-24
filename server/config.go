@@ -314,6 +314,7 @@ type RetentionConfig struct {
 	Enabled               bool          `yaml:"enabled"`
 	Interval              time.Duration `yaml:"interval"`
 	MetadataRetentionDays int           `yaml:"metadata_retention_days"`
+	EvalRetentionDays     int           `yaml:"eval_retention_days"` // eval runs and results; finished eval jobs follow metadata_retention_days
 	ContentRetentionDays  int           `yaml:"content_retention_days"`
 	BatchSize             int           `yaml:"batch_size"`
 }
