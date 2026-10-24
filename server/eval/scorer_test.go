@@ -75,7 +75,7 @@ func TestJudgeParsesScoreAndRejectsGarbage(t *testing.T) {
 		score   float64
 	}{
 		{`{"score":0.2,"reason":"x"}`, Fail, 0.2},
-		{`Sure! {"score":0.9,"reason":"fine"} done`, Pass, 0.9},
+		{`Sure! {"score":0.9,"reason":"fine"} done`, Errored, 0}, // prose around the object is not a verdict
 		{`{"score":0.7}`, Pass, 0.7},
 		{"great!", Errored, 0},
 		{`{"score":1.5}`, Errored, 0},
