@@ -92,6 +92,9 @@ func DefaultConfig(profile Profile) *Config {
 	cfg.Observability.TimelineMaxEvents = 500
 	cfg.Observability.TimelineTTL = 10 * time.Minute
 
+	// Evaluation: two eval calls at once per instance
+	cfg.Evaluation.MaxConcurrentCalls = 2
+
 	// Retention defaults (sane defaults)
 	cfg.Retention.Enabled = false
 	cfg.Retention.Interval = 1 * time.Hour

@@ -193,6 +193,9 @@
   "ContentRetentionDays": 7,
   "BatchSize": 500
  },
+ "Evaluation": {
+  "MaxConcurrentCalls": 2
+ },
  "Recording": {
   "Enabled": false,
   "Dir": "",

@@ -2,8 +2,10 @@ package server
 
 import (
 	"cmp"
+	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -81,58 +83,30 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			api.WriteError(w, http.StatusBadRequest, "invalid_request", "principal and agent_id must be 1 to 128 characters", requestID)
 			return
 		}
-		if s.agents == nil {
+		resp, _, err := s.issueVoiceToken(r.Context(), input)
+		var notReady *notReadyError
+		switch {
+		case err == nil:
+			api.WriteJSON(w, http.StatusCreated, api.SuccessResponse[api.VoiceTokenResponse]{Data: resp})
+		case errors.Is(err, errAgentStoreUnavailable):
 			api.WriteError(w, http.StatusServiceUnavailable, "agent_management_unavailable", "agent storage is unavailable", requestID)
-			return
-		}
-		target, err := s.agents.Get(r.Context(), input.AgentID)
-		if errors.Is(err, sql.ErrNoRows) {
+		case errors.As(err, &notReady):
+			msg := "agent is not ready to take calls"
+			if notReady.Draft {
+				msg = "the draft is not ready to take calls"
+			}
+			api.WriteJSON(w, http.StatusConflict, api.ErrorResponse{Error: api.Error{Code: "agent_not_ready", Message: msg, RequestID: requestID, Details: notReady.Readiness}})
+		case errors.Is(err, errTooManyDrafts):
+			api.WriteError(w, http.StatusTooManyRequests, "too_many_drafts", err.Error(), requestID)
+		case errors.Is(err, errDraftCheck):
+			s.writeDraftError(w, err, requestID)
+		case errors.Is(err, sql.ErrNoRows):
 			api.WriteError(w, http.StatusNotFound, "not_found", "agent not found", requestID)
-			return
-		}
-		if err != nil {
-			api.WriteError(w, http.StatusInternalServerError, "internal_error", "agent could not be loaded", requestID)
-			return
-		}
-		if !agentCallable(target.Readiness.State) {
-			api.WriteJSON(w, http.StatusConflict, api.ErrorResponse{Error: api.Error{Code: "agent_not_ready", Message: "agent is not ready to take calls", RequestID: requestID, Details: target.Readiness}})
-			return
-		}
-		now := time.Now()
-		lifetime := s.effectiveVoiceTokenLifetime()
-		tokenID := storage.NewID() // becomes the session id
-		if input.Draft != nil {
-			snapshot, readiness, err := s.agents.ResolveDraft(r.Context(), target.ID, input.Draft.Config, input.Draft.MCPTools)
-			if err != nil {
-				s.writeDraftError(w, err, requestID)
-				return
-			}
-			if !agentCallable(readiness.State) {
-				api.WriteJSON(w, http.StatusConflict, api.ErrorResponse{Error: api.Error{Code: "agent_not_ready", Message: "the draft is not ready to take calls", RequestID: requestID, Details: readiness}})
-				return
-			}
-			if err := s.drafts.put(tokenID, draftCall{snapshot: snapshot, expires: now.Add(lifetime)}, now); err != nil {
-				api.WriteError(w, http.StatusTooManyRequests, "too_many_drafts", err.Error(), requestID)
-				return
-			}
-		}
-		claims := token.Claims{RegisteredClaims: jwt.RegisteredClaims{
-			Issuer: s.cfg.Token.Issuer, Audience: jwt.ClaimStrings{s.cfg.Token.Audience},
-			Subject: input.Principal, ID: tokenID,
-			IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(lifetime)),
-		}, Principal: input.Principal, AgentID: target.ID, Scope: "voice:connect", IssuerEpoch: s.voiceEpoch}
-		jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-		if s.voiceKeyID != "" {
-			jwtToken.Header["kid"] = s.voiceKeyID
-		}
-		signed, err := jwtToken.SignedString(s.voiceSignKey)
-		if err != nil {
+		case errors.Is(err, errTokenSign):
 			api.WriteError(w, http.StatusInternalServerError, "internal_error", "token could not be issued", requestID)
-			return
+		default:
+			api.WriteError(w, http.StatusInternalServerError, "internal_error", "agent could not be loaded", requestID)
 		}
-		api.WriteJSON(w, http.StatusCreated, api.SuccessResponse[api.VoiceTokenResponse]{Data: api.VoiceTokenResponse{
-			Token: signed, ExpiresAt: claims.ExpiresAt.Time, Scope: "voice:connect",
-		}})
 	default:
 		// The live-call routes sit under /api/v1/sessions, so they and demo are matched before the prefix table.
 		if r.URL.Path == "/api/v1/demo" || strings.HasPrefix(r.URL.Path, "/api/v1/demo/") {
@@ -168,6 +142,72 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		api.WriteError(w, http.StatusNotFound, "not_found", "route not found", requestID)
 	}
+}
+
+var (
+	// errAgentStoreUnavailable: the server runs without agent management, so no token can name an agent.
+	errAgentStoreUnavailable = errors.New("agent storage is unavailable")
+	// errDraftCheck wraps a draft's validation failure, which writeDraftError maps.
+	errDraftCheck = errors.New("draft check failed")
+	errTokenSign  = errors.New("token could not be signed")
+)
+
+// notReadyError: the agent (or, when Draft, the draft) is not in a state that takes calls.
+type notReadyError struct {
+	Readiness agent.Readiness
+	Draft     bool
+}
+
+func (e *notReadyError) Error() string {
+	if e.Draft {
+		return "the draft is not ready to take calls"
+	}
+	return "agent is not ready to take calls"
+}
+
+// issueVoiceToken signs a voice token for in.Principal on agent in.AgentID and returns it with the
+// session id it carries (the token's jti). With in.Draft it also resolves the draft and holds it for
+// the call. The HTTP handler and the in-process eval target (no HTTP hop) both issue through it.
+func (s *Server) issueVoiceToken(ctx context.Context, in api.VoiceTokenRequest) (api.VoiceTokenResponse, string, error) {
+	if s.agents == nil {
+		return api.VoiceTokenResponse{}, "", errAgentStoreUnavailable
+	}
+	target, err := s.agents.Get(ctx, in.AgentID)
+	if err != nil {
+		return api.VoiceTokenResponse{}, "", err
+	}
+	if !agentCallable(target.Readiness.State) {
+		return api.VoiceTokenResponse{}, "", &notReadyError{Readiness: target.Readiness}
+	}
+	now := time.Now()
+	lifetime := s.effectiveVoiceTokenLifetime()
+	tokenID := storage.NewID() // becomes the session id
+	if in.Draft != nil {
+		snapshot, readiness, err := s.agents.ResolveDraft(ctx, target.ID, in.Draft.Config, in.Draft.MCPTools)
+		if err != nil {
+			return api.VoiceTokenResponse{}, "", fmt.Errorf("%w: %w", errDraftCheck, err)
+		}
+		if !agentCallable(readiness.State) {
+			return api.VoiceTokenResponse{}, "", &notReadyError{Readiness: readiness, Draft: true}
+		}
+		if err := s.drafts.put(tokenID, draftCall{snapshot: snapshot, expires: now.Add(lifetime)}, now); err != nil {
+			return api.VoiceTokenResponse{}, "", err
+		}
+	}
+	claims := token.Claims{RegisteredClaims: jwt.RegisteredClaims{
+		Issuer: s.cfg.Token.Issuer, Audience: jwt.ClaimStrings{s.cfg.Token.Audience},
+		Subject: in.Principal, ID: tokenID,
+		IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(lifetime)),
+	}, Principal: in.Principal, AgentID: target.ID, Scope: "voice:connect", IssuerEpoch: s.voiceEpoch}
+	jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	if s.voiceKeyID != "" {
+		jwtToken.Header["kid"] = s.voiceKeyID
+	}
+	signed, err := jwtToken.SignedString(s.voiceSignKey)
+	if err != nil {
+		return api.VoiceTokenResponse{}, "", fmt.Errorf("%w: %w", errTokenSign, err)
+	}
+	return api.VoiceTokenResponse{Token: signed, ExpiresAt: claims.ExpiresAt.Time, Scope: "voice:connect"}, tokenID, nil
 }
 
 // effectiveVoiceTokenLifetime is how long an issued voice token is valid:

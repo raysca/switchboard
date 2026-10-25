@@ -57,6 +57,7 @@ func TestLoadConfig_DocumentedDefaults(t *testing.T) {
 		"timeline 500/10m":      c.Observability.TimelineMaxEvents == 500 && c.Observability.TimelineTTL == 10*time.Minute,
 		"retention off":         !c.Retention.Enabled && c.Retention.ContentRetentionDays == 7 && c.Retention.MetadataRetentionDays == 30 && c.Retention.EvalRetentionDays == 180,
 		"turn manager on":       c.Turn.Manager && c.VAD.StopMS == 200,
+		"eval calls 2":          c.Evaluation.MaxConcurrentCalls == 2,
 	} {
 		if !ok {
 			t.Errorf("default not applied: %s", name)

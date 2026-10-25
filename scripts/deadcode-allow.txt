@@ -1,2 +1,3 @@
 # One grep -E pattern per line, matched against "path/file.go Symbol"; text after " #" is the reason.
 ^core/coretest/   # test doubles shared by tests in many packages (core, server, providers); no binary uses them
+^server/eval_target\.go   # TEMPORARY: the eval worker (next commit, plan T8) is the only caller of localTarget and completer; T8 deletes this line

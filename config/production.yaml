@@ -95,6 +95,9 @@ retention:
   metadata_retention_days: 30
   batch_size: 500
 
+# Agent evaluation worker: eval calls run at once on this instance (0 to 16, at most limits.max_sessions_per_principal; 0 turns the worker off here).
+# evaluation: {max_concurrent_calls: 2}
+
 # Provider connection reuse and pre-dial (P2-9, docs/operations.md).
 # enabled shares one tuned HTTP transport per provider across calls (safe).
 # predial opens one TCP/TLS spare per candidate provider at call setup;

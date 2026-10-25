@@ -288,6 +288,11 @@ type Config struct {
 	// Retention
 	Retention RetentionConfig `yaml:"retention"`
 
+	// Evaluation bounds the agent-evaluation worker on this instance.
+	Evaluation struct {
+		MaxConcurrentCalls int `yaml:"max_concurrent_calls"` // eval calls run at once here (the worker pool size); 0 turns the worker off on this instance
+	} `yaml:"evaluation"`
+
 	// Recording is the global switch for call recording (default off); an
 	// agent must also opt in. See docs/privacy.md.
 	Recording RecordingConfig `yaml:"recording"`

@@ -380,3 +380,31 @@ func TestConfig_MCPSyncInterval(t *testing.T) {
 		}
 	}
 }
+
+func TestConfig_EvaluationCap(t *testing.T) {
+	cfg := DefaultConfig(ProfileDevelopment)
+	if cfg.Evaluation.MaxConcurrentCalls != 2 {
+		t.Fatalf("default evaluation.max_concurrent_calls = %d, want 2", cfg.Evaluation.MaxConcurrentCalls)
+	}
+	for name, tc := range map[string]struct {
+		cap, perPrincipal int
+		ok                bool
+	}{
+		"zero disables":        {0, 5, true},
+		"at the principal cap": {5, 5, true},
+		"sixteen":              {16, 20, true},
+		"negative":             {-1, 5, false},
+		"above sixteen":        {17, 20, false},
+		"above principal cap":  {6, 5, false},
+	} {
+		c := DefaultConfig(ProfileDevelopment)
+		c.Evaluation.MaxConcurrentCalls, c.Limits.MaxSessionsPerPrincipal = tc.cap, tc.perPrincipal
+		err := ValidateConfig(c)
+		if tc.ok && err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+		if !tc.ok && (err == nil || !strings.Contains(err.Error(), "evaluation.max_concurrent_calls")) {
+			t.Errorf("%s: want an error naming evaluation.max_concurrent_calls, got %v", name, err)
+		}
+	}
+}

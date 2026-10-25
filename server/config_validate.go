@@ -53,7 +53,26 @@ func ValidateConfig(cfg *Config) error {
 	if d := cfg.MCP.SyncInterval; d != 0 && (d < 30*time.Second || d > 24*time.Hour) {
 		return fmt.Errorf("mcp.sync_interval must be 0 (off) or between 30s and 24h, got %v", d)
 	}
+	if err := validateEvaluation(cfg); err != nil {
+		return err
+	}
 	return validateRetentionAndRecording(cfg)
+}
+
+// maxEvalCalls bounds evaluation.max_concurrent_calls.
+const maxEvalCalls = 16
+
+// validateEvaluation: every eval call uses one principal, so the worker's pool cannot be larger than the
+// per-principal session limit or its own calls would be refused at admission.
+func validateEvaluation(cfg *Config) error {
+	n := cfg.Evaluation.MaxConcurrentCalls
+	if n < 0 || n > maxEvalCalls {
+		return fmt.Errorf("evaluation.max_concurrent_calls must be between 0 and %d, got %d", maxEvalCalls, n)
+	}
+	if p := cfg.Limits.MaxSessionsPerPrincipal; p > 0 && n > p {
+		return fmt.Errorf("evaluation.max_concurrent_calls (%d) cannot exceed limits.max_sessions_per_principal (%d): eval calls share one principal", n, p)
+	}
+	return nil
 }
 
 func validateProfileAndStorage(cfg *Config) error {
