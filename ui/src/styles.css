@@ -3495,3 +3495,41 @@ textarea.mono {
 .call-control__error {
   color: var(--bad);
 }
+
+/* Navigation group label (Observability) and the evaluation trend line. */
+.nav-group {
+  margin: 14px 20px 4px;
+  color: var(--ink-2);
+  font-size: 0.75rem;
+  font-weight: 600;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.nav-grouped {
+  display: grid;
+  gap: 2px;
+}
+@media (min-width: 1024px) {
+  .nav-group {
+    position: static;
+    width: auto;
+    height: auto;
+    clip-path: none;
+  }
+}
+@media (max-width: 760px) {
+  .nav-grouped {
+    display: flex;
+  }
+}
+.sparkline {
+  display: block;
+  color: var(--caller);
+}
+.sparkline polyline {
+  stroke: currentColor;
+}

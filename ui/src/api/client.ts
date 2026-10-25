@@ -539,6 +539,106 @@ export async function probeProxiedAccess(fetcher: typeof fetch = fetch): Promise
   }
 }
 
+// Agent evaluation DTOs, mirrored by hand from docs/api/eval.md (server/api/eval.go).
+const evalJudgeSchema = z.object({ provider: z.string(), model: z.string().optional() });
+export const evalCaseSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  caller: z.record(z.string(), z.unknown()),
+  expect: z.record(z.string(), z.unknown()),
+  expected_answer: z.string().optional(),
+  yaml: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+export type EvalCaseDTO = z.infer<typeof evalCaseSchema>;
+export const evalSuiteSchema = z.object({
+  runs: z.number(),
+  min_pass: z.number(),
+  pass_threshold: z.number(),
+  judge: evalJudgeSchema.nullable(),
+});
+export type EvalSuiteDTO = z.infer<typeof evalSuiteSchema>;
+export const evalScorerSchema = z.object({
+  name: z.string(),
+  judged: z.boolean(),
+  default_threshold: z.number(),
+  threshold: z.number().optional(),
+  judge: evalJudgeSchema.optional(),
+});
+export type EvalScorerDTO = z.infer<typeof evalScorerSchema>;
+export const evalRunSchema = z.object({
+  id: z.string(),
+  agent_id: z.string(),
+  version: z.number().optional(),
+  agent_version_id: z.string().optional(),
+  draft: z.boolean(),
+  config_hash: z.string(),
+  scope: z.string(),
+  case_id: z.string().optional(),
+  providers: z.string(),
+  runs: z.number(),
+  min_pass: z.number(),
+  status: z.string(),
+  triggered_by: z.string(),
+  passed_cases: z.number().optional(),
+  total_cases: z.number().optional(),
+  created_at: z.string(),
+  started_at: z.string().optional(),
+  ended_at: z.string().optional(),
+});
+export type EvalRunDTO = z.infer<typeof evalRunSchema>;
+export const evalRunDetailSchema = z.object({
+  run: evalRunSchema,
+  case_runs: z.array(
+    z.object({
+      case_id: z.string(),
+      case_name: z.string(),
+      repeat: z.number(),
+      status: z.string(),
+      error_category: z.string().optional(),
+      session_id: z.string().optional(),
+      passed: z.boolean(),
+      scores: z.array(
+        z.object({ scorer: z.string(), score: z.number(), outcome: z.string(), reason: z.string(), judge_model: z.string().optional() }),
+      ),
+    }),
+  ),
+});
+export type EvalRunDetailDTO = z.infer<typeof evalRunDetailSchema>;
+export const evalFleetSchema = z.object({
+  agents: z.array(
+    z.object({
+      agent_id: z.string(),
+      name: z.string(),
+      threshold: z.number(),
+      latest: z
+        .object({ run_id: z.string(), version: z.number(), passed: z.number(), total: z.number(), pass_rate: z.number().nullish(), ended_at: z.string() })
+        .optional(),
+      trend: z.array(z.number()),
+      below_threshold: z.boolean(),
+    }),
+  ),
+  total: z.number(),
+  below_threshold: z.number(),
+});
+export type EvalFleetDTO = z.infer<typeof evalFleetSchema>;
+export const evalHistorySchema = z.array(
+  z.object({
+    run_id: z.string(),
+    version: z.number(),
+    ended_at: z.string(),
+    passed: z.number(),
+    total: z.number(),
+    pass_rate: z.number().nullish(),
+    scorers: z.array(z.object({ scorer: z.string(), mean: z.number(), pass: z.number(), fail: z.number(), skipped: z.number(), errors: z.number() })),
+  }),
+);
+export type EvalHistoryDTO = z.infer<typeof evalHistorySchema>;
+export type EvalRunInput = { version?: number; draft?: { config: unknown; mcp_tools?: ToolSelection[] }; case_id?: string; providers?: "offline" | "echo" | "keep" };
+const evalCasesEnvelope = z.object({ data: z.array(evalCaseSchema) });
+const evalCaseEnvelope = z.object({ data: evalCaseSchema });
+
 export function createApiClient(
   getAuth: () => AuthSnapshot,
   fetcher: typeof fetch = fetch,
@@ -697,6 +797,28 @@ export function createApiClient(
     deleteSecret: async (name: string) => {
       await request(`/secrets/${encodeURIComponent(name)}`, z.unknown(), { method: "DELETE" });
     },
+
+    // Evaluation endpoints
+    listEvalCases: async (agentId: string) => (await request(`/agents/${encodeURIComponent(agentId)}/eval/cases`, evalCasesEnvelope)).data,
+    createEvalCases: async (agentId: string, yaml: string) =>
+      (await request(`/agents/${encodeURIComponent(agentId)}/eval/cases`, evalCasesEnvelope, { method: "POST", body: { yaml } })).data,
+    updateEvalCase: async (agentId: string, caseId: string, yaml: string) =>
+      (await request(`/agents/${encodeURIComponent(agentId)}/eval/cases/${encodeURIComponent(caseId)}`, evalCaseEnvelope, { method: "PUT", body: { yaml } })).data,
+    deleteEvalCase: async (agentId: string, caseId: string) => {
+      await request(`/agents/${encodeURIComponent(agentId)}/eval/cases/${encodeURIComponent(caseId)}`, z.unknown(), { method: "DELETE" });
+    },
+    exportEvalCases: async (agentId: string) =>
+      (await request(`/agents/${encodeURIComponent(agentId)}/eval/cases/export`, z.object({ data: z.object({ yaml: z.string() }) }))).data.yaml,
+    getEvalSuite: async (agentId: string) => (await request(`/agents/${encodeURIComponent(agentId)}/eval/suite`, z.object({ data: evalSuiteSchema }))).data,
+    putEvalSuite: async (agentId: string, body: EvalSuiteDTO) =>
+      (await request(`/agents/${encodeURIComponent(agentId)}/eval/suite`, z.object({ data: evalSuiteSchema }), { method: "PUT", body })).data,
+    startEvalRun: async (agentId: string, body: EvalRunInput) =>
+      (await request(`/agents/${encodeURIComponent(agentId)}/eval/runs`, z.object({ data: evalRunSchema }), { method: "POST", body })).data,
+    listEvalRuns: async (agentId: string) => (await request(`/agents/${encodeURIComponent(agentId)}/eval/runs?include_drafts=true`, z.object({ data: z.array(evalRunSchema) }))).data,
+    getEvalRun: async (agentId: string, runId: string) =>
+      (await request(`/agents/${encodeURIComponent(agentId)}/eval/runs/${encodeURIComponent(runId)}`, z.object({ data: evalRunDetailSchema }))).data,
+    getEvalHistory: async (agentId: string) => (await request(`/agents/${encodeURIComponent(agentId)}/eval/history`, z.object({ data: evalHistorySchema }))).data,
+    getEvalFleet: async (limit: number, offset: number) => (await request(`/eval/fleet?limit=${limit}&offset=${offset}`, z.object({ data: evalFleetSchema }))).data,
 
     // MCP endpoints
     getMCPServers: async () =>

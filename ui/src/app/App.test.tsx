@@ -48,7 +48,7 @@ describe("admin shell", () => {
     expect(screen.getByText("Area not found")).toBeVisible();
   });
 
-  it("shows all eight sections and keeps keyboard navigation visible", async () => {
+  it("shows all nine sections and keeps keyboard navigation visible", async () => {
     render(<App initialPath="/agents" />);
     for (const name of [
       "Dashboard",
@@ -58,10 +58,13 @@ describe("admin shell", () => {
       "HTTP tools",
       "Secrets",
       "Calls",
+      "Evaluation",
       "Server",
     ]) {
       expect(screen.getByRole("link", { name })).toBeVisible();
     }
+    const observability = screen.getByRole("group", { name: "Observability" });
+    expect(within(observability).getAllByRole("link").map((l) => l.textContent)).toEqual(["Evaluation"]);
     expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute(
       "aria-current",
       "page",

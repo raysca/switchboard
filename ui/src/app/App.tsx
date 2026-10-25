@@ -24,6 +24,7 @@ import { MCPView } from "../routes/mcp/MCPView";
 import { HTTPToolsView } from "../routes/httptools/HTTPToolsView";
 import { SecretsView } from "../routes/secrets/SecretsView";
 import { CallsView } from "../routes/sessions/CallsView";
+import { EvaluationView } from "../routes/evaluation/EvaluationView";
 import { DashboardView } from "../routes/dashboard/DashboardView";
 import { ServerView } from "../routes/server/ServerView";
 import { sections } from "../routes/sections";
@@ -31,7 +32,23 @@ import { sections } from "../routes/sections";
 // The agent editor (React Flow), the call detail and first run are only opened sometimes: load them on demand so the first screen stays small.
 const OnboardingView = lazy(() => import("../routes/onboarding/OnboardingView").then((m) => ({ default: m.OnboardingView })));
 const AgentPage = lazy(() => import("../routes/agents/AgentPage").then((m) => ({ default: m.AgentPage })));
+const AgentEvaluation = lazy(() => import("../routes/evaluation/AgentEvaluation").then((m) => ({ default: m.AgentEvaluation })));
 const CallView = lazy(() => import("../routes/sessions/CallView").then((m) => ({ default: m.CallView })));
+
+function navLink(section: (typeof sections)[number]) {
+  return (
+    <NavLink
+      key={section.path}
+      to={section.path}
+      className={({ isActive }) => (isActive ? "nav-link nav-link--current" : "nav-link")}
+    >
+      <svg className="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d={section.icon} />
+      </svg>
+      <span className="nav-text">{section.name}</span>
+    </NavLink>
+  );
+}
 
 function PageFocus() {
   const location = useLocation();
@@ -160,20 +177,11 @@ export function App({ initialPath }: { initialPath?: string }) {
               <span>Switchboard</span>
             </div>
             <nav aria-label="Main navigation" className="navigation">
-              {sections.map((section) => (
-                <NavLink
-                  key={section.path}
-                  to={section.path}
-                  className={({ isActive }) =>
-                    isActive ? "nav-link nav-link--current" : "nav-link"
-                  }
-                >
-                  <svg className="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d={section.icon} />
-                  </svg>
-                  <span className="nav-text">{section.name}</span>
-                </NavLink>
-              ))}
+              {sections.filter((section) => !section.group).map(navLink)}
+              <p className="nav-group" id="nav-group-observability">Observability</p>
+              <div className="nav-grouped" role="group" aria-labelledby="nav-group-observability">
+                {sections.filter((section) => section.group === "Observability").map(navLink)}
+              </div>
             </nav>
             <div className="sidebar-foot">Voice operations</div>
           </aside>
@@ -266,6 +274,8 @@ export function App({ initialPath }: { initialPath?: string }) {
                     <DashboardView client={client} keyValue={keyValue} />
                   }
                 />
+                <Route path="/evaluation" element={<EvaluationView client={client} keyValue={keyValue} />} />
+                <Route path="/evaluation/:agentId" element={<AgentEvaluation />} />
                 <Route
                   path="/server"
                   element={
