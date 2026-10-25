@@ -83,8 +83,11 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			api.WriteError(w, http.StatusBadRequest, "invalid_request", "principal and agent_id must be 1 to 128 characters", requestID)
 			return
 		}
-		resp, _, err := s.issueVoiceToken(r.Context(), input)
-		var notReady *notReadyError
+		resp, _, err := s.issueVoiceToken(r.Context(), input, false)
+		var (
+			notReady *notReadyError
+			draftErr *draftCheckError
+		)
 		switch {
 		case err == nil:
 			api.WriteJSON(w, http.StatusCreated, api.SuccessResponse[api.VoiceTokenResponse]{Data: resp})
@@ -98,8 +101,8 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			api.WriteJSON(w, http.StatusConflict, api.ErrorResponse{Error: api.Error{Code: "agent_not_ready", Message: msg, RequestID: requestID, Details: notReady.Readiness}})
 		case errors.Is(err, errTooManyDrafts):
 			api.WriteError(w, http.StatusTooManyRequests, "too_many_drafts", err.Error(), requestID)
-		case errors.Is(err, errDraftCheck):
-			s.writeDraftError(w, err, requestID)
+		case errors.As(err, &draftErr):
+			s.writeDraftError(w, draftErr.err, requestID)
 		case errors.Is(err, sql.ErrNoRows):
 			api.WriteError(w, http.StatusNotFound, "not_found", "agent not found", requestID)
 		case errors.Is(err, errTokenSign):
@@ -147,10 +150,15 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 var (
 	// errAgentStoreUnavailable: the server runs without agent management, so no token can name an agent.
 	errAgentStoreUnavailable = errors.New("agent storage is unavailable")
-	// errDraftCheck wraps a draft's validation failure, which writeDraftError maps.
-	errDraftCheck = errors.New("draft check failed")
-	errTokenSign  = errors.New("token could not be signed")
+	errTokenSign             = errors.New("token could not be signed")
 )
+
+// draftCheckError carries a draft's validation failure unchanged (same text, same Is/As chain) so the
+// handler can tell it from the agent lookup failures and map it as a publish does.
+type draftCheckError struct{ err error }
+
+func (e *draftCheckError) Error() string { return e.err.Error() }
+func (e *draftCheckError) Unwrap() error { return e.err }
 
 // notReadyError: the agent (or, when Draft, the draft) is not in a state that takes calls.
 type notReadyError struct {
@@ -168,7 +176,9 @@ func (e *notReadyError) Error() string {
 // issueVoiceToken signs a voice token for in.Principal on agent in.AgentID and returns it with the
 // session id it carries (the token's jti). With in.Draft it also resolves the draft and holds it for
 // the call. The HTTP handler and the in-process eval target (no HTTP hop) both issue through it.
-func (s *Server) issueVoiceToken(ctx context.Context, in api.VoiceTokenRequest) (api.VoiceTokenResponse, string, error) {
+// skipVersionReady leaves out the readiness check of the agent's current version, for a draft whose own
+// readiness is what counts (an eval draft rewritten to echo runs on an agent whose real providers lack keys).
+func (s *Server) issueVoiceToken(ctx context.Context, in api.VoiceTokenRequest, skipVersionReady bool) (api.VoiceTokenResponse, string, error) {
 	if s.agents == nil {
 		return api.VoiceTokenResponse{}, "", errAgentStoreUnavailable
 	}
@@ -176,7 +186,7 @@ func (s *Server) issueVoiceToken(ctx context.Context, in api.VoiceTokenRequest) 
 	if err != nil {
 		return api.VoiceTokenResponse{}, "", err
 	}
-	if !agentCallable(target.Readiness.State) {
+	if !(skipVersionReady && in.Draft != nil) && !agentCallable(target.Readiness.State) {
 		return api.VoiceTokenResponse{}, "", &notReadyError{Readiness: target.Readiness}
 	}
 	now := time.Now()
@@ -185,7 +195,7 @@ func (s *Server) issueVoiceToken(ctx context.Context, in api.VoiceTokenRequest) 
 	if in.Draft != nil {
 		snapshot, readiness, err := s.agents.ResolveDraft(ctx, target.ID, in.Draft.Config, in.Draft.MCPTools)
 		if err != nil {
-			return api.VoiceTokenResponse{}, "", fmt.Errorf("%w: %w", errDraftCheck, err)
+			return api.VoiceTokenResponse{}, "", &draftCheckError{err}
 		}
 		if !agentCallable(readiness.State) {
 			return api.VoiceTokenResponse{}, "", &notReadyError{Readiness: readiness, Draft: true}

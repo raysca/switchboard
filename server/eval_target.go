@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"strings"
 
 	"govoice/core"
@@ -19,7 +18,7 @@ import (
 var errVoiceToken = errors.New("voice token")
 
 // localTarget runs eval calls against this server itself: the draft token is issued in process (no
-// HTTP hop, no management key), the call dials this instance's own public listener, and the stored
+// HTTP hop, no management key), the call dials this instance's internal eval listener, and the stored
 // rows are read straight from the store.
 type localTarget struct{ s *Server }
 
@@ -31,25 +30,16 @@ func (t localTarget) DraftToken(ctx context.Context, a eval.Agent) (string, erro
 		tools = []agent.ToolSelection{}
 	}
 	resp, _, err := t.s.issueVoiceToken(ctx, api.VoiceTokenRequest{
-		Principal: eval.Principal, AgentID: a.ID, Draft: &api.DraftRequest{Config: a.Draft, MCPTools: &tools}})
+		Principal: eval.Principal, AgentID: a.ID, Draft: &api.DraftRequest{Config: a.Draft, MCPTools: &tools}}, true)
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", errVoiceToken, err)
 	}
 	return resp.Token, nil
 }
 
-// PublicAddr is the bound public listener, with an unspecified host (listening on all interfaces)
-// replaced by the loopback address, which is where this process can always reach itself.
-func (t localTarget) PublicAddr() string {
-	host, port, err := net.SplitHostPort(t.s.publicAddr)
-	if err != nil {
-		return t.s.publicAddr
-	}
-	if ip := net.ParseIP(host); host == "" || (ip != nil && ip.IsUnspecified()) {
-		host = "127.0.0.1"
-	}
-	return net.JoinHostPort(host, port)
-}
+// PublicAddr is the internal loopback listener (eval_listener.go), not the public one: the public /ws
+// applies browser rules a server-side client has no way to meet.
+func (t localTarget) PublicAddr() string { return t.s.evalAddr }
 
 // Stored reads the call's session, turns, spans and tool calls from the store.
 func (t localTarget) Stored(ctx context.Context, id string) (eval.Stored, error) {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"govoice/server/agent"
 	"govoice/server/api"
 	"govoice/server/eval"
+	"govoice/transport/wsclient"
 )
 
 // evalTestServer is a started, managed development server on ephemeral ports with the echo provider.
@@ -69,27 +71,111 @@ func TestLocalTargetDialsOwnListener(t *testing.T) {
 	}
 }
 
-func TestLocalTargetPublicAddrDialsLoopbackForUnspecifiedHost(t *testing.T) {
-	for in, want := range map[string]string{
-		"0.0.0.0:8080": "127.0.0.1:8080", "[::]:8080": "127.0.0.1:8080", ":8080": "127.0.0.1:8080",
-		"127.0.0.1:9": "127.0.0.1:9", "[::1]:3": "[::1]:3", "10.1.2.3:4": "10.1.2.3:4", "localhost:5": "localhost:5",
+// prodEvalMods is the shipped production shape: a trusted proxy in front, a non-wildcard origin allowlist.
+func prodEvalMods(c *Config) {
+	c.Profile, c.VAD.Mode = ProfileProduction, "process" // the VAD executor is the test's mock
+	c.TLS.TrustedProxyMode, c.TLS.TrustedProxies = true, []string{"10.0.0.0/8"}
+	c.OriginAllowlist = []string{"https://app.example.com"}
+}
+
+func dialAs(t *testing.T, s *Server, addr, principal string) error {
+	t.Helper()
+	a, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: principal, Config: agentConfigJSON("SALES", "v")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, _, err := s.issueVoiceToken(t.Context(), api.VoiceTokenRequest{Principal: principal, AgentID: a.ID}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl, err := wsclient.Dial(t.Context(), addr, resp.Token, false)
+	if err == nil {
+		cl.Close()
+	}
+	return err
+}
+
+// The public listener's browser rules (Origin, TLS) must not refuse the server's own eval calls: they dial the
+// internal loopback listener instead.
+func TestEvalCallsWorkOnProductionProfile(t *testing.T) {
+	for name, mod := range map[string]func(*Config){
+		"trusted proxy": prodEvalMods,
+		"allowlist only": func(c *Config) {
+			prodEvalMods(c)
+			c.TLS.TrustedProxyMode, c.TLS.TrustedProxies = false, nil
+			c.InsecureOverrides.AllowPlainWSInProduction = true // a missing Origin is then the only refusal (403)
+		},
+		"direct tls": func(c *Config) {
+			prodEvalMods(c)
+			c.TLS.TrustedProxyMode, c.TLS.TrustedProxies = false, nil
+			c.TLS.CertFile, c.TLS.KeyFile = writeSelfSigned(t, t.TempDir())
+		},
 	} {
-		if got := (localTarget{&Server{publicAddr: in}}).PublicAddr(); got != want {
-			t.Errorf("PublicAddr(%q) = %q, want %q", in, got, want)
-		}
+		t.Run(name, func(t *testing.T) {
+			s := evalTestServer(t, mod)
+			a, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "Dealership", Config: agentConfigJSON("SALES", "salesvoice")})
+			if err != nil || a.Readiness.State != agent.ReadinessReady {
+				t.Fatalf("agent: %+v err=%v", a.Readiness, err)
+			}
+			ea := eval.Agent{ID: a.ID, Name: a.Name, Start: "front", Draft: agentConfigJSON("SALES", "salesvoice"),
+				StepNames: map[string]string{"front": "Front desk", "sales": "Sales"}}
+			obs, err := eval.RunCall(t.Context(), localTarget{s}, ea, eval.ScriptCaller([]string{"hello"}), eval.Opts{TurnTimeout: 10 * time.Second, Quiet: 300 * time.Millisecond})
+			if err != nil {
+				t.Fatalf("RunCall: %v", err)
+			}
+			if len(obs.Stored.Turns) < 1 || obs.Stored.Session.Caller != eval.Principal {
+				t.Fatalf("stored = %+v", obs.Stored)
+			}
+			// The public gate is unchanged: no Origin, no TLS evidence, no entry.
+			if err := dialAs(t, s, s.publicAddr, "someone"); err == nil {
+				t.Fatal("the public listener accepted a call with no Origin on the production profile")
+			}
+		})
+	}
+}
+
+func TestInternalListenerOnlyServesAgentEval(t *testing.T) {
+	s := evalTestServer(t, prodEvalMods)
+	if err := dialAs(t, s, localTarget{s}.PublicAddr(), "someone-else"); err == nil {
+		t.Fatal("the internal listener accepted a token for another principal")
+	}
+	if err := dialAs(t, s, localTarget{s}.PublicAddr(), eval.Principal); err != nil {
+		t.Fatalf("agent-eval token refused: %v", err)
+	}
+}
+
+// The internal listener is loopback-only, exists only with a worker, and goes away with Shutdown.
+func TestInternalListenerLifecycle(t *testing.T) {
+	off := evalTestServer(t, func(c *Config) { c.Evaluation.MaxConcurrentCalls = 0 })
+	if got := (localTarget{off}).PublicAddr(); got != "" {
+		t.Fatalf("worker off, but an internal listener is bound at %q", got)
+	}
+	s := evalTestServer(t)
+	addr := localTarget{s}.PublicAddr()
+	if host, _, err := net.SplitHostPort(addr); err != nil || host != "127.0.0.1" {
+		t.Fatalf("internal addr %q, want 127.0.0.1:port", addr)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := s.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := net.DialTimeout("tcp", addr, time.Second); err == nil {
+		c.Close()
+		t.Fatal("the internal listener still accepts after Shutdown")
 	}
 }
 
 func TestIssueVoiceToken(t *testing.T) {
 	s := evalTestServer(t)
-	if _, _, err := s.issueVoiceToken(t.Context(), api.VoiceTokenRequest{Principal: "p", AgentID: "missing"}); !errors.Is(err, sql.ErrNoRows) {
+	if _, _, err := s.issueVoiceToken(t.Context(), api.VoiceTokenRequest{Principal: "p", AgentID: "missing"}, false); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("unknown agent: %v, want sql.ErrNoRows", err)
 	}
 	a, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "A", Config: agentConfigJSON("SALES", "v")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, id, err := s.issueVoiceToken(t.Context(), api.VoiceTokenRequest{Principal: "p", AgentID: a.ID})
+	resp, id, err := s.issueVoiceToken(t.Context(), api.VoiceTokenRequest{Principal: "p", AgentID: a.ID}, false)
 	if err != nil || resp.Token == "" || id == "" {
 		t.Fatalf("issue: %+v %q %v", resp, id, err)
 	}
@@ -97,9 +183,32 @@ func TestIssueVoiceToken(t *testing.T) {
 		t.Fatalf("token id %q err %v, want %q", got, err, id)
 	}
 	// A draft that names an unknown config surfaces the draft error the handler maps, not a token.
-	_, _, err = s.issueVoiceToken(t.Context(), api.VoiceTokenRequest{Principal: "p", AgentID: a.ID, Draft: &api.DraftRequest{Config: json.RawMessage(`{"start":"x"}`)}})
+	_, _, err = s.issueVoiceToken(t.Context(), api.VoiceTokenRequest{Principal: "p", AgentID: a.ID, Draft: &api.DraftRequest{Config: json.RawMessage(`{"start":"x"}`)}}, false)
 	if !errors.Is(err, agent.ErrInvalidConfig) {
 		t.Fatalf("invalid draft: %v, want agent.ErrInvalidConfig", err)
+	}
+}
+
+// An eval draft is rewritten (echo/offline), so the readiness of the agent's real providers must not block it.
+func TestIssueVoiceTokenDraftSkipsVersionReadiness(t *testing.T) {
+	s := evalTestServer(t)
+	a := paidAgent(t, s)
+	s.env = mapEnv(nil) // the paid providers lose their keys: the current version is not ready
+	if got, err := s.agents.Get(t.Context(), a.ID); err != nil || agentCallable(got.Readiness.State) {
+		t.Fatalf("setup: readiness %q err %v, want not callable", got.Readiness.State, err)
+	}
+	in := api.VoiceTokenRequest{Principal: eval.Principal, AgentID: a.ID, Draft: &api.DraftRequest{Config: agentConfigJSON("SALES", "v")}}
+	var nr *notReadyError
+	if _, _, err := s.issueVoiceToken(t.Context(), in, false); !errors.As(err, &nr) || nr.Draft {
+		t.Fatalf("API path: %v, want the agent not-ready refusal", err)
+	}
+	if resp, _, err := s.issueVoiceToken(t.Context(), in, true); err != nil || resp.Token == "" {
+		t.Fatalf("in-process draft token: %v", err)
+	}
+	// Without a draft the version still has to be ready.
+	in.Draft = nil
+	if _, _, err := s.issueVoiceToken(t.Context(), in, true); !errors.As(err, &nr) {
+		t.Fatalf("plain token: %v, want not-ready", err)
 	}
 }
 

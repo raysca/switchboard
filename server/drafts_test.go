@@ -105,6 +105,28 @@ func TestVoiceTokenWithADraftIsValidatedLikeAPublish(t *testing.T) {
 	}
 }
 
+// The public error text of a bad draft is the validation error itself, as before the token issuing moved into a function.
+func TestVoiceTokenDraftErrorTextIsUnchanged(t *testing.T) {
+	r, id := draftRig(t)
+	for name, tc := range map[string]struct{ config, code, prefix string }{
+		"invalid config": {`[1]`, "invalid_request", "invalid agent config: "},
+		"unattached":     {`{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo"},"tts":{"provider":"echo","voice":"v"}}`, "agent_not_attached", "agent must be attached to providers: "},
+		"foreign tool":   {`{"start":"a","steps":[{"id":"a","name":"A","tools":["srv/lookup"],"config":` + echoAgentConfig("D") + `}],"handoffs":[]}`, "invalid_request", ""},
+	} {
+		_, _, body := issueDraftToken(r, id, tc.config)
+		var resp struct {
+			Error struct{ Code, Message string }
+		}
+		if err := json.Unmarshal([]byte(body), &resp); err != nil {
+			t.Fatalf("%s: %v: %s", name, err, body)
+		}
+		_, _, want := r.s.agents.ResolveDraft(t.Context(), id, json.RawMessage(tc.config), nil)
+		if want == nil || resp.Error.Code != tc.code || resp.Error.Message != want.Error() || strings.Contains(resp.Error.Message, "draft check failed") || !strings.HasPrefix(resp.Error.Message, tc.prefix) {
+			t.Errorf("%s: %s %q, want code %s and text %q", name, resp.Error.Code, resp.Error.Message, tc.code, want)
+		}
+	}
+}
+
 func TestVoiceTokenWithoutADraftIsUnchanged(t *testing.T) {
 	r, id := draftRig(t)
 	c := r.dial(id)

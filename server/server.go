@@ -99,7 +99,10 @@ type Server struct {
 	publicServer *http.Server
 	adminServer  *http.Server
 	probeServer  *http.Server
-	publicAddr   string // bound addresses after Start (useful with ":0")
+	publicAddr   string       // bound addresses after Start (useful with ":0")
+	evalServer   *http.Server // the loopback listener of the eval worker's calls (eval_listener.go); nil without a worker
+	evalAddr     string
+	evalDone     chan struct{}
 	wsServer     *ws.Server
 	backgrounds  map[string]background         // the sound catalogue (audio.backgrounds)
 	cues         map[string]func() ws.Underlay // handoff cue sounds by name
@@ -427,18 +430,11 @@ func (s *Server) getOperationsStatus(ctx context.Context) api.OperationsStatus {
 	}
 }
 
-func (s *Server) setupRoutes() {
-	// Configure WS Transport Server
-	directTLS := s.cfg.TLS.CertFile != "" && s.cfg.TLS.KeyFile != ""
-	proxyTLS := s.cfg.TLS.TrustedProxyMode && len(s.cfg.TLS.TrustedProxies) > 0
-	wsCfg := ws.ServerConfig{
-		Security: ws.SecurityConfig{
-			AllowedOrigins:     s.cfg.OriginAllowlist,
-			AllowSameHost:      s.cfg.OriginAllowSameHost,
-			AllowMissingOrigin: s.cfg.Profile == ProfileDevelopment || hasOriginWildcard(s.cfg.OriginAllowlist) || len(s.cfg.OriginAllowlist) == 0,
-			RequireTLS:         s.cfg.Profile == ProfileProduction && !s.cfg.InsecureOverrides.AllowPlainWSInProduction && (directTLS || proxyTLS),
-			TrustedProxies:     s.cfg.TLS.TrustedProxies,
-		},
+// wsServerConfig is the transport configuration of a /ws handler with the given security rules. The public
+// listener and the internal eval listener differ only in these.
+func (s *Server) wsServerConfig(sec ws.SecurityConfig) ws.ServerConfig {
+	return ws.ServerConfig{
+		Security:                   sec,
 		Observe:                    s.observeTransport,
 		TokenValidator:             s.validator,
 		Pacer:                      ws.DefaultPacerConfig(),
@@ -454,6 +450,29 @@ func (s *Server) setupRoutes() {
 		HandshakeRateLimit:         s.cfg.Limits.HandshakeRatePerIP, // 0 -> ws default (20)
 		FixedPlayerRate:            24000,
 	}
+}
+
+// newWSServer builds a /ws handler on cfg wired to this server's call callbacks.
+func (s *Server) newWSServer(cfg ws.ServerConfig) *ws.Server {
+	cfg.Cues = len(s.cues) > 0 || len(s.backgrounds) > 0 // the call's background is set once its agent is known
+	w := ws.NewServer(cfg)
+	w.OnSessionReady = s.onSessionReady
+	w.OnText = s.onText
+	w.OnDTMF = s.onDTMF
+	return w
+}
+
+func (s *Server) setupRoutes() {
+	// Configure WS Transport Server
+	directTLS := s.cfg.TLS.CertFile != "" && s.cfg.TLS.KeyFile != ""
+	proxyTLS := s.cfg.TLS.TrustedProxyMode && len(s.cfg.TLS.TrustedProxies) > 0
+	wsCfg := s.wsServerConfig(ws.SecurityConfig{
+		AllowedOrigins:     s.cfg.OriginAllowlist,
+		AllowSameHost:      s.cfg.OriginAllowSameHost,
+		AllowMissingOrigin: s.cfg.Profile == ProfileDevelopment || hasOriginWildcard(s.cfg.OriginAllowlist) || len(s.cfg.OriginAllowlist) == 0,
+		RequireTLS:         s.cfg.Profile == ProfileProduction && !s.cfg.InsecureOverrides.AllowPlainWSInProduction && (directTLS || proxyTLS),
+		TrustedProxies:     s.cfg.TLS.TrustedProxies,
+	})
 
 	sec := wsCfg.Security
 	s.clientIP = func(r *http.Request) string {
@@ -464,11 +483,7 @@ func (s *Server) setupRoutes() {
 	}
 
 	s.secure = sec.IsSecure
-	wsCfg.Cues = len(s.cues) > 0 || len(s.backgrounds) > 0 // the call's background is set once its agent is known
-	s.wsServer = ws.NewServer(wsCfg)
-	s.wsServer.OnSessionReady = s.onSessionReady
-	s.wsServer.OnText = s.onText
-	s.wsServer.OnDTMF = s.onDTMF
+	s.wsServer = s.newWSServer(wsCfg)
 
 	// Public Listener: /health and /ws
 	s.publicMux = http.NewServeMux()
@@ -1080,7 +1095,7 @@ func (s *Server) Start() error {
 		s.autoInstallDemo()
 	}
 	s.ready.Store(true)
-	s.startEvalWorker() // after publicAddr: eval calls dial this instance's own listener
+	s.startEvalWorker()
 	s.logger.Info("server started",
 		slog.String("public_addr", s.cfg.PublicListenAddr),
 		slog.String("admin_addr", s.cfg.AdminListenAddr),
@@ -1198,6 +1213,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.publicServer != nil {
 		_ = s.publicServer.Close() // upgraded sockets are hijacked, so this only drops HTTP
 	}
+	s.stopEvalListener()
 
 	// Their teardown ends each session row (bounded by releaseTimeout); wait for
 	// it before closing the store.

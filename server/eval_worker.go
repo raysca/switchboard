@@ -83,8 +83,8 @@ func newEvalWorker(s *Server, store *storage.Store) *evalWorker {
 	return w
 }
 
-// startEvalWorker starts the pool of the management plane, sized evaluation.max_concurrent_calls. It runs at the
-// end of Start (the listener must be up: eval calls dial it); 0 turns the worker off on this instance.
+// startEvalWorker binds the internal eval listener and starts the pool of the management plane, sized
+// evaluation.max_concurrent_calls. It runs at the end of Start; 0 turns the worker (and the listener) off on this instance.
 func (s *Server) startEvalWorker() {
 	m := s.mgmt.Load()
 	n := s.cfg.Evaluation.MaxConcurrentCalls
@@ -92,7 +92,15 @@ func (s *Server) startEvalWorker() {
 		return
 	}
 	w := newEvalWorker(s, m.store)
-	m.eval.Store(w)
+	if !m.eval.CompareAndSwap(nil, w) { // a second Start must not leak the first pool
+		w.cancel()
+		return
+	}
+	if err := s.startEvalListener(); err != nil {
+		s.logger.Error("eval worker not started", slog.String("err", err.Error()))
+		m.eval.CompareAndSwap(w, nil)
+		return
+	}
 	w.start(n)
 }
 
