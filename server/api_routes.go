@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"govoice/server/agent"
 	"govoice/server/api"
+	"govoice/server/eval"
 	"govoice/server/storage"
 	"govoice/transport/token"
 )
@@ -81,6 +82,10 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		if input.Principal == "" || len(input.Principal) > 128 || input.AgentID == "" || len(input.AgentID) > 128 {
 			api.WriteError(w, http.StatusBadRequest, "invalid_request", "principal and agent_id must be 1 to 128 characters", requestID)
+			return
+		}
+		if input.Principal == eval.Principal {
+			api.WriteError(w, http.StatusBadRequest, "invalid_request", "principal "+eval.Principal+" is reserved for evaluation calls", requestID)
 			return
 		}
 		resp, _, err := s.issueVoiceToken(r.Context(), input, false)

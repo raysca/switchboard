@@ -104,6 +104,7 @@ type Server struct {
 	evalServer   *http.Server // the loopback listener of the eval worker's calls (eval_listener.go); nil without a worker
 	evalAddr     string
 	evalDone     chan struct{}
+	evalListen   func() (net.Listener, error) // test seam; nil binds 127.0.0.1:0
 	wsServer     *ws.Server
 	backgrounds  map[string]background         // the sound catalogue (audio.backgrounds)
 	cues         map[string]func() ws.Underlay // handoff cue sounds by name
@@ -1102,7 +1103,9 @@ func (s *Server) Start() error {
 		s.autoInstallDemo()
 	}
 	s.ready.Store(true)
-	s.startEvalWorker()
+	if err := s.startEvalWorker(); err != nil {
+		return err
+	}
 	s.logger.Info("server started",
 		slog.String("public_addr", s.cfg.PublicListenAddr),
 		slog.String("admin_addr", s.cfg.AdminListenAddr),

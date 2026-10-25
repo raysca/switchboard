@@ -25,6 +25,12 @@ import (
 // evalTestServer is a started, managed development server on ephemeral ports with the echo provider.
 func evalTestServer(t *testing.T, mods ...func(*Config)) *Server {
 	t.Helper()
+	return evalTestServerPre(t, nil, mods...)
+}
+
+// evalTestServerPre is evalTestServer with a hook on the built server before Start (the listener seam).
+func evalTestServerPre(t *testing.T, pre func(*Server), mods ...func(*Config)) *Server {
+	t.Helper()
 	t.Setenv("GOVOICE_MANAGEMENT_API_KEY", e2eMgmtKey)
 	cfg := DefaultConfig(ProfileDevelopment)
 	cfg.Providers.Echo.Mimic, cfg.Providers.Echo.LabelReplies = "instant", true
@@ -40,6 +46,9 @@ func evalTestServer(t *testing.T, mods ...func(*Config)) *Server {
 	s.env = testProviderEnv(t)
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
 	enableTestManagement(t, s)
+	if pre != nil {
+		pre(s)
+	}
 	if err := s.Start(); err != nil {
 		t.Fatal(err)
 	}

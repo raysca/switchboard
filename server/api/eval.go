@@ -46,8 +46,11 @@ type EvalStore interface {
 
 // EvalPolicy is what the server decides for the eval endpoints.
 type EvalPolicy struct {
-	// LiveEnabled reports GOVOICE_LIVE=1 on the serving process: the gate of every paid eval path.
-	LiveEnabled func() bool
+	// LiveRequired reports that running this (rewritten) config reaches a paid model and the serving process has no
+	// GOVOICE_LIVE=1: the gate of a paid run.
+	LiveRequired func(config json.RawMessage) bool
+	// JudgeLiveRequired is the same for a judge on that provider.
+	JudgeLiveRequired func(provider string) bool
 	// JudgeProvider returns an error unless the provider can complete text (it does not look at keys).
 	JudgeProvider func(provider string) error
 }
@@ -479,8 +482,6 @@ func (h evalHandler) writeCase(w http.ResponseWriter, row storage.EvalCase, err 
 
 // ---- suite and scorer settings
 
-func isPaidJudge(provider string) bool { return provider != "offline" && provider != "echo" }
-
 // checkJudge validates a judge to be saved and writes the refusal: an unusable provider is 400, a paid one on a
 // process without GOVOICE_LIVE=1 is 403 (the worker enforces the same again, so a judge saved elsewhere never spends).
 func (h evalHandler) checkJudge(w http.ResponseWriter, j *EvalJudgeDTO, rid string) bool {
@@ -495,7 +496,7 @@ func (h evalHandler) checkJudge(w http.ResponseWriter, j *EvalJudgeDTO, rid stri
 		WriteError(w, http.StatusBadRequest, "invalid_judge", "judge.provider: "+clip(err.Error(), 200), rid)
 		return false
 	}
-	if isPaidJudge(j.Provider) && !h.policy.LiveEnabled() {
+	if h.policy.JudgeLiveRequired(j.Provider) {
 		WriteError(w, http.StatusForbidden, "eval_live_required", "a judge on a paid provider needs the server started with GOVOICE_LIVE=1; offline and echo judges need nothing", rid)
 		return false
 	}
@@ -767,7 +768,10 @@ func (h evalHandler) startRun(w http.ResponseWriter, r *http.Request, agentID, r
 		config, versionNumber = ver.Config, &ver.Number
 		run.AgentVersionID, run.ConfigHash = ver.ID, ver.ConfigHash
 	}
-	if ag.Archived || !ag.Enabled || !agent.Callable(readiness.State) {
+	// A version run rewritten to offline or echo does not use the providers the current readiness is about (their keys
+	// may be absent), so only keep needs it; a draft's readiness is its own.
+	needReady := req.Draft != nil || req.Providers == eval.ModeKeep
+	if ag.Archived || !ag.Enabled || (needReady && !agent.Callable(readiness.State)) {
 		WriteJSON(w, http.StatusConflict, ErrorResponse{Error: Error{Code: "agent_not_ready", Message: "the agent is not ready to take calls", RequestID: rid, Details: readiness}})
 		return
 	}
@@ -778,7 +782,7 @@ func (h evalHandler) startRun(w http.ResponseWriter, r *http.Request, agentID, r
 		WriteError(w, http.StatusBadRequest, "invalid_request", clip(err.Error(), 300), rid)
 		return
 	}
-	if eval.NeedsLive(rewritten) && !h.policy.LiveEnabled() {
+	if h.policy.LiveRequired(rewritten) {
 		WriteError(w, http.StatusForbidden, "eval_live_required", "this run reaches a paid model; start the server with GOVOICE_LIVE=1, or run with providers offline or echo", rid)
 		return
 	}

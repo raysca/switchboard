@@ -140,7 +140,7 @@ func prepare(srv *stack.Server, cases []eval.Case, c config) (refs map[string]ev
 			continue
 		}
 		refs[cs.Agent] = ref
-		needsLive = needsLive || eval.NeedsLive(ref.Draft)
+		needsLive = needsLive || eval.NeedsLive(ref.Draft, true)
 	}
 	if err := errors.Join(errs...); err != nil {
 		return nil, false, err

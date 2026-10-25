@@ -91,23 +91,24 @@ func newEvalWorker(s *Server, store *storage.Store) *evalWorker {
 
 // startEvalWorker binds the internal eval listener and starts the pool of the management plane, sized
 // evaluation.max_concurrent_calls. It runs at the end of Start; 0 turns the worker (and the listener) off on this instance.
-func (s *Server) startEvalWorker() {
+func (s *Server) startEvalWorker() error {
 	m := s.mgmt.Load()
 	n := s.cfg.Evaluation.MaxConcurrentCalls
 	if m == nil || n <= 0 {
-		return
+		return nil
 	}
 	w := newEvalWorker(s, m.store)
 	if !m.eval.CompareAndSwap(nil, w) { // a second Start must not leak the first pool
 		w.cancel()
-		return
+		return nil
 	}
 	if err := s.startEvalListener(); err != nil {
-		s.logger.Error("eval worker not started", slog.String("err", err.Error()))
+		w.cancel()
 		m.eval.CompareAndSwap(w, nil)
-		return
+		return fmt.Errorf("eval worker: %w", err)
 	}
 	w.start(n)
+	return nil
 }
 
 // stopEvalWorker ends the pool and waits for it (at most until ctx ends); safe with no management plane, no worker, or
@@ -277,12 +278,8 @@ func (w *evalWorker) heartbeats(ctx context.Context, cancel context.CancelFunc, 
 	}
 }
 
-// evalLiveRequired reports whether a run of this (rewritten) config would reach a paid model without
-// GOVOICE_LIVE=1 on this process. The API refuses such a run when it is enqueued; the worker checks again so that
-// a queued job can never spend credit on its own.
-func (s *Server) evalLiveRequired(draft json.RawMessage) bool {
-	return eval.NeedsLive(draft) && s.env("GOVOICE_LIVE") != "1"
-}
+// The worker checks evalLiveRequired (eval_api.go) again after the API did at enqueue, so that a queued job can
+// never spend credit on its own.
 
 // runCaseJob makes the call of one run_case job, scores it and returns the rows to store. The subject of each
 // result is the bare job subject: storage derives the stored one. The run row names the version (or the draft), the
@@ -434,7 +431,7 @@ func (s *Server) judgeFor(ctx context.Context, suite storage.EvalSuite, settings
 		fail := func(err error) {
 			j.Ask = func(context.Context, string, string) (string, error) { return "", err }
 		}
-		if provider != "offline" && provider != "echo" && s.env("GOVOICE_LIVE") != "1" {
+		if s.judgeLiveRequired(provider) {
 			fail(errJudgeNeedsLive) // before the completer: nothing is built, no key is read
 		} else if ask, resolved, closeAsk, err := s.completer(ctx, provider, model); err != nil {
 			fail(err)

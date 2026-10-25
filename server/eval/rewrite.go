@@ -66,16 +66,17 @@ func Rewrite(config json.RawMessage, mode string) (json.RawMessage, error) {
 	return out, nil
 }
 
-// NeedsLive reports whether running the config calls a paid model: any step's LLM, or one of its
+// NeedsLive reports whether running the config calls a paid model (offlineFree: the offline provider is a local
+// model, so it is free; false when its endpoint is remote): any step's LLM, or one of its
 // fallbacks, that is not echo, offline or silence. A config the server's decoder refuses counts as paid.
-func NeedsLive(config json.RawMessage) bool {
+func NeedsLive(config json.RawMessage, offlineFree bool) bool {
 	def, err := agent.Decode(config)
 	if err != nil {
 		return true // cannot tell: treat as paid
 	}
 	for _, s := range def.Steps {
 		for _, c := range s.Config.Chain("llm") {
-			if !slices.Contains([]string{"echo", "offline", "silence"}, c.Provider) {
+			if !slices.Contains([]string{"echo", "silence"}, c.Provider) && !(offlineFree && c.Provider == "offline") {
 				return true
 			}
 		}

@@ -134,18 +134,18 @@ func TestNeedsLive(t *testing.T) {
 		{"step fallback", `{"start":"a","steps":[{"id":"a","name":"A","config":{"llm":{"provider":"echo","model":"f","fallbacks":[{"provider":"xai","model":"g"}]}}}]}`, true},
 		{"garbage", `nope`, true},
 	} {
-		if got := NeedsLive(json.RawMessage(tc.cfg)); got != tc.want {
+		if got := NeedsLive(json.RawMessage(tc.cfg), true); got != tc.want {
 			t.Errorf("%s: NeedsLive = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 	for _, mode := range []string{ModeOffline, ModeEcho} {
 		out, _ := Rewrite(json.RawMessage(dentalAgent), mode)
-		if NeedsLive(out) {
+		if NeedsLive(out, true) {
 			t.Errorf("%s-rewritten dental agent needs live", mode)
 		}
 	}
 	out, _ := Rewrite(json.RawMessage(dentalAgent), ModeKeep)
-	if !NeedsLive(out) {
+	if !NeedsLive(out, true) {
 		t.Error("keep-mode dental agent must need live")
 	}
 }
@@ -223,11 +223,11 @@ func TestNeedsLiveFailsClosed(t *testing.T) {
 	for _, cfg := range []string{`{}`, `{"llm":{"provider":"google"}}`, `{"steps":[]}`, `{"LLM":{"provider":"google","model":"m"}}`,
 		`{"LLM":{"provider":"echo","model":"f","Fallbacks":[{"provider":"xai","model":"g"}]}}`,
 		`{"start":"a","steps":[{"id":"a","name":"A","Config":{"llm":{"provider":"google","model":"m"}}}]}`} {
-		if !NeedsLive(json.RawMessage(cfg)) {
+		if !NeedsLive(json.RawMessage(cfg), true) {
 			t.Errorf("NeedsLive(%s) = false", cfg)
 		}
 	}
-	if NeedsLive(json.RawMessage(`{"LLM":{"Provider":"Echo","model":"f"}}`)) {
+	if NeedsLive(json.RawMessage(`{"LLM":{"Provider":"Echo","model":"f"}}`), true) {
 		t.Error("mixed-case echo reported paid")
 	}
 }

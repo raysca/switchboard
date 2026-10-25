@@ -32,7 +32,17 @@ type evalRig struct {
 	svc        *agent.Service
 	h          http.Handler
 	live       atomic.Bool
+	down       atomic.Bool // every provider service is unavailable: no agent is ready
 	paid, free agent.Agent
+}
+
+type rigAvail struct{ r *evalRig }
+
+func (a rigAvail) Check(string, string) agent.Unavailable {
+	if a.r.down.Load() {
+		return agent.Unavailable{Reason: "no key", MissingEnv: []string{"KEY"}}
+	}
+	return agent.Unavailable{}
 }
 
 func newEvalRig(t *testing.T) *evalRig {
@@ -42,9 +52,11 @@ func newEvalRig(t *testing.T) *evalRig {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { store.Close() })
-	r := &evalRig{t: t, store: store, svc: agent.NewService(store, allAvailable{})}
+	r := &evalRig{t: t, store: store}
+	r.svc = agent.NewService(store, rigAvail{r})
 	r.h = NewEvalHandler(r.svc, store, EvalPolicy{
-		LiveEnabled: r.live.Load,
+		LiveRequired:      func(c json.RawMessage) bool { return eval.NeedsLive(c, true) && !r.live.Load() },
+		JudgeLiveRequired: func(p string) bool { return p != "offline" && p != "echo" && !r.live.Load() },
 		JudgeProvider: func(p string) error {
 			if p == "offline" || p == "echo" || p == "openai" {
 				return nil
@@ -595,6 +607,18 @@ func TestEvalRunLiveGate(t *testing.T) {
 	}
 	if got := count(r.paid); got != 4 {
 		t.Fatalf("%d paid runs, want 4", got)
+	}
+}
+
+// A version run rewritten to offline or echo does not need the agent's real providers ready; keep does.
+func TestEvalVersionRunReadinessByMode(t *testing.T) {
+	r := newEvalRig(t)
+	r.addCases(r.paid, "a")
+	r.live.Store(true)
+	r.down.Store(true)
+	expect(t, r.do(http.MethodPost, r.path(r.paid, "/runs"), `{"providers":"keep"}`), http.StatusConflict, "agent_not_ready")
+	for _, m := range []string{"offline", "echo"} {
+		expect(t, r.do(http.MethodPost, r.path(r.paid, "/runs"), `{"providers":"`+m+`"}`), http.StatusAccepted, "")
 	}
 }
 

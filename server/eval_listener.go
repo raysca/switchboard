@@ -18,10 +18,15 @@ import (
 // listener, whose browser rules (Origin allowlist, TLS or trusted-proxy evidence) a server-side client cannot
 // and should not satisfy. It binds 127.0.0.1 only, so no other host can reach it, serves only /ws, and
 // accepts only voice tokens of the eval principal. It is the same handler as the public /ws (same token
-// validation, same call setup, so the same admission: global, per principal, per agent), with the Origin and
-// TLS checks off. It exists only while the worker does (evaluation.max_concurrent_calls > 0).
+// validation, same call setup, so the same admission: global, per principal, per agent), with a missing Origin
+// allowed and TLS not required. A request that carries an Origin header is refused (no allowlist is set), so no
+// browser can use this listener. It exists only while the worker does (evaluation.max_concurrent_calls > 0).
 func (s *Server) startEvalListener() error {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	listen := s.evalListen
+	if listen == nil {
+		listen = func() (net.Listener, error) { return net.Listen("tcp", "127.0.0.1:0") }
+	}
+	ln, err := listen()
 	if err != nil {
 		return fmt.Errorf("listen eval: %w", err)
 	}

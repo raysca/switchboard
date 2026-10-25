@@ -290,7 +290,7 @@ type Config struct {
 
 	// Evaluation bounds the agent-evaluation worker on this instance. Its calls are real sessions: they dial a
 	// loopback-only listener bound while the worker runs (eval_listener.go; not the public one, whose Origin and TLS
-	// rules do not apply to a server-side client), count against limits.max_sessions, max_sessions_per_principal
+	// rules a server-side client cannot meet: here TLS is not required and a request with an Origin header is refused), count against limits.max_sessions, max_sessions_per_principal
 	// (principal agent-eval), max_sessions_per_ip (all from 127.0.0.1) and max_sessions_per_agent, and appear in the
 	// session metrics. max_concurrent_calls cannot exceed the principal and per-IP limits.
 	Evaluation struct {
