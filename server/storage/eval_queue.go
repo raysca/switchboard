@@ -403,7 +403,18 @@ func (r EvalRepository) Complete(ctx context.Context, job EvalJob, now time.Time
 		if err != nil {
 			return fmt.Errorf("complete eval job: %w", err)
 		}
+		gone := map[string]bool{} // session id -> erased
 		for _, e := range results {
+			if e.Reason != "" && e.SessionID != "" {
+				if _, seen := gone[e.SessionID]; !seen {
+					if gone[e.SessionID], err = r.sessionGone(ctx, tx, e.SessionID); err != nil {
+						return err
+					}
+				}
+				if gone[e.SessionID] {
+					e.Reason = "" // the call was erased while it was scored; its reason can quote it
+				}
+			}
 			if run.Valid && kind == "run_case" {
 				if e.RunID != "" && e.RunID != run.String {
 					return ErrResultRunMismatch
@@ -422,6 +433,25 @@ func (r EvalRepository) Complete(ctx context.Context, job EvalJob, now time.Time
 		return err
 	})
 	return runFinished && err == nil, err
+}
+
+// sessionGone reports whether the scored call no longer exists (an erasure removed it). On Postgres it share-locks
+// the row, so an erasure either finishes first (the row is gone) or waits for this transaction and then blanks the
+// reasons it stored; SQLite has one writer, so the two never interleave.
+func (r EvalRepository) sessionGone(ctx context.Context, tx *sql.Tx, id string) (bool, error) {
+	query := "SELECT 1 FROM sessions WHERE id=?"
+	if r.s.dialect == Postgres {
+		query += " FOR SHARE"
+	}
+	var one int
+	err := tx.QueryRowContext(ctx, r.s.bind(query), id).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check scored call: %w", err)
+	}
+	return false, nil
 }
 
 // Fail records a failed attempt of a claimed job. With final, or when the attempts are used up, the job is dead;

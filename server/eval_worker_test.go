@@ -192,9 +192,10 @@ func (q *queueRig) enqueue(t *testing.T, n int) (storage.EvalRun, []storage.Eval
 	return run, got
 }
 
+// passResult has no session id: Complete blanks the reason of a result whose call no longer exists.
 func passResult(run storage.EvalRun, version, scorer, reason string) storage.EvalResult {
 	return storage.EvalResult{SubjectKind: "case_run", SubjectID: "bare", Scorer: scorer, ScorerVersion: 1, VersionKey: version, AgentID: run.AgentID,
-		AgentVersionID: version, ConfigHash: "h", SessionID: storage.NewID(), Score: 1, Outcome: "pass", Reason: reason}
+		AgentVersionID: version, ConfigHash: "h", Score: 1, Outcome: "pass", Reason: reason}
 }
 
 func TestEvalWorkerRecoversPanic(t *testing.T) {

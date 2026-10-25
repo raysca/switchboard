@@ -94,13 +94,14 @@ The job (`server/retention/job.go`) runs every `retention.interval` and makes th
 2. **Metadata purge.** For ended sessions older than `metadata_retention_days`
    the job deletes, in this order, `trace_events`, `trace_spans` (after
    unlinking `parent_id`), `tool_calls`, `turns`, `session_mcp_tools` and the
-   `sessions` row. Standalone trace spans and events older than the cutoff are
-   removed too.
+   `sessions` row, and blanks the `reason` of eval results scored on those
+   calls. Standalone trace spans and events older than the cutoff are removed too.
 3. **Eval purge** (when `eval_retention_days`, default 180, is above 0). Finished
    eval jobs, eval results and eval runs go together once they are older than
    `eval_retention_days`, so a run's detail stays complete for the run's whole life.
-   A judge `reason` can quote call content and is kept for `eval_retention_days`
-   (180 days by default), longer than `content_retention_days`.
+   A `reason` (a judge's words, a `never_say` match) can quote call content: it
+   outlives `content_retention_days` and is blanked when the call's metadata is
+   purged or the call is erased.
 
 **Upgrade note.** A database written by a build between commits `5be193e` and
 `12a7884` (2026-10-05/06) with a trace content mode configured may hold content

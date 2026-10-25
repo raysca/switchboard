@@ -443,3 +443,28 @@ func TestEraseSessionBlanksTheReasonOfItsEvalResults(t *testing.T) {
 		}
 	})
 }
+
+// A call erased while its eval job was still scoring: the results stored afterwards carry no reason. A call that is
+// still there keeps it.
+func TestCompleteBlanksTheReasonOfACallErasedWhileItWasScored(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		live := seedCall(t, s, "caller-"+NewID(), time.Hour)
+		for session, want := range map[string]string{live: "quotes the call", NewID(): ""} {
+			run, jobs, versionID := seedRun(t, s, 1, time.Now().Add(-time.Second))
+			j, ok, _, err := s.Eval().Claim(ctx, "w", time.Now(), testLease)
+			if err != nil || !ok || j.ID != jobs[0].ID {
+				t.Fatalf("claim: %v %v", err, ok)
+			}
+			res := resultFor(run, jobs[0], versionID, "expectations", "fail")
+			res.SessionID, res.Reason = session, "quotes the call"
+			if _, err := s.Eval().Complete(ctx, j, time.Now(), []EvalResult{res}); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := s.Eval().RunResults(ctx, run.ID); err != nil || len(got) != 1 || got[0].Reason != want {
+				t.Fatalf("session %s: %+v %v, want reason %q", session, got, err, want)
+			}
+		}
+	})
+}
