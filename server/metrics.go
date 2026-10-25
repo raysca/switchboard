@@ -181,33 +181,37 @@ func (m *Metrics) Handler() http.Handler {
 	})
 }
 
+// scalar is one unlabelled sample: its HELP and TYPE lines and its value.
+type scalar struct {
+	name, help, kind string
+	v                int64
+}
+
+func writeScalars(w io.Writer, ss ...scalar) {
+	for _, s := range ss {
+		fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s %s\n%s %d\n", s.name, s.help, s.name, s.kind, s.name, s.v)
+	}
+}
+
+func counter(name, help string, v uint64) scalar { return scalar{name, help, "counter", int64(v)} }
+func gauge(name, help string, v int64) scalar    { return scalar{name, help, "gauge", v} }
+
 // WritePrometheus formats and writes all metrics in OpenMetrics/Prometheus exposition format.
 func (m *Metrics) WritePrometheus(w io.Writer) {
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
-	numGoroutines := runtime.NumGoroutine()
 
 	fmt.Fprintf(w, "# HELP voice_build_info Build version and commit (value is always 1).\n# TYPE voice_build_info gauge\nvoice_build_info{version=%q,commit=%q} 1\n", Version, Commit)
 
 	// Runtime
-	fmt.Fprintf(w, "# HELP voice_active_sessions Number of currently active voice sessions.\n")
-	fmt.Fprintf(w, "# TYPE voice_active_sessions gauge\n")
-	fmt.Fprintf(w, "voice_active_sessions %d\n", m.ActiveSessions.Load())
-
-	fmt.Fprintf(w, "# HELP voice_draining 1 while the server is draining for shutdown.\n# TYPE voice_draining gauge\nvoice_draining %d\n", m.Draining.Load())
-	fmt.Fprintf(w, "# HELP voice_drain_sessions_remaining Sessions still live while draining.\n# TYPE voice_drain_sessions_remaining gauge\nvoice_drain_sessions_remaining %d\n", m.DrainRemaining.Load())
-
-	fmt.Fprintf(w, "# HELP voice_sessions_started_total Total number of voice sessions started.\n")
-	fmt.Fprintf(w, "# TYPE voice_sessions_started_total counter\n")
-	fmt.Fprintf(w, "voice_sessions_started_total %d\n", m.SessionsStartedTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_sessions_stopped_total Total number of voice sessions stopped cleanly.\n")
-	fmt.Fprintf(w, "# TYPE voice_sessions_stopped_total counter\n")
-	fmt.Fprintf(w, "voice_sessions_stopped_total %d\n", m.SessionsStoppedTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_sessions_failed_total Total number of voice sessions that failed.\n")
-	fmt.Fprintf(w, "# TYPE voice_sessions_failed_total counter\n")
-	fmt.Fprintf(w, "voice_sessions_failed_total %d\n", m.SessionsFailedTotal.Load())
+	writeScalars(w,
+		gauge("voice_active_sessions", "Number of currently active voice sessions.", int64(m.ActiveSessions.Load())),
+		gauge("voice_draining", "1 while the server is draining for shutdown.", int64(m.Draining.Load())),
+		gauge("voice_drain_sessions_remaining", "Sessions still live while draining.", int64(m.DrainRemaining.Load())),
+		counter("voice_sessions_started_total", "Total number of voice sessions started.", uint64(m.SessionsStartedTotal.Load())),
+		counter("voice_sessions_stopped_total", "Total number of voice sessions stopped cleanly.", uint64(m.SessionsStoppedTotal.Load())),
+		counter("voice_sessions_failed_total", "Total number of voice sessions that failed.", uint64(m.SessionsFailedTotal.Load())),
+	)
 
 	fmt.Fprintf(w, "# HELP voice_admission_rejects_total Admission rejections partitioned by reason.\n")
 	fmt.Fprintf(w, "# TYPE voice_admission_rejects_total counter\n")
@@ -217,57 +221,30 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "voice_admission_rejects_total{reason=\"agent_limit\"} %d\n", m.AdmissionRejectsAgent.Load())
 	fmt.Fprintf(w, "voice_admission_rejects_total{reason=\"start_rate_limit\"} %d\n", m.AdmissionRejectsRate.Load())
 
-	fmt.Fprintf(w, "# HELP voice_context_evictions_total Total number of oldest turn pairs evicted.\n")
-	fmt.Fprintf(w, "# TYPE voice_context_evictions_total counter\n")
-	fmt.Fprintf(w, "voice_context_evictions_total %d\n", m.ContextEvictionsTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_max_duration_terminations_total Total calls terminated due to max duration guard.\n")
-	fmt.Fprintf(w, "# TYPE voice_max_duration_terminations_total counter\n")
-	fmt.Fprintf(w, "voice_max_duration_terminations_total %d\n", m.MaxDurationTermTotal.Load())
-	fmt.Fprintf(w, "# HELP voice_management_auth_failures_total Failed management API authentications.\n")
-	fmt.Fprintf(w, "# TYPE voice_management_auth_failures_total counter\n")
-	fmt.Fprintf(w, "voice_management_auth_failures_total %d\n", m.ManagementAuthFailuresTotal.Load())
-	fmt.Fprintf(w, "# HELP voice_management_auth_throttled_total Management API requests refused for too many failed authentications.\n")
-	fmt.Fprintf(w, "# TYPE voice_management_auth_throttled_total counter\n")
-	fmt.Fprintf(w, "voice_management_auth_throttled_total %d\n", m.ManagementAuthThrottledTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_leaked_work_total Total number of tasks that ignored cancellation.\n")
-	fmt.Fprintf(w, "# TYPE voice_leaked_work_total counter\n")
-	fmt.Fprintf(w, "voice_leaked_work_total %d\n", m.LeakedWorkTotal.Load())
+	writeScalars(w,
+		counter("voice_context_evictions_total", "Total number of oldest turn pairs evicted.", uint64(m.ContextEvictionsTotal.Load())),
+		counter("voice_max_duration_terminations_total", "Total calls terminated due to max duration guard.", uint64(m.MaxDurationTermTotal.Load())),
+		counter("voice_management_auth_failures_total", "Failed management API authentications.", uint64(m.ManagementAuthFailuresTotal.Load())),
+		counter("voice_management_auth_throttled_total", "Management API requests refused for too many failed authentications.", uint64(m.ManagementAuthThrottledTotal.Load())),
+		counter("voice_leaked_work_total", "Total number of tasks that ignored cancellation.", uint64(m.LeakedWorkTotal.Load())),
+	)
 	if m.OTelStats != nil {
 		d, f := m.OTelStats()
-		fmt.Fprintf(w, "# HELP voice_otel_spans_dropped_total Spans dropped because the export queue was full.\n# TYPE voice_otel_spans_dropped_total counter\nvoice_otel_spans_dropped_total %d\n", d)
-		fmt.Fprintf(w, "# HELP voice_otel_spans_failed_total Spans lost to OTLP export errors.\n# TYPE voice_otel_spans_failed_total counter\nvoice_otel_spans_failed_total %d\n", f)
+		writeScalars(w,
+			counter("voice_otel_spans_dropped_total", "Spans dropped because the export queue was full.", d),
+			counter("voice_otel_spans_failed_total", "Spans lost to OTLP export errors.", f),
+		)
 	}
-
-	fmt.Fprintf(w, "# HELP voice_leaked_sessions_total Total number of sessions marked as having leaked tasks.\n")
-	fmt.Fprintf(w, "# TYPE voice_leaked_sessions_total counter\n")
-	fmt.Fprintf(w, "voice_leaked_sessions_total %d\n", m.LeakedSessionsTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_process_goroutines Number of running goroutines.\n")
-	fmt.Fprintf(w, "# TYPE voice_process_goroutines gauge\n")
-	fmt.Fprintf(w, "voice_process_goroutines %d\n", numGoroutines)
-
-	fmt.Fprintf(w, "# HELP voice_process_heap_bytes Number of heap bytes allocated.\n")
-	fmt.Fprintf(w, "# TYPE voice_process_heap_bytes gauge\n")
-	fmt.Fprintf(w, "voice_process_heap_bytes %d\n", mem.HeapAlloc)
-
-	// VAD
-	fmt.Fprintf(w, "# HELP voice_vad_active_streams Current active VAD streams.\n")
-	fmt.Fprintf(w, "# TYPE voice_vad_active_streams gauge\n")
-	fmt.Fprintf(w, "voice_vad_active_streams %d\n", m.VADActiveStreams.Load())
-
-	fmt.Fprintf(w, "# HELP voice_vad_stale_chunks_total Stale VAD chunks discarded.\n")
-	fmt.Fprintf(w, "# TYPE voice_vad_stale_chunks_total counter\n")
-	fmt.Fprintf(w, "voice_vad_stale_chunks_total %d\n", m.VADStaleChunksTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_vad_dropped_chunks_total VAD chunks dropped due to worker overload.\n")
-	fmt.Fprintf(w, "# TYPE voice_vad_dropped_chunks_total counter\n")
-	fmt.Fprintf(w, "voice_vad_dropped_chunks_total %d\n", m.VADDroppedChunksTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_vad_worker_restarts_total Worker processes restarted.\n")
-	fmt.Fprintf(w, "# TYPE voice_vad_worker_restarts_total counter\n")
-	fmt.Fprintf(w, "voice_vad_worker_restarts_total %d\n", m.VADWorkerRestartsTotal.Load())
+	writeScalars(w,
+		counter("voice_leaked_sessions_total", "Total number of sessions marked as having leaked tasks.", uint64(m.LeakedSessionsTotal.Load())),
+		gauge("voice_process_goroutines", "Number of running goroutines.", int64(runtime.NumGoroutine())),
+		gauge("voice_process_heap_bytes", "Number of heap bytes allocated.", int64(mem.HeapAlloc)),
+		// VAD
+		gauge("voice_vad_active_streams", "Current active VAD streams.", int64(m.VADActiveStreams.Load())),
+		counter("voice_vad_stale_chunks_total", "Stale VAD chunks discarded.", uint64(m.VADStaleChunksTotal.Load())),
+		counter("voice_vad_dropped_chunks_total", "VAD chunks dropped due to worker overload.", uint64(m.VADDroppedChunksTotal.Load())),
+		counter("voice_vad_worker_restarts_total", "Worker processes restarted.", uint64(m.VADWorkerRestartsTotal.Load())),
+	)
 
 	// Smart-turn model
 	smartturn.WriteMetrics(w)
@@ -278,19 +255,11 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	}
 
 	// STT
-
-	fmt.Fprintf(w, "# HELP voice_stt_errors_total Total STT provider errors.\n")
-	fmt.Fprintf(w, "# TYPE voice_stt_errors_total counter\n")
-	fmt.Fprintf(w, "voice_stt_errors_total %d\n", m.STTErrorsTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_stt_rotations_total Total pre-limit stream rotations completed.\n")
-	fmt.Fprintf(w, "# TYPE voice_stt_rotations_total counter\n")
-	fmt.Fprintf(w, "voice_stt_rotations_total %d\n", m.STTRotationsTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_stt_rotation_failures_total Total pre-limit stream rotations that failed.\n")
-	fmt.Fprintf(w, "# TYPE voice_stt_rotation_failures_total counter\n")
-	fmt.Fprintf(w, "voice_stt_rotation_failures_total %d\n", m.STTRotationFailuresTotal.Load())
-
+	writeScalars(w,
+		counter("voice_stt_errors_total", "Total STT provider errors.", uint64(m.STTErrorsTotal.Load())),
+		counter("voice_stt_rotations_total", "Total pre-limit stream rotations completed.", uint64(m.STTRotationsTotal.Load())),
+		counter("voice_stt_rotation_failures_total", "Total pre-limit stream rotations that failed.", uint64(m.STTRotationFailuresTotal.Load())),
+	)
 	fmt.Fprintf(w, "# HELP voice_stt_circuit_state STT circuit state (0=closed, 1=open, 2=half_open).\n")
 	fmt.Fprintf(w, "# TYPE voice_stt_circuit_state gauge\n")
 	fmt.Fprintf(w, "voice_stt_circuit_state{provider=\"google\"} %d\n", m.STTCircuitStateGoogle.Load())
@@ -298,22 +267,12 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	m.circuits.write(w, "stt")
 
 	// LLM
-	fmt.Fprintf(w, "# HELP voice_llm_requests_total Total LLM turn requests.\n")
-	fmt.Fprintf(w, "# TYPE voice_llm_requests_total counter\n")
-	fmt.Fprintf(w, "voice_llm_requests_total %d\n", m.LLMRequestsTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_llm_errors_total Total LLM provider errors.\n")
-	fmt.Fprintf(w, "# TYPE voice_llm_errors_total counter\n")
-	fmt.Fprintf(w, "voice_llm_errors_total %d\n", m.LLMErrorsTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_llm_retries_total Total LLM retry attempts.\n")
-	fmt.Fprintf(w, "# TYPE voice_llm_retries_total counter\n")
-	fmt.Fprintf(w, "voice_llm_retries_total %d\n", m.LLMRetriesTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_llm_stale_deltas_discarded_total Late LLM deltas discarded.\n")
-	fmt.Fprintf(w, "# TYPE voice_llm_stale_deltas_discarded_total counter\n")
-	fmt.Fprintf(w, "voice_llm_stale_deltas_discarded_total %d\n", m.LLMStaleDeltasDiscarded.Load())
-
+	writeScalars(w,
+		counter("voice_llm_requests_total", "Total LLM turn requests.", uint64(m.LLMRequestsTotal.Load())),
+		counter("voice_llm_errors_total", "Total LLM provider errors.", uint64(m.LLMErrorsTotal.Load())),
+		counter("voice_llm_retries_total", "Total LLM retry attempts.", uint64(m.LLMRetriesTotal.Load())),
+		counter("voice_llm_stale_deltas_discarded_total", "Late LLM deltas discarded.", uint64(m.LLMStaleDeltasDiscarded.Load())),
+	)
 	fmt.Fprintf(w, "# HELP voice_llm_circuit_state Circuit state (0=closed, 1=open, 2=half_open).\n")
 	fmt.Fprintf(w, "# TYPE voice_llm_circuit_state gauge\n")
 	fmt.Fprintf(w, "voice_llm_circuit_state{provider=\"google\"} %d\n", m.LLMCircuitStateGoogle.Load())
@@ -321,22 +280,12 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	m.circuits.write(w, "llm")
 
 	// TTS
-	fmt.Fprintf(w, "# HELP voice_tts_requests_total Total TTS synthesis requests.\n")
-	fmt.Fprintf(w, "# TYPE voice_tts_requests_total counter\n")
-	fmt.Fprintf(w, "voice_tts_requests_total %d\n", m.TTSRequestsTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_tts_errors_total Total TTS synthesis errors.\n")
-	fmt.Fprintf(w, "# TYPE voice_tts_errors_total counter\n")
-	fmt.Fprintf(w, "voice_tts_errors_total %d\n", m.TTSErrorsTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_tts_retries_total Total TTS retry attempts.\n")
-	fmt.Fprintf(w, "# TYPE voice_tts_retries_total counter\n")
-	fmt.Fprintf(w, "voice_tts_retries_total %d\n", m.TTSRetriesTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_tts_stale_audio_discarded_total Stale TTS audio frames discarded.\n")
-	fmt.Fprintf(w, "# TYPE voice_tts_stale_audio_discarded_total counter\n")
-	fmt.Fprintf(w, "voice_tts_stale_audio_discarded_total %d\n", m.TTSStaleAudioDiscarded.Load())
-
+	writeScalars(w,
+		counter("voice_tts_requests_total", "Total TTS synthesis requests.", uint64(m.TTSRequestsTotal.Load())),
+		counter("voice_tts_errors_total", "Total TTS synthesis errors.", uint64(m.TTSErrorsTotal.Load())),
+		counter("voice_tts_retries_total", "Total TTS retry attempts.", uint64(m.TTSRetriesTotal.Load())),
+		counter("voice_tts_stale_audio_discarded_total", "Stale TTS audio frames discarded.", uint64(m.TTSStaleAudioDiscarded.Load())),
+	)
 	fmt.Fprintf(w, "# HELP voice_tts_circuit_state TTS circuit state (0=closed, 1=open, 2=half_open).\n")
 	fmt.Fprintf(w, "# TYPE voice_tts_circuit_state gauge\n")
 	fmt.Fprintf(w, "voice_tts_circuit_state{provider=\"google\"} %d\n", m.TTSCircuitStateGoogle.Load())
@@ -348,17 +297,18 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	m.llmFailovers.write(w)
 	m.stt.write(w)
 	m.ttsFailovers.writeAs(w, "voice_tts_failover_total", "TTS synthesis moved to a fallback provider (replayed before audio, or next unit after a mid-unit failure).")
-	fmt.Fprintf(w, "# HELP voice_tts_fallbacks_skipped_total Configured TTS fallbacks left out of a call (unresolvable).\n# TYPE voice_tts_fallbacks_skipped_total counter\nvoice_tts_fallbacks_skipped_total %d\n", m.TTSFallbacksSkippedTotal.Load())
-	fmt.Fprintf(w, "# HELP voice_llm_fallbacks_skipped_total Configured LLM fallbacks left out of a call (unresolvable).\n# TYPE voice_llm_fallbacks_skipped_total counter\nvoice_llm_fallbacks_skipped_total %d\n", m.LLMFallbacksSkippedTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_user_mute_dropped_total User input frames (VAD start/stop, transcripts) dropped while muted.\n# TYPE voice_user_mute_dropped_total counter\nvoice_user_mute_dropped_total %d\n", m.UserMuteDroppedTotal.Load())
-	fmt.Fprintf(w, "# HELP voice_turn_min_words_no_interims_total Calls with turn.min_words whose STT sent a final transcript before any interim (min_words cannot start turns early).\n# TYPE voice_turn_min_words_no_interims_total counter\nvoice_turn_min_words_no_interims_total %d\n", m.MinWordsNoInterimsTotal.Load())
-	fmt.Fprintf(w, "# HELP voice_async_tool_turns_total Model turns started to deliver finished async tool results or operator context notes.\n# TYPE voice_async_tool_turns_total counter\nvoice_async_tool_turns_total %d\n", m.AsyncToolTurnsTotal.Load())
+	writeScalars(w,
+		counter("voice_tts_fallbacks_skipped_total", "Configured TTS fallbacks left out of a call (unresolvable).", uint64(m.TTSFallbacksSkippedTotal.Load())),
+		counter("voice_llm_fallbacks_skipped_total", "Configured LLM fallbacks left out of a call (unresolvable).", uint64(m.LLMFallbacksSkippedTotal.Load())),
+		counter("voice_user_mute_dropped_total", "User input frames (VAD start/stop, transcripts) dropped while muted.", uint64(m.UserMuteDroppedTotal.Load())),
+		counter("voice_turn_min_words_no_interims_total", "Calls with turn.min_words whose STT sent a final transcript before any interim (min_words cannot start turns early).", uint64(m.MinWordsNoInterimsTotal.Load())),
+		counter("voice_async_tool_turns_total", "Model turns started to deliver finished async tool results or operator context notes.", uint64(m.AsyncToolTurnsTotal.Load())),
+	)
 	fmt.Fprintf(w, "# HELP voice_turn_completion_total LLM turn-completion verdicts (turn.stop llm-completion).\n# TYPE voice_turn_completion_total counter\n")
 	for i, v := range completionVerdicts {
 		fmt.Fprintf(w, "voice_turn_completion_total{verdict=%q} %d\n", v, m.completion[i].Load())
 	}
-	fmt.Fprintf(w, "# HELP voice_async_tool_results_dropped_total Finished async tool results or operator context notes that could not be injected (session closing, context budget).\n# TYPE voice_async_tool_results_dropped_total counter\nvoice_async_tool_results_dropped_total %d\n", m.AsyncToolResultsDroppedTotal.Load())
+	writeScalars(w, counter("voice_async_tool_results_dropped_total", "Finished async tool results or operator context notes that could not be injected (session closing, context budget).", uint64(m.AsyncToolResultsDroppedTotal.Load())))
 	fmt.Fprintf(w, "# HELP voice_mcp_sync_total Background MCP server syncs by result.\n# TYPE voice_mcp_sync_total counter\n")
 	fmt.Fprintf(w, "voice_mcp_sync_total{result=\"ok\"} %d\n", m.MCPSyncOKTotal.Load())
 	fmt.Fprintf(w, "voice_mcp_sync_total{result=\"failed\"} %d\n", m.MCPSyncFailedTotal.Load())
@@ -367,106 +317,69 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	for i, r := range evalJobResults {
 		fmt.Fprintf(w, "voice_eval_jobs_total{result=%q} %d\n", r, m.evalJobs[i].Load())
 	}
-	fmt.Fprintf(w, "# HELP voice_eval_calls_active Eval calls in flight on this instance.\n# TYPE voice_eval_calls_active gauge\nvoice_eval_calls_active %d\n", m.evalCallsActive.Load())
-	fmt.Fprintf(w, "# HELP voice_eval_runs_finished_total Eval runs this instance finished (its job was the run's last).\n# TYPE voice_eval_runs_finished_total counter\nvoice_eval_runs_finished_total %d\n", m.evalRunsFinished.Load())
-
-	enabled := 0
+	enabled := int64(0)
 	if m.RetentionEnabled.Load() {
 		enabled = 1
 	}
+	writeScalars(w,
+		gauge("voice_eval_calls_active", "Eval calls in flight on this instance.", int64(m.evalCallsActive.Load())),
+		counter("voice_eval_runs_finished_total", "Eval runs this instance finished (its job was the run's last).", uint64(m.evalRunsFinished.Load())),
+		gauge("voice_retention_enabled", "1 when the automatic retention job runs.", enabled),
+		gauge("voice_retention_interval_seconds", "How often the retention job runs.", int64(m.RetentionIntervalSeconds.Load())),
+	)
 	// Without a completed run the age is the uptime: a job that never completes ages like one that stopped.
 	age := time.Since(m.StartTime)
 	if last := m.retentionLastOK.Load(); last != nil {
 		age = time.Since(*last)
 	}
-	fmt.Fprintf(w, "# HELP voice_retention_enabled 1 when the automatic retention job runs.\n# TYPE voice_retention_enabled gauge\nvoice_retention_enabled %d\n", enabled)
-	fmt.Fprintf(w, "# HELP voice_retention_interval_seconds How often the retention job runs.\n# TYPE voice_retention_interval_seconds gauge\nvoice_retention_interval_seconds %d\n", m.RetentionIntervalSeconds.Load())
 	fmt.Fprintf(w, "# HELP voice_retention_runs_total Retention job runs by result.\n# TYPE voice_retention_runs_total counter\n")
 	fmt.Fprintf(w, "voice_retention_runs_total{result=\"ok\"} %d\n", m.RetentionRunsOK.Load())
 	fmt.Fprintf(w, "voice_retention_runs_total{result=\"failed\"} %d\n", m.RetentionRunsFailed.Load())
-	fmt.Fprintf(w, "# HELP voice_retention_turns_purged_total Turns whose transcript and assistant text the retention job blanked.\n# TYPE voice_retention_turns_purged_total counter\nvoice_retention_turns_purged_total %d\n", m.RetentionTurnsPurgedTotal.Load())
-	fmt.Fprintf(w, "# HELP voice_retention_sessions_deleted_total Sessions (with their turns, spans and tool calls) the retention job deleted.\n# TYPE voice_retention_sessions_deleted_total counter\nvoice_retention_sessions_deleted_total %d\n", m.RetentionSessionsDeleted.Load())
+	writeScalars(w,
+		counter("voice_retention_turns_purged_total", "Turns whose transcript and assistant text the retention job blanked.", uint64(m.RetentionTurnsPurgedTotal.Load())),
+		counter("voice_retention_sessions_deleted_total", "Sessions (with their turns, spans and tool calls) the retention job deleted.", uint64(m.RetentionSessionsDeleted.Load())),
+	)
 	fmt.Fprintf(w, "# HELP voice_retention_erasures_total Calls erased on request, by how they were asked for.\n# TYPE voice_retention_erasures_total counter\n")
 	fmt.Fprintf(w, "voice_retention_erasures_total{kind=\"call\"} %d\n", m.RetentionErasedCalls.Load())
 	fmt.Fprintf(w, "voice_retention_erasures_total{kind=\"caller\"} %d\n", m.RetentionErasedByCaller.Load())
 	fmt.Fprintf(w, "# HELP voice_retention_last_success_age_seconds Seconds since the retention job last completed a run (the uptime before the first one).\n# TYPE voice_retention_last_success_age_seconds gauge\nvoice_retention_last_success_age_seconds %.0f\n", age.Seconds())
 
-	for _, c := range []struct {
-		name, help string
-		v          *atomic.Uint64
-	}{
-		{"voice_user_idle_prompts_total", "Prompts sent to a silent user.", &m.UserIdlePromptsTotal},
-		{"voice_user_idle_hangups_total", "Calls ended after the user stayed silent through every prompt.", &m.UserIdleHangupsTotal},
-		{"voice_bot_idle_stuck_total", "User turns the bot never answered (generation cancelled).", &m.BotIdleStuckTotal},
-		{"voice_bot_idle_hangups_total", "Calls ended after repeated unanswered turns.", &m.BotIdleHangupsTotal},
-		{"voice_greeting_failed_total", "Greetings that could not be queued (the session was closing).", &m.GreetingFailedTotal},
-	} {
-		fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s counter\n%s %d\n", c.name, c.help, c.name, c.name, c.v.Load())
-	}
+	writeScalars(w,
+		counter("voice_user_idle_prompts_total", "Prompts sent to a silent user.", m.UserIdlePromptsTotal.Load()),
+		counter("voice_user_idle_hangups_total", "Calls ended after the user stayed silent through every prompt.", m.UserIdleHangupsTotal.Load()),
+		counter("voice_bot_idle_stuck_total", "User turns the bot never answered (generation cancelled).", m.BotIdleStuckTotal.Load()),
+		counter("voice_bot_idle_hangups_total", "Calls ended after repeated unanswered turns.", m.BotIdleHangupsTotal.Load()),
+		counter("voice_greeting_failed_total", "Greetings that could not be queued (the session was closing).", m.GreetingFailedTotal.Load()),
+	)
 
 	m.filters.write(w)
 	m.summary.write(w)
 	m.handoff.write(w)
 
 	// Transport
-
-	fmt.Fprintf(w, "# HELP voice_transport_connected_clients Number of connected clients.\n")
-	fmt.Fprintf(w, "# TYPE voice_transport_connected_clients gauge\n")
-	fmt.Fprintf(w, "voice_transport_connected_clients %d\n", m.ConnectedClients.Load())
-
-	fmt.Fprintf(w, "# HELP voice_transport_auth_failures_total Token authentication failures.\n")
-	fmt.Fprintf(w, "# TYPE voice_transport_auth_failures_total counter\n")
-	fmt.Fprintf(w, "voice_transport_auth_failures_total %d\n", m.AuthFailuresTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_transport_replay_rejections_total Token replay attempts rejected.\n")
-	fmt.Fprintf(w, "# TYPE voice_transport_replay_rejections_total counter\n")
-	fmt.Fprintf(w, "voice_transport_replay_rejections_total %d\n", m.ReplayRejectionsTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_transport_origin_rejections_total Origin check failures.\n")
-	fmt.Fprintf(w, "# TYPE voice_transport_origin_rejections_total counter\n")
-	fmt.Fprintf(w, "voice_transport_origin_rejections_total %d\n", m.OriginRejectionsTotal.Load())
-
+	writeScalars(w,
+		gauge("voice_transport_connected_clients", "Number of connected clients.", int64(m.ConnectedClients.Load())),
+		counter("voice_transport_auth_failures_total", "Token authentication failures.", uint64(m.AuthFailuresTotal.Load())),
+		counter("voice_transport_replay_rejections_total", "Token replay attempts rejected.", uint64(m.ReplayRejectionsTotal.Load())),
+		counter("voice_transport_origin_rejections_total", "Origin check failures.", uint64(m.OriginRejectionsTotal.Load())),
+	)
 	fmt.Fprintf(w, "# HELP voice_transport_disconnects_total Disconnects by reason.\n")
 	fmt.Fprintf(w, "# TYPE voice_transport_disconnects_total counter\n")
 	fmt.Fprintf(w, "voice_transport_disconnects_total{reason=\"normal\"} %d\n", m.DisconnectsNormal.Load())
 	fmt.Fprintf(w, "voice_transport_disconnects_total{reason=\"client_error\"} %d\n", m.DisconnectsClientError.Load())
 	fmt.Fprintf(w, "voice_transport_disconnects_total{reason=\"server_error\"} %d\n", m.DisconnectsServerError.Load())
 	fmt.Fprintf(w, "voice_transport_disconnects_total{reason=\"timeout\"} %d\n", m.DisconnectsTimeout.Load())
-
-	fmt.Fprintf(w, "# HELP voice_transport_frames_in_total Audio and control frames received.\n")
-	fmt.Fprintf(w, "# TYPE voice_transport_frames_in_total counter\n")
-	fmt.Fprintf(w, "voice_transport_frames_in_total %d\n", m.FramesInTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_transport_frames_out_total Audio and control frames sent.\n")
-	fmt.Fprintf(w, "# TYPE voice_transport_frames_out_total counter\n")
-	fmt.Fprintf(w, "voice_transport_frames_out_total %d\n", m.FramesOutTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_transport_bytes_in_total Inbound network bytes.\n")
-	fmt.Fprintf(w, "# TYPE voice_transport_bytes_in_total counter\n")
-	fmt.Fprintf(w, "voice_transport_bytes_in_total %d\n", m.BytesInTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_transport_bytes_out_total Outbound network bytes.\n")
-	fmt.Fprintf(w, "# TYPE voice_transport_bytes_out_total counter\n")
-	fmt.Fprintf(w, "voice_transport_bytes_out_total %d\n", m.BytesOutTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_transport_flush_acks_total Transport flush acknowledgements.\n")
-	fmt.Fprintf(w, "# TYPE voice_transport_flush_acks_total counter\n")
-	fmt.Fprintf(w, "voice_transport_flush_acks_total %d\n", m.FlushAcksTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_transport_flush_timeouts_total Transport flush barrier timeouts.\n")
-	fmt.Fprintf(w, "# TYPE voice_transport_flush_timeouts_total counter\n")
-	fmt.Fprintf(w, "voice_transport_flush_timeouts_total %d\n", m.FlushTimeoutsTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_transport_slow_client_terminations_total Slow client terminations.\n")
-	fmt.Fprintf(w, "# TYPE voice_transport_slow_client_terminations_total counter\n")
-	fmt.Fprintf(w, "voice_transport_slow_client_terminations_total %d\n", m.SlowClientTermTotal.Load())
-	fmt.Fprintf(w, "# HELP voice_ws_ping_failures_total Server WebSocket pings that got no pong in time.\n")
-	fmt.Fprintf(w, "# TYPE voice_ws_ping_failures_total counter\n")
-	fmt.Fprintf(w, "voice_ws_ping_failures_total %d\n", m.WSPingFailuresTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_transport_protocol_errors_total Wire protocol errors.\n")
-	fmt.Fprintf(w, "# TYPE voice_transport_protocol_errors_total counter\n")
-	fmt.Fprintf(w, "voice_transport_protocol_errors_total %d\n", m.ProtocolErrorsTotal.Load())
+	writeScalars(w,
+		counter("voice_transport_frames_in_total", "Audio and control frames received.", uint64(m.FramesInTotal.Load())),
+		counter("voice_transport_frames_out_total", "Audio and control frames sent.", uint64(m.FramesOutTotal.Load())),
+		counter("voice_transport_bytes_in_total", "Inbound network bytes.", uint64(m.BytesInTotal.Load())),
+		counter("voice_transport_bytes_out_total", "Outbound network bytes.", uint64(m.BytesOutTotal.Load())),
+		counter("voice_transport_flush_acks_total", "Transport flush acknowledgements.", uint64(m.FlushAcksTotal.Load())),
+		counter("voice_transport_flush_timeouts_total", "Transport flush barrier timeouts.", uint64(m.FlushTimeoutsTotal.Load())),
+		counter("voice_transport_slow_client_terminations_total", "Slow client terminations.", uint64(m.SlowClientTermTotal.Load())),
+		counter("voice_ws_ping_failures_total", "Server WebSocket pings that got no pong in time.", uint64(m.WSPingFailuresTotal.Load())),
+		counter("voice_transport_protocol_errors_total", "Wire protocol errors.", uint64(m.ProtocolErrorsTotal.Load())),
+	)
 }
 
 // dynamicCircuits is the circuit gauge of breakers created per endpoint at run time.
