@@ -1118,7 +1118,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Unlock()
 	s.ready.Store(false)
 	s.metrics.Draining.Store(1)
-	s.stopEvalWorker() // first: an eval call must not hold the drain, nor a job run on a closing store
+	s.stopEvalWorker(ctx) // first: an eval call must not hold the drain, nor a job run on a closing store
 	if s.pruneStop != nil {
 		select {
 		case <-s.pruneStop:

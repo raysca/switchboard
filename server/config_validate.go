@@ -62,8 +62,13 @@ func ValidateConfig(cfg *Config) error {
 // maxEvalCalls bounds evaluation.max_concurrent_calls.
 const maxEvalCalls = 16
 
-// validateEvaluation: every eval call uses one principal, so the worker's pool cannot be larger than the
-// per-principal session limit or its own calls would be refused at admission.
+// wsDefaultSessionsPerIP is the transport's per-IP session limit when limits.max_sessions_per_ip is 0.
+const wsDefaultSessionsPerIP = 10
+
+// validateEvaluation: every eval call uses one principal and, through the internal loopback listener, one source
+// address, so the worker's pool cannot be larger than the per-principal or the per-IP session limit or its own calls
+// would be refused at admission. (limits.max_sessions_per_agent, when set, also applies: an agent under test counts
+// its eval calls with its live ones.)
 func validateEvaluation(cfg *Config) error {
 	n := cfg.Evaluation.MaxConcurrentCalls
 	if n < 0 || n > maxEvalCalls {
@@ -71,6 +76,13 @@ func validateEvaluation(cfg *Config) error {
 	}
 	if p := cfg.Limits.MaxSessionsPerPrincipal; p > 0 && n > p {
 		return fmt.Errorf("evaluation.max_concurrent_calls (%d) cannot exceed limits.max_sessions_per_principal (%d): eval calls share one principal", n, p)
+	}
+	ip := cfg.Limits.MaxSessionsPerIP
+	if ip <= 0 {
+		ip = wsDefaultSessionsPerIP
+	}
+	if n > ip {
+		return fmt.Errorf("evaluation.max_concurrent_calls (%d) cannot exceed limits.max_sessions_per_ip (%d): eval calls all come from loopback", n, ip)
 	}
 	return nil
 }

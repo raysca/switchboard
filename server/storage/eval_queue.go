@@ -292,51 +292,64 @@ func (r EvalRepository) MarkRunStarted(ctx context.Context, runID string, now ti
 	return nil
 }
 
+// ClaimEnds counts what a Claim ended besides the job it took: jobs whose lease expired after their last attempt
+// (dead, lease_expired) and the runs that finished with them.
+type ClaimEnds struct{ Dead, RunsFinished int }
+
 // Claim takes one due job: pending and past run_after, or running with an expired lease. Candidates are read without a
 // lock; each is then claimed with one conditional UPDATE ... RETURNING that repeats the claimability test, so when
 // several workers race for one row the database lets exactly one UPDATE match it; the others get no row and move to
 // the next candidate. The returned row is the one this UPDATE wrote, never a later re-read. now is the worker's clock:
 // leases are compared against worker-supplied time, never the database's. A running job whose lease expired with no
-// attempts left is ended as dead (category lease_expired) instead of claimed.
-func (r EvalRepository) Claim(ctx context.Context, owner string, now time.Time, lease time.Duration) (EvalJob, bool, error) {
+// attempts left is ended as dead (category lease_expired) instead of claimed; ClaimEnds says how many Claim ended so, and
+// how many runs that finished, so the caller can count them.
+func (r EvalRepository) Claim(ctx context.Context, owner string, now time.Time, lease time.Duration) (EvalJob, bool, ClaimEnds, error) {
+	var ends ClaimEnds
 	n := utc(now)
 	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT id FROM eval_jobs WHERE (status='pending' AND run_after<=?) OR (status='running' AND lease_expires_at<=?) ORDER BY run_after, id LIMIT ?"), n, n, claimCandidates)
 	if err != nil {
-		return EvalJob{}, false, fmt.Errorf("select eval job candidates: %w", err)
+		return EvalJob{}, false, ends, fmt.Errorf("select eval job candidates: %w", err)
 	}
 	ids := make([]string, 0, claimCandidates)
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			return EvalJob{}, false, fmt.Errorf("scan eval job candidate: %w", err)
+			return EvalJob{}, false, ends, fmt.Errorf("scan eval job candidate: %w", err)
 		}
 		ids = append(ids, id)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return EvalJob{}, false, err
+		return EvalJob{}, false, ends, err
 	}
 	rows.Close()
 	for _, id := range ids {
 		j, err := scanEvalJob(r.s.db.QueryRowContext(ctx, r.s.bind("UPDATE eval_jobs SET status='running', lease_owner=?, lease_expires_at=?, attempts=attempts+1, updated_at=? WHERE id=? AND attempts<max_attempts AND ((status='pending' AND run_after<=?) OR (status='running' AND lease_expires_at<=?)) RETURNING "+evalJobCols),
 			owner, utc(now.Add(lease)), n, id, n, n))
 		if err == nil {
-			return j, true, nil
+			return j, true, ends, nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
-			return EvalJob{}, false, fmt.Errorf("claim eval job: %w", err)
+			return EvalJob{}, false, ends, fmt.Errorf("claim eval job: %w", err)
 		}
-		if err := r.deadExhausted(ctx, id, now); err != nil { // lost the race, or the job has no attempts left
-			return EvalJob{}, false, err
+		dead, finished, err := r.deadExhausted(ctx, id, now) // lost the race, or the job has no attempts left
+		if err != nil {
+			return EvalJob{}, false, ends, err
+		}
+		if dead {
+			ends.Dead++
+		}
+		if finished {
+			ends.RunsFinished++
 		}
 	}
-	return EvalJob{}, false, nil
+	return EvalJob{}, false, ends, nil
 }
 
 // deadExhausted ends a running job whose lease expired after its last attempt; the guard makes it a no-op for any other state.
-func (r EvalRepository) deadExhausted(ctx context.Context, id string, now time.Time) error {
-	return r.s.WithTx(ctx, func(tx *sql.Tx) error {
+func (r EvalRepository) deadExhausted(ctx context.Context, id string, now time.Time) (dead, runFinished bool, err error) {
+	err = r.s.WithTx(ctx, func(tx *sql.Tx) error {
 		n := utc(now)
 		var run sql.NullString
 		err := tx.QueryRowContext(ctx, r.s.bind("UPDATE eval_jobs SET status='dead', lease_owner=NULL, lease_expires_at=NULL, last_error_category='lease_expired', updated_at=? WHERE id=? AND status='running' AND lease_expires_at<=? AND attempts>=max_attempts RETURNING run_id"), n, id, n).Scan(&run)
@@ -346,12 +359,14 @@ func (r EvalRepository) deadExhausted(ctx context.Context, id string, now time.T
 		if err != nil {
 			return fmt.Errorf("end exhausted eval job: %w", err)
 		}
+		dead = true
 		if !run.Valid {
 			return nil
 		}
-		_, err = r.finishRunIfDone(ctx, tx, run.String, now)
+		runFinished, err = r.finishRunIfDone(ctx, tx, run.String, now)
 		return err
 	})
+	return dead && err == nil, runFinished && err == nil, err
 }
 
 // A write by a worker is fenced by the claimed attempt: lease_owner and attempts must both still be the claim's. The

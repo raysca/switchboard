@@ -84,6 +84,8 @@ To prevent memory exhaustion in Prometheus and TSDB instances:
 | `voice_eval_calls_active` | Gauge | Eval calls in flight on this instance (at most `evaluation.max_concurrent_calls`) |
 | `voice_eval_runs_finished_total` | Counter | Eval runs whose last job this instance ended |
 
+Eval calls are real sessions on a loopback-only listener the server binds while the eval worker runs (`evaluation.max_concurrent_calls > 0`), so they count in the session and connection metrics and against the session limits like any other call; their principal is `agent-eval`.
+
 Every closed connection counts exactly one disconnect by cause (normal, client, server, timeout), so the causes sum to the connections closed; a frame the server rejects (1007/1008/1009), an admission or setup refusal (1013/1011), a drain and any call the server ends itself (end of call, fatal error, idle hang-up, slow client, ready timeout) are `server`; the client's `disconnect-bot` is `normal`; a client that stops answering pings is `client`. `timeout` is a read timeout. Messages larger than 21 KB (the largest valid frame is a 16 KB RTVI message) are refused with 1009.
 
 The wire message `bot-interrupted` (sent when the assistant's interruption barrier runs) has no metric of its own; it is visible in the client's RTVI log. It does not clear audio the client already buffered (`docs/compatibility/playback-clear-decision.json`).

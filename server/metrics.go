@@ -137,7 +137,7 @@ type Metrics struct {
 	// Eval worker: jobs by outcome (evalJobResults order), eval calls in flight, runs it finished.
 	evalJobs         [4]atomic.Uint64
 	evalCallsActive  atomic.Int64
-	EvalRunsFinished atomic.Uint64
+	evalRunsFinished atomic.Uint64
 
 	filters filterMetrics
 	summary summaryMetrics
@@ -366,7 +366,7 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 		fmt.Fprintf(w, "voice_eval_jobs_total{result=%q} %d\n", r, m.evalJobs[i].Load())
 	}
 	fmt.Fprintf(w, "# HELP voice_eval_calls_active Eval calls in flight on this instance.\n# TYPE voice_eval_calls_active gauge\nvoice_eval_calls_active %d\n", m.evalCallsActive.Load())
-	fmt.Fprintf(w, "# HELP voice_eval_runs_finished_total Eval runs this instance finished (its job was the run's last).\n# TYPE voice_eval_runs_finished_total counter\nvoice_eval_runs_finished_total %d\n", m.EvalRunsFinished.Load())
+	fmt.Fprintf(w, "# HELP voice_eval_runs_finished_total Eval runs this instance finished (its job was the run's last).\n# TYPE voice_eval_runs_finished_total counter\nvoice_eval_runs_finished_total %d\n", m.evalRunsFinished.Load())
 
 	enabled := 0
 	if m.RetentionEnabled.Load() {

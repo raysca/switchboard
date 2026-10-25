@@ -157,8 +157,23 @@ func TestInternalListenerLifecycle(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	// A draining server refuses before it looks at the token.
+	s.shuttingDown.Store(true)
+	resp, err := http.Get("http://" + addr + "/ws?token=x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("draining internal listener answered %d, want 503", resp.StatusCode)
+	}
 	if err := s.Shutdown(ctx); err != nil {
 		t.Fatal(err)
+	}
+	select {
+	case <-s.evalDone: // joined: the serve loop is gone when Shutdown returns
+	default:
+		t.Fatal("the internal listener's serve loop outlived Shutdown")
 	}
 	if c, err := net.DialTimeout("tcp", addr, time.Second); err == nil {
 		c.Close()
@@ -249,7 +264,7 @@ func completerServer(t *testing.T, baseURL, key string) *Server {
 func TestCompleterFakeJudge(t *testing.T) {
 	url, keys, calls := fakeJudge(t, 200, `{"choices":[{"message":{"role":"assistant","content":"{\"score\":1,\"reason\":\"ok\"}"}}]}`)
 	s := completerServer(t, url, "judge-key-1")
-	ask, closeFn, err := s.completer(t.Context(), "openai", "")
+	ask, _, closeFn, err := s.completer(t.Context(), "openai", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +281,7 @@ func TestCompleterFakeJudge(t *testing.T) {
 func TestCompleterRedactsTheKeyAndNamesNoValue(t *testing.T) {
 	url, _, _ := fakeJudge(t, 500, "upstream rejected key judge-key-2-secret")
 	s := completerServer(t, url, "judge-key-2-secret")
-	ask, closeFn, err := s.completer(t.Context(), "openai", "gpt-4o-mini")
+	ask, _, closeFn, err := s.completer(t.Context(), "openai", "gpt-4o-mini")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,11 +293,11 @@ func TestCompleterRedactsTheKeyAndNamesNoValue(t *testing.T) {
 
 	// A missing key names the variable, never a value; an unknown provider and a provider without an llm stage are refused.
 	s2 := completerServer(t, url, "")
-	if _, _, err := s2.completer(t.Context(), "openai", ""); err == nil || !strings.Contains(err.Error(), "OPENAI_API_KEY") {
+	if _, _, _, err := s2.completer(t.Context(), "openai", ""); err == nil || !strings.Contains(err.Error(), "OPENAI_API_KEY") {
 		t.Fatalf("missing key: %v, want it to name OPENAI_API_KEY", err)
 	}
 	for _, p := range []string{"nope", "deepgram"} {
-		if _, _, err := s.completer(t.Context(), p, ""); err == nil {
+		if _, _, _, err := s.completer(t.Context(), p, ""); err == nil {
 			t.Fatalf("provider %q was accepted as a judge", p)
 		}
 	}
@@ -291,7 +306,7 @@ func TestCompleterRedactsTheKeyAndNamesNoValue(t *testing.T) {
 func TestCompleterOfflineNeedsItsEndpoint(t *testing.T) {
 	s := apiTestServer(t)
 	s.cfg.Providers.Offline.LLMEndpoint = ""
-	if _, _, err := s.completer(t.Context(), "offline", ""); err == nil {
+	if _, _, _, err := s.completer(t.Context(), "offline", ""); err == nil {
 		t.Fatal("offline with no endpoint must be refused, not fall back to a cloud provider")
 	}
 }

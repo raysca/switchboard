@@ -387,18 +387,20 @@ func TestConfig_EvaluationCap(t *testing.T) {
 		t.Fatalf("default evaluation.max_concurrent_calls = %d, want 2", cfg.Evaluation.MaxConcurrentCalls)
 	}
 	for name, tc := range map[string]struct {
-		cap, perPrincipal int
-		ok                bool
+		cap, perPrincipal, perIP int
+		ok                       bool
 	}{
-		"zero disables":        {0, 5, true},
-		"at the principal cap": {5, 5, true},
-		"sixteen":              {16, 20, true},
-		"negative":             {-1, 5, false},
-		"above sixteen":        {17, 20, false},
-		"above principal cap":  {6, 5, false},
+		"zero disables":        {0, 5, 20, true},
+		"at the principal cap": {5, 5, 20, true},
+		"sixteen":              {16, 20, 20, true},
+		"negative":             {-1, 5, 20, false},
+		"above sixteen":        {17, 20, 20, false},
+		"above principal cap":  {6, 5, 20, false},
+		"above the ip cap":     {12, 20, 0, false}, // no max_sessions_per_ip: the transport default is 10
+		"at the ip cap":        {5, 5, 5, true},
 	} {
 		c := DefaultConfig(ProfileDevelopment)
-		c.Evaluation.MaxConcurrentCalls, c.Limits.MaxSessionsPerPrincipal = tc.cap, tc.perPrincipal
+		c.Evaluation.MaxConcurrentCalls, c.Limits.MaxSessionsPerPrincipal, c.Limits.MaxSessionsPerIP = tc.cap, tc.perPrincipal, tc.perIP
 		err := ValidateConfig(c)
 		if tc.ok && err != nil {
 			t.Errorf("%s: %v", name, err)

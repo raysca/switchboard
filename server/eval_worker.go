@@ -25,9 +25,13 @@ const (
 	evalLease     = 2 * time.Minute  // a claim's lease; a heartbeat extends it
 	evalHeartbeat = 30 * time.Second // how often a running job extends its lease
 	evalIdlePoll  = time.Second      // an empty queue is polled this often (plus jitter)
-	evalStopWait  = 15 * time.Second // how long stop waits for the slots before it gives up and logs
-	evalJudgeWait = time.Minute      // one judge completion
 )
+
+// evalStopWait is how long stop waits for the slots before it gives up and logs (a variable so a test can shorten it).
+var evalStopWait = 15 * time.Second
+
+// evalJudgeWait bounds one judge completion (a variable so a test can shorten it).
+var evalJudgeWait = time.Minute
 
 // Indexes of Metrics.evalJobs, and their label values (voice_eval_jobs_total{result}).
 const (
@@ -69,7 +73,8 @@ type evalWorker struct {
 	ctx      context.Context // owner lifetime
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
-	once     sync.Once
+	waitOnce sync.Once
+	done     chan struct{} // closed once every slot has returned
 }
 
 func newEvalWorker(s *Server, store *storage.Store) *evalWorker {
@@ -80,6 +85,7 @@ func newEvalWorker(s *Server, store *storage.Store) *evalWorker {
 	w := &evalWorker{s: s, store: store, run: s.runCaseJob, lease: evalLease, heartbeat: evalHeartbeat, idle: evalIdlePoll, backoff: evalBackoff,
 		host: host, id: storage.NewID()}
 	w.ctx, w.cancel = context.WithCancel(context.Background())
+	w.done = make(chan struct{})
 	return w
 }
 
@@ -104,10 +110,11 @@ func (s *Server) startEvalWorker() {
 	w.start(n)
 }
 
-// stopEvalWorker ends the pool and waits for it; safe with no management plane, no worker, or after a stop.
-func (s *Server) stopEvalWorker() {
+// stopEvalWorker ends the pool and waits for it (at most until ctx ends); safe with no management plane, no worker, or
+// after a stop.
+func (s *Server) stopEvalWorker(ctx context.Context) {
 	if m := s.mgmt.Load(); m != nil {
-		m.eval.Load().stop()
+		m.eval.Load().stop(ctx)
 	}
 }
 
@@ -119,44 +126,64 @@ func (w *evalWorker) start(slots int) {
 	}
 }
 
-// stop cancels the slots and waits for them. A job in flight writes nothing: its lease expires. It is idempotent
-// and nil-safe. It gives up after evalStopWait rather than hold a shutdown.
-func (w *evalWorker) stop() {
+// stop cancels the slots and waits for them, at most evalStopWait and never past ctx (Shutdown's budget). A job in
+// flight writes nothing: its lease expires. It reports whether every slot has returned: when not, the store must not
+// be closed under them. It can be called again and is nil-safe.
+func (w *evalWorker) stop(ctx context.Context) bool {
 	if w == nil {
-		return
+		return true
 	}
-	w.once.Do(func() {
-		w.cancel()
-		done := make(chan struct{})
-		go func() { w.wg.Wait(); close(done) }()
-		t := time.NewTimer(evalStopWait)
-		defer t.Stop()
-		select {
-		case <-done:
-		case <-t.C:
-			w.s.logger.Warn("eval worker still running at stop")
-		}
-	})
+	w.cancel()
+	w.waitOnce.Do(func() { go func() { w.wg.Wait(); close(w.done) }() })
+	t := time.NewTimer(evalStopWait)
+	defer t.Stop()
+	select {
+	case <-w.done:
+		return true
+	case <-t.C:
+	case <-ctx.Done():
+	}
+	w.s.logger.Warn("eval worker still running at stop")
+	return false
 }
 
+// slot claims and runs jobs until the worker stops. A panic anywhere in one pass (the claim, a write) is logged and the
+// slot goes on after a pause: the pool never loses a slot.
 func (w *evalWorker) slot(owner string) {
 	defer w.wg.Done()
 	for w.ctx.Err() == nil {
-		job, ok, err := w.store.Eval().Claim(w.ctx, owner, time.Now(), w.lease)
-		if err != nil && w.ctx.Err() == nil {
-			w.s.logger.Warn("eval claim failed", slog.String("err", w.s.redactor.Redact(err.Error())))
-		}
-		if err != nil || !ok {
+		if !w.pass(owner) {
 			t := time.NewTimer(w.idle + time.Duration(rand.Int64N(int64(w.idle/4)+1)))
 			select {
 			case <-w.ctx.Done():
 				t.Stop()
 			case <-t.C:
 			}
-			continue
 		}
-		w.process(job)
 	}
+}
+
+// pass claims one job and runs it; it reports whether it ran one (false: the queue is empty, the claim failed or
+// something panicked, so the slot waits).
+func (w *evalWorker) pass(owner string) (ran bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			w.s.logger.Error("panic in eval worker", "panic", w.s.redactor.Redact(fmt.Sprint(r)))
+			ran = false
+		}
+	}()
+	job, ok, ends, err := w.store.Eval().Claim(w.ctx, owner, time.Now(), w.lease)
+	m := w.s.metrics
+	m.evalJobs[evalDead].Add(uint64(ends.Dead)) // jobs whose lease expired after their last attempt
+	m.evalRunsFinished.Add(uint64(ends.RunsFinished))
+	if err != nil && w.ctx.Err() == nil {
+		w.s.logger.Warn("eval claim failed", slog.String("err", w.s.redactor.Redact(err.Error())))
+	}
+	if err != nil || !ok {
+		return false
+	}
+	w.process(job)
+	return true
 }
 
 // process runs one claimed job under a heartbeat and writes its outcome, fenced by the claim. A stop writes nothing,
@@ -187,7 +214,7 @@ func (w *evalWorker) process(job storage.EvalJob) {
 		default:
 			m.evalJobs[evalDone].Add(1)
 			if finished {
-				m.EvalRunsFinished.Add(1)
+				m.evalRunsFinished.Add(1)
 			}
 		}
 		return
@@ -203,7 +230,7 @@ func (w *evalWorker) process(job storage.EvalJob) {
 	case dead:
 		m.evalJobs[evalDead].Add(1)
 		if finished {
-			m.EvalRunsFinished.Add(1)
+			m.evalRunsFinished.Add(1)
 		}
 	default:
 		m.evalJobs[evalRetry].Add(1)
@@ -331,7 +358,7 @@ func (s *Server) runCaseJob(ctx context.Context, job storage.EvalJob) ([]storage
 	next := eval.ScriptCaller(cj.Case.Caller.Script)
 	if p := cj.Case.Caller.Persona; p != nil {
 		// The persona is the free offline model only (plan S12); with no endpoint the case cannot run at all.
-		ask, closeAsk, err := s.completer(ctx, "offline", "")
+		ask, _, closeAsk, err := s.completer(ctx, "offline", "")
 		if err != nil {
 			return nil, "persona_unavailable", true, err
 		}
@@ -376,9 +403,13 @@ func (s *Server) evalCall(ctx context.Context, a eval.Agent, next eval.NextFunc)
 	return eval.RunCall(ctx, localTarget{s}, a, next, eval.Opts{TurnTimeout: 45 * time.Second, Quiet: 1500 * time.Millisecond})
 }
 
+// errJudgeNeedsLive is every ask of a paid judge on a process without GOVOICE_LIVE=1: no request is made.
+var errJudgeNeedsLive = errors.New("a paid judge needs GOVOICE_LIVE=1 on this process")
+
 // judgeFor resolves each model-graded scorer's judge: its own setting, else the suite default, else none (the
-// scorer is then skipped). A judge that cannot be built answers every ask with that error, so the result is an
-// error outcome, never a skip. Each ask has its own deadline. The returned func releases the built judges.
+// scorer is then skipped). A judge that cannot be built, or is paid without GOVOICE_LIVE=1, answers every ask with
+// that error, so the result is an error outcome, never a skip. Each ask has its own deadline. The returned func
+// releases the built judges.
 func (s *Server) judgeFor(ctx context.Context, suite storage.EvalSuite, settings []storage.EvalScorerSetting) (eval.JudgeFor, func()) {
 	built := map[string]*eval.Judge{}
 	var closers []func()
@@ -396,16 +427,20 @@ func (s *Server) judgeFor(ctx context.Context, suite storage.EvalSuite, settings
 		if j, ok := built[key]; ok {
 			return j
 		}
-		label := provider
+		j := &eval.Judge{Model: provider}
 		if model != "" {
-			label = key
+			j.Model = key
 		}
-		j := &eval.Judge{Model: label}
-		ask, closeAsk, err := s.completer(ctx, provider, model)
-		if err != nil {
+		fail := func(err error) {
 			j.Ask = func(context.Context, string, string) (string, error) { return "", err }
+		}
+		if provider != "offline" && provider != "echo" && s.env("GOVOICE_LIVE") != "1" {
+			fail(errJudgeNeedsLive) // before the completer: nothing is built, no key is read
+		} else if ask, resolved, closeAsk, err := s.completer(ctx, provider, model); err != nil {
+			fail(err)
 		} else {
 			closers = append(closers, closeAsk)
+			j.Model = provider + "/" + resolved // the model the catalog default resolved to
 			j.Ask = func(ctx context.Context, system, user string) (string, error) {
 				ctx, cancel := context.WithTimeout(ctx, evalJudgeWait)
 				defer cancel()

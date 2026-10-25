@@ -33,6 +33,7 @@ type management struct {
 	mcp       *mcp.Service               // its pooled connections close with the management plane
 	secrets   secrets.Store              // encrypted secrets; disabled without SWITCHBOARD_SECRETS_KEY
 	eval      atomic.Pointer[evalWorker] // the eval job worker, set by Start; nil when evaluation.max_concurrent_calls is 0
+	logger    *slog.Logger
 }
 
 // EnableManagement opens storage and installs the agent, provider, MCP and
@@ -57,7 +58,7 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("open storage: %w", err)
 	}
-	m := &management{store: store}
+	m := &management{store: store, logger: s.logger}
 	fail := func(err error) error { m.close(); return err }
 
 	m.traces = trace.NewAdapter(store.Traces())
@@ -226,7 +227,7 @@ func (m *management) close() {
 	if m == nil {
 		return
 	}
-	m.eval.Load().stop() // before the store closes; nil-safe, and a no-op after Shutdown stopped it
+	evalStopped := m.eval.Load().stop(context.Background()) // before the store closes; nil-safe, and quick after Shutdown stopped it
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	m.stopSync(ctx) // before the store closes
 	cancel()
@@ -242,7 +243,13 @@ func (m *management) close() {
 	if m.traces != nil {
 		_ = m.traces.Close()
 	}
-	if m.store != nil {
+	switch {
+	case m.store == nil:
+	case !evalStopped:
+		// A slot is still inside a store call: closing under it would turn a slow stop into a crash. The process is
+		// ending, so the open handle is left to it.
+		m.logger.Error("store left open: an eval worker slot did not stop")
+	default:
 		_ = m.store.Close()
 	}
 }

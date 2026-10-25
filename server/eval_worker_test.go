@@ -2,11 +2,14 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -87,7 +90,7 @@ func TestEvalWorkerRunsQueuedCase(t *testing.T) {
 	if got := s.metrics.evalJobs[evalDone].Load(); got != 1 {
 		t.Errorf("done jobs counted = %d, want 1", got)
 	}
-	if got := s.metrics.EvalRunsFinished.Load(); got != 1 {
+	if got := s.metrics.evalRunsFinished.Load(); got != 1 {
 		t.Errorf("runs finished counted = %d, want 1", got)
 	}
 	if got := s.metrics.evalCallsActive.Load(); got != 0 {
@@ -167,7 +170,7 @@ func (q *queueRig) worker(t *testing.T, st *storage.Store, n int, fn evalRunFunc
 		m(w)
 	}
 	w.start(n)
-	t.Cleanup(w.stop)
+	t.Cleanup(func() { w.stop(context.Background()) })
 	return w
 }
 
@@ -293,7 +296,7 @@ func TestEvalWorkerStopMidJobLeavesTheLeaseToExpire(t *testing.T) {
 		return nil, "call", false, ctx.Err()
 	})
 	<-started
-	w.stop()
+	w.stop(context.Background())
 	j := mustJob(t, q.s.store, run.ID, jobs[0].ID)
 	if j.Status != "running" || j.LeaseOwner == "" || j.LastErrorCategory != "" {
 		t.Fatalf("job after stop = %+v, want left running under its lease with no failure written", j)
@@ -301,7 +304,7 @@ func TestEvalWorkerStopMidJobLeavesTheLeaseToExpire(t *testing.T) {
 	if got := q.s.metrics.evalJobs[evalRetry].Load() + q.s.metrics.evalJobs[evalDead].Load(); got != 0 {
 		t.Errorf("a stop counted %d failures", got)
 	}
-	next, ok, err := q.s.store.Eval().Claim(t.Context(), "next", time.Now().Add(evalLease+time.Second), evalLease)
+	next, ok, _, err := q.s.store.Eval().Claim(t.Context(), "next", time.Now().Add(evalLease+time.Second), evalLease)
 	if err != nil || !ok || next.ID != j.ID || next.Attempts != 2 {
 		t.Fatalf("claim after the lease expired = %+v %v %v, want attempt 2 of the same job", next, ok, err)
 	}
@@ -331,7 +334,7 @@ func TestEvalWorkerLostLeaseWritesNothing(t *testing.T) {
 			}, func(w *evalWorker) { w.heartbeat = tc.heartbeat })
 			<-running
 			// Another instance takes the job after the lease expired (a worker-supplied clock, spec "Clock skew").
-			thief, ok, err := q.s.store.Eval().Claim(t.Context(), "thief", time.Now().Add(evalLease+time.Second), evalLease)
+			thief, ok, _, err := q.s.store.Eval().Claim(t.Context(), "thief", time.Now().Add(evalLease+time.Second), evalLease)
 			if err != nil || !ok || thief.ID != jobs[0].ID || thief.Attempts != 2 {
 				t.Fatalf("thief claim = %+v %v %v", thief, ok, err)
 			}
@@ -359,13 +362,42 @@ func TestEvalWorkerLostLeaseWritesNothing(t *testing.T) {
 	}
 }
 
+// privatePostgresSchema creates a schema for this test and returns the DSN scoped to it; the schema is dropped with the
+// test.
+func privatePostgresSchema(t *testing.T, dsn string) string {
+	t.Helper()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := "server_" + strings.ReplaceAll(storage.NewID(), "-", "")
+	if _, err := admin.ExecContext(context.Background(), "CREATE SCHEMA "+schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, err := admin.ExecContext(context.Background(), "DROP SCHEMA "+schema+" CASCADE"); err != nil {
+			t.Errorf("drop test schema: %v", err)
+		}
+		_ = admin.Close()
+	})
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
 // Two pools on one database never run a job twice at once, nor twice at all when nothing fails.
 func TestEvalWorkerTwoPoolsRunEachJobOnce(t *testing.T) {
 	q := newQueueRig(t)
 	stA, stB := q.s.store, q.s.store // SQLite: one connection, one store
 	if dsn := os.Getenv("TEST_POSTGRES_DSN"); dsn != "" {
+		scoped := privatePostgresSchema(t, dsn) // a schema of its own: Claim serves every agent, so the shared one would mix in other tests' jobs
 		open := func() *storage.Store {
-			st, err := storage.Open(context.Background(), storage.Config{Dialect: storage.Postgres, DSN: dsn})
+			st, err := storage.Open(context.Background(), storage.Config{Dialect: storage.Postgres, DSN: scoped})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -373,11 +405,6 @@ func TestEvalWorkerTwoPoolsRunEachJobOnce(t *testing.T) {
 			return st
 		}
 		stA, stB = open(), open()
-		for _, tbl := range []string{"eval_results", "eval_jobs", "eval_runs"} { // Claim serves every agent: start from an empty queue
-			if _, err := stA.DB().ExecContext(context.Background(), "DELETE FROM "+tbl); err != nil {
-				t.Fatal(err)
-			}
-		}
 		// The agent lives in the server's SQLite store, so seed one in the shared database.
 		a, err := agent.NewService(stA, q.s.availability).Create(t.Context(), agent.CreateRequest{Name: "PG", Config: agentConfigJSON("SALES", "v")})
 		if err != nil {
@@ -505,7 +532,7 @@ func TestEvalWorkerSkipsArchivedAgent(t *testing.T) {
 	}
 	// Disable the worker's view for a moment: queue the run, archive, then let the pool see it.
 	w := s.mgmt.Load().eval.Load()
-	w.stop()
+	w.stop(context.Background())
 	run, jobs := caseJobs(t, a.ID, a.Version.ID, scriptCase("c", "hello"))
 	if _, err := s.store.Eval().CreateRun(t.Context(), run, jobs); err != nil {
 		t.Fatal(err)
@@ -515,7 +542,7 @@ func TestEvalWorkerSkipsArchivedAgent(t *testing.T) {
 	}
 	w2 := newEvalWorker(s, s.store)
 	w2.start(1)
-	t.Cleanup(w2.stop)
+	t.Cleanup(func() { w2.stop(context.Background()) })
 	waitRun(t, s.store, a.ID, run.ID)
 	j := mustJobs(t, s.store, run.ID)[0]
 	if j.Status != "dead" || j.LastErrorCategory != "agent_gone" || j.Attempts != 1 {

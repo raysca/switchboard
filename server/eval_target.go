@@ -66,24 +66,25 @@ func (t localTarget) Stored(ctx context.Context, id string) (eval.Stored, error)
 }
 
 // completer builds one plain-text completion function on a configured LLM provider, for the judge
-// and the persona caller. An empty model is the catalog default. The key comes from the environment
+// and the persona caller. An empty model is the catalog default; the model it resolved to is returned. The key comes from the environment
 // only; every error text is redacted of it. The returned func releases the processor.
-func (s *Server) completer(ctx context.Context, provider, model string) (eval.AskFunc, func(), error) {
+func (s *Server) completer(ctx context.Context, provider, model string) (ask eval.AskFunc, resolved string, closeFn func(), err error) {
 	p, ok := s.catalog.Provider(provider)
 	if !ok || p.Services[catalog.ServiceLLM] == nil {
-		return nil, nil, fmt.Errorf("provider %q has no llm service", provider)
+		return nil, "", nil, fmt.Errorf("provider %q has no llm service", provider)
 	}
 	svc := p.Services[catalog.ServiceLLM]
 	if model == "" {
 		e, found := catalog.DefaultEntry(svc.Models)
 		if !found {
-			return nil, nil, fmt.Errorf("provider %q has no default llm model", provider)
+			return nil, "", nil, fmt.Errorf("provider %q has no default llm model", provider)
 		}
 		model = e.ID
 	}
-	secret, err := s.resolver.Secret(provider, catalog.ServiceLLM)
+	var secret []byte
+	secret, err = s.resolver.Secret(provider, catalog.ServiceLLM)
 	if err != nil {
-		return nil, nil, fmt.Errorf("provider %q credential: %w", provider, err)
+		return nil, "", nil, fmt.Errorf("provider %q credential: %w", provider, err)
 	}
 	defer clear(secret)
 	literals := secretLiterals(secret)
@@ -93,9 +94,10 @@ func (s *Server) completer(ctx context.Context, provider, model string) (eval.As
 		}
 		return s.redactor.Redact(m)
 	}
-	proc, err := s.registry.BuildStage(s.cfg, catalog.ServiceLLM, StageSpec{Provider: provider, Model: model, Secret: secret})
+	var proc core.Processor
+	proc, err = s.registry.BuildStage(s.cfg, catalog.ServiceLLM, StageSpec{Provider: provider, Model: model, Secret: secret})
 	if err != nil {
-		return nil, nil, errors.New(redact(err.Error()))
+		return nil, "", nil, errors.New(redact(err.Error()))
 	}
 	closeProc := func() {
 		if c, ok := proc.(core.Closer); ok {
@@ -105,32 +107,33 @@ func (s *Server) completer(ctx context.Context, provider, model string) (eval.As
 	c, ok := proc.(textCompleter)
 	if !ok {
 		closeProc()
-		return nil, nil, fmt.Errorf("provider %q cannot complete plain text", provider)
+		return nil, "", nil, fmt.Errorf("provider %q cannot complete plain text", provider)
 	}
-	ask := func(ctx context.Context, system, user string) (string, error) {
+	ask = func(ctx context.Context, system, user string) (string, error) {
 		out, err := c.SummarizeText(ctx, system, user)
 		if err != nil {
 			return "", errors.New(redact(err.Error()))
 		}
 		return out, nil
 	}
-	return ask, closeProc, nil
+	return ask, model, closeProc, nil
 }
 
+// minSecretLiteral is the shortest credential value an error text is scrubbed of: a shorter one (a region such
+// as "us") would mangle ordinary words, and no real key is that short.
+const minSecretLiteral = 8
+
 // secretLiterals are the exact credential strings an error text must not carry: a bare key, or each
-// value of a JSON credential ({"api_key": ..., "base_url": ...}).
+// value of a JSON credential ({"api_key": ..., "base_url": ...}) that is long enough to be a secret.
 func secretLiterals(secret []byte) []string {
 	trimmed := strings.TrimSpace(string(secret))
 	var fields map[string]string
 	if !strings.HasPrefix(trimmed, "{") || json.Unmarshal([]byte(trimmed), &fields) != nil {
-		if trimmed == "" { // a keyless provider: replacing "" would corrupt every message
-			return nil
-		}
-		return []string{trimmed}
+		fields = map[string]string{"": trimmed}
 	}
 	out := make([]string, 0, len(fields))
 	for _, v := range fields {
-		if v != "" {
+		if len(v) >= minSecretLiteral {
 			out = append(out, v)
 		}
 	}

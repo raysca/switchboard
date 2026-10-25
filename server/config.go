@@ -104,7 +104,7 @@ type Config struct {
 		MaxSessions             int           `yaml:"max_sessions"`
 		MaxSessionsPerPrincipal int           `yaml:"max_sessions_per_principal"`
 		MaxSessionsPerIP        int           `yaml:"max_sessions_per_ip"`
-		MaxSessionsPerAgent     int           `yaml:"max_sessions_per_agent"`    // 0 = unlimited
+		MaxSessionsPerAgent     int           `yaml:"max_sessions_per_agent"`    // 0 = unlimited; eval calls of an agent count against it
 		StartRatePerPrincipal   float64       `yaml:"start_rate_per_principal"`  // session starts/sec per principal; 0 = unlimited
 		StartBurstPerPrincipal  int           `yaml:"start_burst_per_principal"` // bucket size; required >= 1 when rate > 0
 		HandshakeRatePerIP      float64       `yaml:"handshake_rate_per_ip"`     // WebSocket upgrades/sec per source IP (burst = max(5, 2x)); default 20
@@ -288,7 +288,11 @@ type Config struct {
 	// Retention
 	Retention RetentionConfig `yaml:"retention"`
 
-	// Evaluation bounds the agent-evaluation worker on this instance.
+	// Evaluation bounds the agent-evaluation worker on this instance. Its calls are real sessions: they dial a
+	// loopback-only listener bound while the worker runs (eval_listener.go; not the public one, whose Origin and TLS
+	// rules do not apply to a server-side client), count against limits.max_sessions, max_sessions_per_principal
+	// (principal agent-eval), max_sessions_per_ip (all from 127.0.0.1) and max_sessions_per_agent, and appear in the
+	// session metrics. max_concurrent_calls cannot exceed the principal and per-IP limits.
 	Evaluation struct {
 		MaxConcurrentCalls int `yaml:"max_concurrent_calls"` // eval calls run at once here (the worker pool size); 0 turns the worker off on this instance
 	} `yaml:"evaluation"`

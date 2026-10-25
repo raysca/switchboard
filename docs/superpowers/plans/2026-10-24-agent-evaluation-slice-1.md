@@ -609,13 +609,17 @@ result types).
 `eval_target_test.go`.
 
 **Interfaces**
-- `func (s *Server) issueVoiceToken(ctx context.Context, in api.VoiceTokenRequest) (api.VoiceTokenResponse, string, error)`
+- `func (s *Server) issueVoiceToken(ctx context.Context, in api.VoiceTokenRequest, skipVersionReady bool) (api.VoiceTokenResponse, string, error)`
+  - `skipVersionReady` is set by the in-process eval target for a draft: the current version's readiness does not
+    apply to a rewritten draft (its own readiness is still checked). A draft failure is a `*draftCheckError` that
+    carries the validation error and its text unchanged (public messages are the same as before the extraction).
   - Returns the response, the session id (`tokenID`) and an error.
   - Errors: `sql.ErrNoRows`; `*notReadyError{Readiness agent.Readiness; Draft bool}`; `errTooManyDrafts`
     (`server/drafts.go`); the draft errors that `writeDraftError` maps (`api_routes.go:195`).
   - The handler keeps its validation and maps these errors to the same status/code/details as today. This is a
     behaviour-preserving refactor; the existing voice-token tests pin it.
-- `func (s *Server) completer(ctx context.Context, provider, model string) (eval.AskFunc, func(), error)`
+- `func (s *Server) completer(ctx context.Context, provider, model string) (eval.AskFunc, string, func(), error)`
+  (the string is the model it resolved to; the judge stores `provider/model`)
   - Model "" means the catalog default (`catalog.DefaultEntry`, `probe.go:158`).
   - It uses `resolver.Secret` and `registry.BuildStage(s.cfg, "llm", StageSpec{Provider, Model, Secret})`
     (`buildstage.go:15`), then type-asserts `textCompleter` (`summarize.go:20`).
@@ -624,7 +628,14 @@ result types).
     closed; follow `probeProcessor` in `server/probe.go`.
 - `type localTarget struct{s *Server}` implements `eval.Target`:
   - `DraftToken` calls `issueVoiceToken` with principal `agent-eval` (exported in eval as `const Principal`).
-  - `PublicAddr` is `s.publicAddr`, with an unspecified host (`""`, `0.0.0.0`, `::`) replaced by `127.0.0.1`.
+  - `PublicAddr` is the INTERNAL eval listener (`server/eval_listener.go`), not the public one: the public `/ws`
+    applies browser rules (Origin allowlist, TLS or trusted-proxy evidence) a server-side client cannot meet, so on a
+    production profile every eval call was refused. `Start` binds `127.0.0.1:0` when the worker is enabled
+    (`evaluation.max_concurrent_calls > 0`); it serves only `GET /ws` with the same handler, token validation and
+    admission (global, per principal, per agent, per IP) as the public one but with Origin and TLS checks off, and
+    refuses (403, before the token is consumed) any token whose principal is not `agent-eval`. `Shutdown` closes and
+    joins it. `validateEvaluation` also bounds the pool by `limits.max_sessions_per_ip` (all eval calls come from
+    loopback).
   - `Stored` reads `store.Sessions().Get`, `.Turns` (`history.go:345,373`), and `store.Traces().Spans`, `.ToolCalls`
     (`history.go:450,584`), each with an empty turn id.
 - Config:
@@ -750,6 +761,11 @@ needed), `docs/observability.md`.
 | `POST /api/v1/agents/{id}/eval/runs` | `{"version"?: n, "draft"?: {"config","mcp_tools"}, "case_id"?: id, "providers"?: "offline\|echo\|keep"}` | 202 `EvalRunDTO`; 403 `eval_live_required` (a `keep` run needing paid providers without `GOVOICE_LIVE=1`); 409 `no_cases`, `agent_not_ready`; 429 `eval_queue_full`; 400 version+draft both set |
 | `GET /api/v1/agents/{id}/eval/runs` | `limit`, `offset`, `include_drafts=true` | `[]EvalRunDTO` |
 | `GET /api/v1/agents/{id}/eval/runs/{runId}` | — | `EvalRunDetailDTO{run, case_runs:[{case_id, case_name, repeat, status, error_category?, session_id?, passed, scores:[{scorer, score, outcome, reason, judge_model?}]}]}` |
+
+**Paid judges (spec: every paid path needs `GOVOICE_LIVE=1`)**: saving a suite or scorer judge whose provider is
+not `offline`/`echo` while `GOVOICE_LIVE` is not `1` on the serving process is refused with 403 `eval_live_required`
+(same code as a paid `keep` run). The worker enforces it again (`errJudgeNeedsLive`: the scorer's result is an error
+and no request is made), so a judge saved earlier or by another instance can never spend credit.
 
 **Interfaces**
 - `func NewEvalHandler(agents EvalAgents, store EvalStore, judges JudgeChecker) http.Handler` takes small interfaces
@@ -973,8 +989,14 @@ needed), `docs/observability.md`.
     publish gate, schedules or alert delivery yet; live scoring arrives with slice 2."
 - [ ] `docs/deployment.md` and `docs/operations.md` multi-server notes:
   - Postgres is required for more than one server; no eval state lives in an instance.
-  - Each suite call runs on the instance that claims it, against its own public listener (it must be reachable on
-    loopback).
+  - Each suite call runs on the instance that claims it, against that instance's internal loopback listener
+    (`server/eval_listener.go`; bound only while the worker runs, 127.0.0.1 only, `agent-eval` tokens only, no Origin
+    or TLS rules). Nothing about the public listener (TLS, proxy, allowlist) needs to allow eval calls.
+  - Eval calls are real sessions: they count in `limits.max_sessions`, `max_sessions_per_principal` (principal
+    `agent-eval`), `max_sessions_per_ip` (all from 127.0.0.1) and `max_sessions_per_agent`, and in the session
+    metrics (`voice_sessions_total`, turns, errors) unless a dashboard excludes principal `agent-eval`. State this on
+    the observability page too.
+  - A refused admission (capacity) surfaces to the worker as a failed call, retried with backoff.
   - `evaluation.max_concurrent_calls` (0 = this instance never runs evals; at most the per-principal limit).
   - Leases compare worker-supplied time, so keep clocks within a minute (2 min lease).
   - A restart mid-job costs that job one of its 3 attempts.
