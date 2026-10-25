@@ -16,6 +16,9 @@ export PATH := $(PATH):$(HOME)/go/bin:/opt/homebrew/bin
 help: ## build|Show this help
 	@scripts/make-help.sh $(firstword $(MAKEFILE_LIST))
 
+deploy-cloudflare: ## deploy|Deploy Switchboard to Cloudflare Workers/Containers
+	cd deploy/cloudflare && npx wrangler deploy --config wrangler.jsonc
+
 # xAI STT/TTS are in launch scope: every build, vet and test of the shipped server uses -tags xaispeech
 # (the production Dockerfile does the same). Override with GOTAGS= to build without them.
 GOTAGS ?= xaispeech
@@ -135,20 +138,20 @@ proto-gen: ## build|Regenerate the protobuf frame code
 	@mkdir -p core/transport/v1/framespb
 	protoc --proto_path=proto --go_out=core/transport/v1/framespb --go_opt=Mframes.proto=govoice/core/transport/v1/framespb --go_opt=paths=source_relative frames.proto
 
-.PHONY: build test verify deadcode release-security proto-gen
+.PHONY: build test verify deadcode release-security proto-gen deploy-cloudflare
 
 # Postgres storage tests (skipped by `make test`; run by the `postgres` job in .github/workflows/ci.yml,
 # which provides a service container and sets TEST_POSTGRES_DSN). Uses TEST_POSTGRES_DSN if set,
 # otherwise starts a throwaway postgres container.
 PG_IMAGE ?= postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
-test-postgres: ## build|Postgres storage tests (docker, or TEST_POSTGRES_DSN)
+test-postgres: ## build|Postgres storage, retention and eval worker tests (docker, or TEST_POSTGRES_DSN)
 	@if [ -n "$$TEST_POSTGRES_DSN" ]; then \
-		cd server && go test -race -count=1 ./storage/ ./retention/; \
+		cd server && go test -race -count=1 ./storage/ ./retention/ && go test -race -count=1 -run 'TestEvalWorkerTwoPools' .; \
 	else \
 		docker rm -f govoice-pg-test >/dev/null 2>&1; \
 		docker run -d --name govoice-pg-test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=govoice -p 55432:5432 $(PG_IMAGE) >/dev/null && \
 		for i in $$(seq 1 30); do docker exec govoice-pg-test pg_isready -U postgres >/dev/null 2>&1 && break; sleep 1; done; \
-		cd server && TEST_POSTGRES_DSN="postgres://postgres:test@127.0.0.1:55432/govoice?sslmode=disable" go test -race -count=1 ./storage/ ./retention/; \
+		cd server && export TEST_POSTGRES_DSN="postgres://postgres:test@127.0.0.1:55432/govoice?sslmode=disable" && go test -race -count=1 ./storage/ ./retention/ && go test -race -count=1 -run 'TestEvalWorkerTwoPools' .; \
 		status=$$?; docker rm -f govoice-pg-test >/dev/null; exit $$status; \
 	fi
 

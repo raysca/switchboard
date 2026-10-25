@@ -8,11 +8,12 @@ makefile="${1:-Makefile}"
 
 awk '
 BEGIN {
-	n = split("build free preview paid dev", order, " ")
+	n = split("build free preview paid deploy dev", order, " ")
 	title["build"]   = "Build and test (free)"
 	title["free"]    = "Free checks (simulated providers, no keys, no cost)"
 	title["preview"] = "Previews (read-only: show what a paid run would do, spend nothing)"
 	title["paid"]    = "PAID live checks (real providers: need GOVOICE_LIVE=1 and examples/.env)"
+	title["deploy"]  = "Deployment"
 	title["dev"]     = "Local development"
 }
 match($0, /^[a-zA-Z0-9_-]+:[^#]*## [a-z]+\|/) {
