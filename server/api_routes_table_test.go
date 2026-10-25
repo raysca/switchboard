@@ -17,6 +17,7 @@ func TestManagementPrefixRouting(t *testing.T) {
 		set          install
 	}{
 		{"/api/v1/agents", "agent_management_unavailable", (*Server).setAgentManagementAPI},
+		{"/api/v1/eval", "eval_management_unavailable", (*Server).setEvalManagementAPI},
 		{"/api/v1/providers", "provider_management_unavailable", (*Server).setProviderManagementAPI},
 		{"/api/v1/mcp-servers", "mcp_management_unavailable", (*Server).setMCPManagementAPI},
 		{"/api/v1/http-tools", "http_tools_management_unavailable", (*Server).setHTTPToolsManagementAPI},

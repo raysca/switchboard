@@ -164,3 +164,210 @@ func TestEvalRunDraftCheck(t *testing.T) {
 		}
 	})
 }
+
+// insertRun writes an eval_runs row directly with the given shape. ended is also the created stamp.
+func insertRun(t *testing.T, s *Store, agentID, versionID string, scope string, draft bool, status string, passed, total int, ended time.Time) string {
+	t.Helper()
+	id := NewID()
+	ver, tmpl := any(versionID), any(nil)
+	if draft {
+		ver, tmpl = nil, `{}`
+	}
+	_, err := s.DB().ExecContext(context.Background(), s.bind("INSERT INTO eval_runs(id,agent_id,agent_version_id,config_hash,draft,draft_config_json,draft_tools_json,source,scope,providers,runs,min_pass,status,triggered_by,passed_cases,total_cases,created_at,started_at,ended_at) VALUES(?,?,?,'h',?,?,?,'suite',?,'offline',1,1,?,'api',?,?,?,?,?)"),
+		id, agentID, ver, boolValue(s.dialect, draft), tmpl, tmpl, scope, status, passed, total, utc(ended), utc(ended), utc(ended))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func fleetAgent(t *testing.T, s *Store, name string) (agentID, versionID string) {
+	t.Helper()
+	agentID, versionID = evalAgent(t, s)
+	if _, err := s.DB().ExecContext(context.Background(), s.bind("UPDATE agents SET name=? WHERE id=?"), name, agentID); err != nil {
+		t.Fatal(err)
+	}
+	return agentID, versionID
+}
+
+func rowFor(t *testing.T, p FleetPage, id string) FleetRow {
+	t.Helper()
+	for _, f := range p.Agents {
+		if f.AgentID == id {
+			return f
+		}
+	}
+	t.Fatalf("agent %s not on the page %+v", id, p)
+	return FleetRow{}
+}
+
+func TestFleetExcludesDraftAndCaseScopedRuns(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		a, v := fleetAgent(t, s, "fleet-excl")
+		t0 := time.Now().Add(-time.Hour)
+		suite := insertRun(t, s, a, v, "suite", false, "done", 4, 4, t0)
+		insertRun(t, s, a, v, "suite", true, "done", 0, 4, t0.Add(time.Minute))   // draft
+		insertRun(t, s, a, v, "case", false, "done", 0, 1, t0.Add(2*time.Minute)) // one case
+		insertRun(t, s, a, v, "suite", false, "running", 0, 4, t0.Add(3*time.Minute))
+		page, err := s.Eval().Fleet(ctx, 200, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f := rowFor(t, page, a)
+		if f.Latest == nil || f.Latest.RunID != suite || f.Latest.Passed != 4 || f.Latest.Total != 4 || len(f.Trend) != 1 {
+			t.Fatalf("latest must be the suite run: %+v", f)
+		}
+		// The newer draft and case runs fail everything: if either leaked into the count this agent would be below.
+		if f.Below || page.BelowThreshold != 0 {
+			t.Fatalf("below: %+v %d", f, page.BelowThreshold)
+		}
+	})
+}
+
+func TestFleetTrendAndThreshold(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		a, v := fleetAgent(t, s, "fleet-a")
+		b, vb := fleetAgent(t, s, "fleet-b")
+		never, _ := fleetAgent(t, s, "fleet-never")
+		arch, va := fleetAgent(t, s, "fleet-archived")
+		t0 := time.Now().Add(-48 * time.Hour)
+		for i := 0; i < 12; i++ { // 12 runs, passed = i of 12 cases: only the last 10 count, oldest first
+			insertRun(t, s, a, v, "suite", false, "done", i, 12, t0.Add(time.Duration(i)*time.Minute))
+		}
+		if err := s.Eval().PutSuite(ctx, EvalSuite{AgentID: a, Runs: 1, MinPass: 1, PassThreshold: 0.95}); err != nil {
+			t.Fatal(err)
+		}
+		insertRun(t, s, b, vb, "suite", false, "done", 4, 5, t0) // 0.8 meets a 0.8 threshold exactly
+		if err := s.Eval().PutSuite(ctx, EvalSuite{AgentID: b, Runs: 1, MinPass: 1, PassThreshold: 0.8}); err != nil {
+			t.Fatal(err)
+		}
+		insertRun(t, s, arch, va, "suite", false, "done", 0, 5, t0) // would be below, but archived
+		if err := s.Agents().Archive(ctx, arch); err != nil {
+			t.Fatal(err)
+		}
+		page, err := s.Eval().Fleet(ctx, 200, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fa := rowFor(t, page, a)
+		if len(fa.Trend) != 10 || fa.Trend[0] != 2.0/12 || fa.Trend[9] != 11.0/12 || fa.Latest.Passed != 11 || fa.Latest.Version != 1 || fa.Threshold != 0.95 || !fa.Below {
+			t.Fatalf("a: %+v", fa)
+		}
+		if fb := rowFor(t, page, b); fb.Below || fb.Threshold != 0.8 {
+			t.Fatalf("b meets its threshold: %+v", fb)
+		}
+		if fn := rowFor(t, page, never); fn.Latest != nil || fn.Below || len(fn.Trend) != 0 || fn.Threshold != 1.0 {
+			t.Fatalf("no run is never below: %+v", fn)
+		}
+		for _, f := range page.Agents {
+			if f.AgentID == arch {
+				t.Fatal("archived agent listed")
+			}
+		}
+		if page.BelowThreshold != 1 {
+			t.Fatalf("only a is below (archived excluded): %d", page.BelowThreshold)
+		}
+	})
+}
+
+func TestFleetPagingCountsAllAgents(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		before, err := s.Eval().Fleet(ctx, 200, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t0 := time.Now().Add(-time.Hour)
+		var ids []string
+		for _, n := range []string{"page-1", "page-2", "page-3"} {
+			a, v := fleetAgent(t, s, n)
+			insertRun(t, s, a, v, "suite", false, "done", 0, 2, t0) // all three are below the default 1.0
+			ids = append(ids, a)
+		}
+		all, _ := s.Eval().Fleet(ctx, 200, 0)
+		if all.Total != before.Total+3 || all.BelowThreshold != before.BelowThreshold+3 {
+			t.Fatalf("totals: before %+v after %d %d", before, all.Total, all.BelowThreshold)
+		}
+		idx := -1
+		for i, f := range all.Agents {
+			if f.AgentID == ids[0] {
+				idx = i
+			}
+		}
+		p, err := s.Eval().Fleet(ctx, 1, idx+1) // the agent after page-1 by name
+		if err != nil || len(p.Agents) != 1 || p.Agents[0].AgentID != all.Agents[idx+1].AgentID {
+			t.Fatalf("offset: %v %+v", err, p)
+		}
+		if p.Total != all.Total || p.BelowThreshold != all.BelowThreshold {
+			t.Fatalf("counts cover every agent, not the page: %+v vs %+v", p, all)
+		}
+		if z, err := s.Eval().Fleet(ctx, 0, -5); err != nil || len(z.Agents) != 1 {
+			t.Fatalf("limit and offset clamp: %v %d", err, len(z.Agents))
+		}
+	})
+}
+
+func TestHistoryAggregates(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		a, v := fleetAgent(t, s, "hist")
+		t0 := time.Now().Add(-time.Hour)
+		old := insertRun(t, s, a, v, "suite", false, "done", 1, 1, t0)
+		run := insertRun(t, s, a, v, "suite", false, "done", 1, 2, t0.Add(time.Minute))
+		insertRun(t, s, a, v, "suite", true, "done", 0, 1, t0.Add(2*time.Minute))
+		insertRun(t, s, a, v, "case", false, "done", 0, 1, t0.Add(3*time.Minute))
+		add := func(runID, scorer, outcome string, score float64) {
+			id := NewID()
+			if _, err := s.DB().ExecContext(ctx, s.bind("INSERT INTO eval_results(id,subject_kind,subject_id,scorer,scorer_version,version_key,agent_id,agent_version_id,config_hash,run_id,session_id,score,outcome,reason,created_at) VALUES(?,'case_run',?,?,1,?,?,?,'h',?,?,?,?,'r',?)"),
+				id, id, scorer, v, a, v, runID, NewID(), score, outcome, utc(time.Now())); err != nil {
+				t.Fatal(err)
+			}
+		}
+		add(run, "expectations", "pass", 1)
+		add(run, "expectations", "fail", 0.5)
+		add(run, "expectations", "skipped", 0.9) // counted, not averaged
+		add(run, "expectations", "error", 0.9)
+		add(run, "judge", "skipped", 0)
+		add(old, "expectations", "pass", 1)
+		h, err := s.Eval().History(ctx, a, 50)
+		if err != nil || len(h) != 2 || h[0].RunID != run || h[1].RunID != old {
+			t.Fatalf("newest first, qualifying only: %v %+v", err, h)
+		}
+		if h[0].Version != 1 || h[0].Passed != 1 || h[0].Total != 2 || h[0].EndedAt.IsZero() || len(h[0].Scorers) != 2 {
+			t.Fatalf("row: %+v", h[0])
+		}
+		if e := h[0].Scorers[0]; e.Scorer != "expectations" || e.Mean != 0.75 || e.Pass != 1 || e.Fail != 1 || e.Skipped != 1 || e.Errors != 1 {
+			t.Fatalf("expectations: %+v", e)
+		}
+		if j := h[0].Scorers[1]; j.Scorer != "judge" || j.Mean != 0 || j.Skipped != 1 || j.Pass != 0 {
+			t.Fatalf("judge: %+v", j)
+		}
+		if n, err := s.Eval().History(ctx, NewID(), 50); err != nil || len(n) != 0 {
+			t.Fatalf("unknown agent: %v %v", err, n)
+		}
+	})
+}
+
+func TestHistoryLimitClamps(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		a, v := fleetAgent(t, s, "hist-clamp")
+		t0 := time.Now().Add(-24 * time.Hour)
+		for i := 0; i < MaxEvalHistory+1; i++ {
+			insertRun(t, s, a, v, "suite", false, "done", 1, 1, t0.Add(time.Duration(i)*time.Second))
+		}
+		if h, err := s.Eval().History(ctx, a, 10_000); err != nil || len(h) != MaxEvalHistory {
+			t.Fatalf("over the maximum: %v %d", err, len(h))
+		}
+		if h, err := s.Eval().History(ctx, a, 0); err != nil || len(h) != 1 {
+			t.Fatalf("below one: %v %d", err, len(h))
+		}
+	})
+}

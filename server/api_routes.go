@@ -139,6 +139,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			handler               http.Handler
 		}{
 			{"/api/v1/agents", "agent_management_unavailable", "agent management storage is unavailable", s.agentManagementAPI},
+			{"/api/v1/eval", "eval_management_unavailable", "eval management storage is unavailable", s.evalManagementAPI},
 			{"/api/v1/providers", "provider_management_unavailable", "provider management storage is unavailable", s.providerManagementAPI},
 			{"/api/v1/mcp-servers", "mcp_management_unavailable", "MCP management storage is unavailable", s.mcpManagementAPI},
 			{"/api/v1/http-tools", "http_tools_management_unavailable", "HTTP tools management storage is unavailable", s.httpToolsManagementAPI},

@@ -847,3 +847,75 @@ func TestEvalDraftWithoutToolsKeepsAttachedTools(t *testing.T) {
 		t.Fatalf("draft tools %q (%v), want the attached echo", row.DraftToolsJSON, err)
 	}
 }
+
+func TestEvalFleetEnvelope(t *testing.T) {
+	r := newEvalRig(t)
+	r.addCases(r.free, "alpha", "beta")
+	expect(t, r.do(http.MethodPut, r.path(r.free, "/suite"), `{"runs":1,"min_pass":1,"pass_threshold":0.8}`), http.StatusOK, "")
+	run := decodeData[EvalRunDTO](t, r.do(http.MethodPost, r.path(r.free, "/runs"), `{}`))
+	r.finishJob([]storage.EvalResult{{Scorer: "expectations", Outcome: "pass", Score: 1, Reason: "ok", SessionID: "s1"}}, "")
+	r.finishJob([]storage.EvalResult{{Scorer: "expectations", Outcome: "fail", Score: 0, Reason: "no", SessionID: "s2"}}, "")
+
+	fleet := decodeData[EvalFleetDTO](t, r.do(http.MethodGet, "/api/v1/eval/fleet", ""))
+	if fleet.Total != 2 || fleet.BelowThreshold != 1 || len(fleet.Agents) != 2 {
+		t.Fatalf("fleet %+v", fleet)
+	}
+	var free, paid EvalFleetAgentDTO
+	for _, a := range fleet.Agents {
+		if a.AgentID == r.free.ID {
+			free = a
+		} else {
+			paid = a
+		}
+	}
+	if free.Name != "Free" || free.Threshold != 0.8 || !free.BelowThreshold || len(free.Trend) != 1 || free.Trend[0] != 0.5 ||
+		free.Latest == nil || free.Latest.RunID != run.ID || free.Latest.Version != 1 || free.Latest.Passed != 1 || free.Latest.Total != 2 ||
+		free.Latest.PassRate == nil || *free.Latest.PassRate != 0.5 {
+		t.Fatalf("free %+v", free)
+	}
+	if _, err := time.Parse(time.RFC3339, free.Latest.EndedAt); err != nil {
+		t.Fatalf("ended_at: %v", err)
+	}
+	if paid.Latest != nil || paid.BelowThreshold || paid.Threshold != 1 || paid.Trend == nil {
+		t.Fatalf("an agent that never ran a suite is never below, with an empty (not null) trend: %+v", paid)
+	}
+	raw := r.do(http.MethodGet, "/api/v1/eval/fleet", "").Body.String()
+	if !strings.Contains(raw, `"trend":[]`) || strings.Contains(raw, `"latest":null`) {
+		t.Fatalf("wire shape: %s", raw)
+	}
+
+	page := decodeData[EvalFleetDTO](t, r.do(http.MethodGet, "/api/v1/eval/fleet?limit=1&offset=1", ""))
+	if len(page.Agents) != 1 || page.Total != 2 || page.BelowThreshold != 1 || page.Agents[0].AgentID != fleet.Agents[1].AgentID {
+		t.Fatalf("page %+v", page)
+	}
+	for _, p := range []string{"?x=1", "?limit=0", "?limit=201", "?limit=a", "?offset=-1"} {
+		expect(t, r.do(http.MethodGet, "/api/v1/eval/fleet"+p, ""), http.StatusBadRequest, "invalid_request")
+	}
+	expect(t, r.do(http.MethodGet, "/api/v1/eval/fleet?limit=200", ""), http.StatusOK, "")
+	expect(t, r.do(http.MethodPost, "/api/v1/eval/fleet", ""), http.StatusMethodNotAllowed, "method_not_allowed")
+	expect(t, r.do(http.MethodGet, "/api/v1/eval/nope", ""), http.StatusNotFound, "not_found")
+}
+
+func TestEvalHistoryEnvelope(t *testing.T) {
+	r := newEvalRig(t)
+	r.addCases(r.free, "alpha")
+	run := decodeData[EvalRunDTO](t, r.do(http.MethodPost, r.path(r.free, "/runs"), `{}`))
+	r.finishJob([]storage.EvalResult{{Scorer: "expectations", Outcome: "pass", Score: 1, Reason: "ok", SessionID: "s1"}}, "")
+	h := decodeData[[]EvalHistoryDTO](t, r.do(http.MethodGet, r.path(r.free, "/history"), ""))
+	if len(h) != 1 || h[0].RunID != run.ID || h[0].Version != 1 || h[0].Passed != 1 || h[0].Total != 1 || h[0].PassRate == nil || *h[0].PassRate != 1 ||
+		len(h[0].Scorers) != 1 || h[0].Scorers[0].Scorer != "expectations" || h[0].Scorers[0].Mean != 1 || h[0].Scorers[0].Pass != 1 {
+		t.Fatalf("history %+v", h)
+	}
+	if _, err := time.Parse(time.RFC3339, h[0].EndedAt); err != nil {
+		t.Fatalf("ended_at: %v", err)
+	}
+	if e := decodeData[[]EvalHistoryDTO](t, r.do(http.MethodGet, r.path(r.paid, "/history"), "")); e == nil || len(e) != 0 {
+		t.Fatalf("an agent with no run has an empty list: %#v", e)
+	}
+	for _, p := range []string{"?x=1", "?limit=0", "?limit=101", "?limit=a", "?offset=1"} {
+		expect(t, r.do(http.MethodGet, r.path(r.free, "/history"+p), ""), http.StatusBadRequest, "invalid_request")
+	}
+	expect(t, r.do(http.MethodGet, r.path(r.free, "/history?limit=100"), ""), http.StatusOK, "")
+	expect(t, r.do(http.MethodPost, r.path(r.free, "/history"), ""), http.StatusMethodNotAllowed, "method_not_allowed")
+	expect(t, r.do(http.MethodGet, "/api/v1/agents/"+storage.NewID()+"/eval/history", ""), http.StatusNotFound, "not_found")
+}

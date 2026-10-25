@@ -17,6 +17,8 @@ All endpoints need the management key (`Authorization: Bearer <key>`) and use th
 | `POST /api/v1/agents/{id}/eval/runs` | Run the suite or one case |
 | `GET /api/v1/agents/{id}/eval/runs` | List runs, newest first (`limit`, `offset`, `include_drafts=true`) |
 | `GET /api/v1/agents/{id}/eval/runs/{runId}` | One run with every case-run and its scores |
+| `GET /api/v1/eval/fleet` | Every agent's latest suite result and trend (`limit`, `offset`) |
+| `GET /api/v1/agents/{id}/eval/history` | The agent's finished suite runs with per-scorer totals (`limit`) |
 
 ## Cases
 
@@ -95,3 +97,27 @@ A run is worked by the servers sharing the database, at most `evaluation.max_con
 ```
 
 `status` is the job's: `pending`, `running`, `done` or `dead`. A `dead` case-run could not be made or read back; `error_category` names why (`dial`, `token`, `turn_timeout`, `stored_rows`, `persona_unavailable`, …), never any call content, and it counts as failed. `passed` is true only for a finished case-run in which no scorer failed or errored (a skipped scorer does not count against it). `outcome` is `pass`, `fail`, `skipped` or `error`; `session_id` is the call (`/api/v1/sessions/{id}`) and is empty for a dead case-run; `judge_model` names the judge of a model-graded score. A `reason` is cut at 1000 characters.
+
+## Fleet and history
+
+Both read only finished (`status: done`), non-draft runs of the whole suite. A draft run and a run of one case never count.
+
+```
+GET /api/v1/eval/fleet?limit=50&offset=0
+```
+
+`data`: `{ "agents": [...], "total", "below_threshold" }`. The agents are the non-archived ones, ordered by name, `limit` per page (default 50, at most 200). Each is `{ "agent_id", "name", "threshold", "latest?": { "run_id", "version", "passed", "total", "pass_rate", "ended_at" }, "trend", "below_threshold" }`.
+
+- `threshold` is the agent's saved suite `pass_threshold`, or 1 when none is saved.
+- `latest` is the newest qualifying run and is absent when the agent has none. `pass_rate` is `passed / total`, `null` when `total` is 0. `ended_at` is RFC 3339.
+- `trend` is the pass rates of up to the 10 newest qualifying runs, oldest first (an empty array when there are none).
+- `below_threshold` is true when `latest.pass_rate` is under `threshold`. An agent with no qualifying run is never below.
+- `total` and the top-level `below_threshold` count every non-archived agent, not only the page.
+
+```
+GET /api/v1/agents/{id}/eval/history?limit=50
+```
+
+`data`: the agent's qualifying runs, newest first, `limit` at most 100 (default 50): `{ "run_id", "version", "ended_at", "passed", "total", "pass_rate", "scorers": [{ "scorer", "mean", "pass", "fail", "skipped", "errors" }] }`. `mean` is the average score over the `pass` and `fail` results only; `skipped` and `error` results are counted but not averaged (a scorer with only those has `mean` 0). An agent with no qualifying run answers `[]`.
+
+A `limit` or `offset` outside its range, or an unknown query parameter, is `400 invalid_request`.

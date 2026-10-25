@@ -58,7 +58,7 @@ type EvalPolicy struct {
 	JudgeProvider func(provider string) error
 }
 
-// NewEvalHandler serves /api/v1/agents/{id}/eval/... behind management authentication.
+// NewEvalHandler serves /api/v1/agents/{id}/eval/... and /api/v1/eval/fleet behind management authentication.
 func NewEvalHandler(agents EvalAgents, store EvalStore, policy EvalPolicy) http.Handler {
 	return evalHandler{agents: agents, store: store, policy: policy}
 }
@@ -160,6 +160,14 @@ type evalYAMLRequest struct {
 
 func (h evalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rid := RequestID(w, r)
+	if strings.HasPrefix(r.URL.Path, "/api/v1/eval") { // the cross-agent reads; everything else is per agent
+		if r.URL.Path == "/api/v1/eval/fleet" {
+			h.fleet(w, r, rid)
+			return
+		}
+		WriteError(w, http.StatusNotFound, "not_found", "not found", rid)
+		return
+	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/agents/"), "/")
 	if !strings.HasPrefix(r.URL.Path, "/api/v1/agents/") || len(parts) < 2 || parts[0] == "" || parts[1] != "eval" {
 		WriteError(w, http.StatusNotFound, "not_found", "not found", rid)
@@ -187,6 +195,8 @@ func (h evalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.runs(w, r, id, rid)
 	case len(sub) == 2 && sub[0] == "runs":
 		h.runDetail(w, r, id, sub[1], rid)
+	case len(sub) == 1 && sub[0] == "history":
+		h.history(w, r, id, rid)
 	default:
 		WriteError(w, http.StatusNotFound, "not_found", "not found", rid)
 	}
@@ -945,4 +955,131 @@ func (h evalHandler) runDetail(w http.ResponseWriter, r *http.Request, agentID, 
 		return
 	}
 	WriteJSON(w, http.StatusOK, SuccessResponse[EvalRunDetailDTO]{Data: EvalRunDetailDTO{Run: runOut, CaseRuns: out}})
+}
+
+// ---- fleet and history
+
+// EvalFleetRunDTO is the suite run a fleet row stands on. PassRate is null when the run had no cases.
+type EvalFleetRunDTO struct {
+	RunID    string   `json:"run_id"`
+	Version  int      `json:"version"`
+	Passed   int      `json:"passed"`
+	Total    int      `json:"total"`
+	PassRate *float64 `json:"pass_rate"`
+	EndedAt  string   `json:"ended_at"`
+}
+
+// EvalFleetAgentDTO is one agent on the dashboard. Latest is absent until a non-draft suite run has finished.
+type EvalFleetAgentDTO struct {
+	AgentID        string           `json:"agent_id"`
+	Name           string           `json:"name"`
+	Threshold      float64          `json:"threshold"`
+	Latest         *EvalFleetRunDTO `json:"latest,omitempty"`
+	Trend          []float64        `json:"trend"`
+	BelowThreshold bool             `json:"below_threshold"`
+}
+
+// EvalFleetDTO is one page of agents; Total and BelowThreshold count every non-archived agent.
+type EvalFleetDTO struct {
+	Agents         []EvalFleetAgentDTO `json:"agents"`
+	Total          int                 `json:"total"`
+	BelowThreshold int                 `json:"below_threshold"`
+}
+
+// EvalScorerAggDTO is one scorer in one history run. Mean covers pass and fail outcomes only.
+type EvalScorerAggDTO struct {
+	Scorer  string  `json:"scorer"`
+	Mean    float64 `json:"mean"`
+	Pass    int     `json:"pass"`
+	Fail    int     `json:"fail"`
+	Skipped int     `json:"skipped"`
+	Errors  int     `json:"errors"`
+}
+
+// EvalHistoryDTO is one finished non-draft suite run, newest first in the list.
+type EvalHistoryDTO struct {
+	RunID    string             `json:"run_id"`
+	Version  int                `json:"version"`
+	EndedAt  string             `json:"ended_at"`
+	Passed   int                `json:"passed"`
+	Total    int                `json:"total"`
+	PassRate *float64           `json:"pass_rate"`
+	Scorers  []EvalScorerAggDTO `json:"scorers"`
+}
+
+func passRate(passed, total int) *float64 {
+	if total == 0 {
+		return nil
+	}
+	v := float64(passed) / float64(total)
+	return &v
+}
+
+func rfc3339(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+
+func (h evalHandler) fleet(w http.ResponseWriter, r *http.Request, rid string) {
+	if !methods(w, r, rid, http.MethodGet) || !onlyQuery(w, r, rid, "limit", "offset") {
+		return
+	}
+	limit, offset := 50, 0
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > storage.MaxFleetPage {
+			WriteError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("limit must be between 1 and %d", storage.MaxFleetPage), rid)
+			return
+		}
+		limit = n
+	}
+	if raw := r.URL.Query().Get("offset"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			WriteError(w, http.StatusBadRequest, "invalid_request", "offset must be nonnegative", rid)
+			return
+		}
+		offset = n
+	}
+	page, err := h.store.Eval().Fleet(r.Context(), limit, offset)
+	if err != nil {
+		h.fail(w, err, rid)
+		return
+	}
+	out := EvalFleetDTO{Agents: make([]EvalFleetAgentDTO, 0, len(page.Agents)), Total: page.Total, BelowThreshold: page.BelowThreshold}
+	for _, f := range page.Agents {
+		a := EvalFleetAgentDTO{AgentID: f.AgentID, Name: f.Name, Threshold: f.Threshold, Trend: f.Trend, BelowThreshold: f.Below}
+		if a.Trend == nil {
+			a.Trend = []float64{}
+		}
+		if f.Latest != nil {
+			a.Latest = &EvalFleetRunDTO{RunID: f.Latest.RunID, Version: f.Latest.Version, Passed: f.Latest.Passed, Total: f.Latest.Total,
+				PassRate: passRate(f.Latest.Passed, f.Latest.Total), EndedAt: rfc3339(f.Latest.EndedAt)}
+		}
+		out.Agents = append(out.Agents, a)
+	}
+	WriteJSON(w, http.StatusOK, SuccessResponse[EvalFleetDTO]{Data: out})
+}
+
+func (h evalHandler) history(w http.ResponseWriter, r *http.Request, agentID, rid string) {
+	if !methods(w, r, rid, http.MethodGet) || !onlyQuery(w, r, rid, "limit") {
+		return
+	}
+	page, err := ParsePagination(r) // limit 1..100, default 50
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "invalid_request", err.Error(), rid)
+		return
+	}
+	rows, err := h.store.Eval().History(r.Context(), agentID, page.Limit)
+	if err != nil {
+		h.fail(w, err, rid)
+		return
+	}
+	out := make([]EvalHistoryDTO, 0, len(rows))
+	for _, row := range rows {
+		d := EvalHistoryDTO{RunID: row.RunID, Version: row.Version, EndedAt: rfc3339(row.EndedAt), Passed: row.Passed, Total: row.Total,
+			PassRate: passRate(row.Passed, row.Total), Scorers: make([]EvalScorerAggDTO, 0, len(row.Scorers))}
+		for _, sc := range row.Scorers {
+			d.Scorers = append(d.Scorers, EvalScorerAggDTO{Scorer: sc.Scorer, Mean: sc.Mean, Pass: sc.Pass, Fail: sc.Fail, Skipped: sc.Skipped, Errors: sc.Errors})
+		}
+		out = append(out, d)
+	}
+	WriteJSON(w, http.StatusOK, SuccessResponse[[]EvalHistoryDTO]{Data: out})
 }
