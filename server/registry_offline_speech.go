@@ -28,7 +28,7 @@ func registerOfflineSpeech(r *Registry) {
 			sttCfg.Language = spec.Language
 		}
 		sttCfg.DrainTimeout = offlineSTTDrainTimeout
-		sttCfg.Endpoint, sttCfg.APIKey, sttCfg.CircuitBreaker = cfg.Providers.Offline.STTEndpoint, offlineBearer, r.offlineSTTBreaker
+		sttCfg.Endpoint, sttCfg.APIKey, sttCfg.CircuitBreaker = cfg.Providers.Offline.STTEndpoint, offlineBearer, r.breaker("stt", "offline")
 		if spec.Failover {
 			sttCfg.RetryPolicy = failoverPolicy("stt", sttCfg.RetryPolicy)
 		}
@@ -45,7 +45,7 @@ func registerOfflineSpeech(r *Registry) {
 		if cfg.Providers.GoogleTTS.SampleRate > 0 { // the pipeline's output rate is configured once, under google_tts
 			ttsCfg.SampleRate = cfg.Providers.GoogleTTS.SampleRate
 		}
-		ttsCfg.Endpoint, ttsCfg.APIKey, ttsCfg.CircuitBreaker = cfg.Providers.Offline.TTSEndpoint, offlineBearer, r.offlineTTSBreaker
+		ttsCfg.Endpoint, ttsCfg.APIKey, ttsCfg.CircuitBreaker = cfg.Providers.Offline.TTSEndpoint, offlineBearer, r.breaker("tts", "offline")
 		if spec.Failover {
 			ttsCfg.RetryPolicy = failoverPolicy("tts", ttsCfg.RetryPolicy)
 		}

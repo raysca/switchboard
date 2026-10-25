@@ -210,17 +210,9 @@ func (s *Server) probeStage(ctx context.Context, provider, stage string) (res Pr
 }
 
 // circuitState is the worst breaker state this process reports for a provider's stage, or "unknown" when
-// none is reported (echo, or a provider not used yet).
+// none is reported (a provider whose breakers are not observed, or one not used yet).
 func (m *Metrics) circuitState(provider, stage string) string {
 	var codes []int64
-	static := map[[2]string]*atomic.Int64{
-		{"google", "stt"}: &m.STTCircuitStateGoogle, {"xai", "stt"}: &m.STTCircuitStateXAI,
-		{"google", "llm"}: &m.LLMCircuitStateGoogle, {"xai", "llm"}: &m.LLMCircuitStateXAI,
-		{"google", "tts"}: &m.TTSCircuitStateGoogle, {"xai", "tts"}: &m.TTSCircuitStateXAI,
-	}
-	if g, ok := static[[2]string{provider, stage}]; ok {
-		codes = append(codes, g.Load())
-	}
 	for k, v := range m.circuits.snapshot() {
 		if k.provider == provider && k.stage == stage {
 			codes = append(codes, v)

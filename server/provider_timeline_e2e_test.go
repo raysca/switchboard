@@ -29,7 +29,7 @@ func TestCallBehaviorTimelineShowsProviderRetriesAndTheCircuitOpening(t *testing
 		if spec.SystemPrompt != "Broken" {
 			return healthy(cfg, spec) // the bystander's model works
 		}
-		llmCfg := googleLLMConfig(spec, r.s.registry.echoLLMBreaker)
+		llmCfg := googleLLMConfig(spec, r.s.registry.breaker("llm", "echo"))
 		llmCfg.Provider = "echo"
 		llmCfg.Client = flakyLLM{}
 		llmCfg.RetryPolicy.MaxAttempts = 5

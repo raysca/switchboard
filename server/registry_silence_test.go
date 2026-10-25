@@ -107,10 +107,10 @@ func TestSilenceIsRegisteredWithBreakersOfItsOwn(t *testing.T) {
 	if r.Supports(silenceProvider, "llm") {
 		t.Error("silence has no model stage")
 	}
-	if r.silenceSTTBreaker == nil || r.silenceSTTBreaker == r.echoSTTBreaker || r.sttBreaker(silenceProvider) != r.silenceSTTBreaker {
+	if r.breaker("stt", silenceProvider) == nil || r.breaker("stt", silenceProvider) == r.breaker("stt", "echo") || r.breaker("stt", silenceProvider) != r.breaker("stt", silenceProvider) {
 		t.Error("silence STT must have its own breaker, found by its provider name")
 	}
-	if r.silenceTTSBreaker == nil || r.silenceTTSBreaker == r.echoTTSBreaker || r.ttsBreaker(silenceProvider) != r.silenceTTSBreaker {
+	if r.breaker("tts", silenceProvider) == nil || r.breaker("tts", silenceProvider) == r.breaker("tts", "echo") || r.breaker("tts", silenceProvider) != r.breaker("tts", silenceProvider) {
 		t.Error("silence TTS must have its own breaker, found by its provider name")
 	}
 }

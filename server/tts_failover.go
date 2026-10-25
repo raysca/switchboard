@@ -36,29 +36,6 @@ func ttsClassify(err error) string {
 	return agent.ClassOf(err, resilience.Verdict{ClientError: client})
 }
 
-// ttsBreaker is the breaker a TTS stage of this provider uses (nil if unknown).
-func (r *Registry) ttsBreaker(provider string) *resilience.Breaker {
-	switch provider {
-	case "google":
-		return r.googleTTSBreaker
-	case "echo":
-		return r.echoTTSBreaker
-	case silenceProvider:
-		return r.silenceTTSBreaker
-	case "xai":
-		return r.xaiTTSBreaker
-	case "offline":
-		return r.offlineTTSBreaker
-	case "cartesia":
-		return r.cartesiaBreaker
-	case "elevenlabs":
-		return r.elevenlabsBreaker
-	case "nvidia":
-		return r.nvidiaBreaker("tts|" + nvidia.DefaultEndpoint)
-	}
-	return nil
-}
-
 // failoverPolicy tightens a provider's retry policy for a stage candidate that
 // has a fallback behind it: 2 tries instead of 3, and for stt opens at most
 // sttFailoverAttempt each, so a hung STT dial reports (and the fallback
@@ -128,7 +105,7 @@ func (r *Registry) buildTTS(cfg *Config, call CallSpec, build func(string, Stage
 			continue
 		}
 		c := core.TTSCandidate{Provider: sp.Provider, Proc: p, Rate: ttsRate(cfg)}
-		br := r.ttsBreaker(sp.Provider)
+		br := r.breaker("tts", sp.Provider)
 		if br != nil {
 			c.Open = br.WouldRefuse
 		}

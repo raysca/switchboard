@@ -16,14 +16,14 @@ import (
 // at no cost. It needs no secret, so spec.Secret is never read.
 func registerEcho(r *Registry) {
 	r.Register("echo.stt", func(cfg *Config, spec StageSpec) (core.Processor, error) {
-		sttCfg := googleSTTConfig(cfg, spec, r.echoSTTBreaker)
+		sttCfg := googleSTTConfig(cfg, spec, r.breaker("stt", "echo"))
 		sttCfg.Provider = "echo"
 		sttCfg.StreamOpener = echo.NewSTTOpener(echo.Mimic(cfg.Providers.Echo.Mimic).STT(sttCfg.Model), cfg.Providers.Echo.STT == "audio")
 		return google.NewSTTProcessor(sttCfg)
 	})
 
 	r.Register("echo.llm", func(cfg *Config, spec StageSpec) (core.Processor, error) {
-		llmCfg := googleLLMConfig(spec, r.echoLLMBreaker)
+		llmCfg := googleLLMConfig(spec, r.breaker("llm", "echo"))
 		llmCfg.Provider = "echo"
 		llmCfg.Client = echo.NewLLMClient(echoLLMOptions(cfg, spec))
 		return google.NewLLMProcessor(llmCfg)
@@ -34,7 +34,7 @@ func registerEcho(r *Registry) {
 		if spec.Voice == "brokenvoice" {
 			return nil, errors.New("echo tts: voice brokenvoice is unavailable")
 		}
-		ttsCfg := googleTTSConfig(cfg, spec, r.echoTTSBreaker)
+		ttsCfg := googleTTSConfig(cfg, spec, r.breaker("tts", "echo"))
 		ttsCfg.Provider = "echo"
 		ttsCfg.Client = echo.NewTTSClient(echo.Mimic(cfg.Providers.Echo.Mimic).TTS(googleTTSStreams(cfg, ttsCfg.Voice)), cfg.Providers.Echo.Audible)
 		return googleTTSProcessor(cfg, ttsCfg)

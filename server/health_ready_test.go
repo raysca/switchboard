@@ -149,7 +149,7 @@ func TestReady_RequiresAgentStoreAndReportsCircuits(t *testing.T) {
 	}
 	// An open provider circuit is reported but only affects agents using that
 	// provider, so the host stays ready.
-	srv.metrics.LLMCircuitStateGoogle.Store(1)
+	srv.metrics.circuits.set("llm", "google", "", 1)
 	code, body := ready()
 	circuits, _ := body["circuits"].(map[string]any)
 	if code != http.StatusOK || circuits["google_llm"] != "open" {

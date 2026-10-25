@@ -342,7 +342,7 @@ func (c *inventingLLM) GenerateStreamWithNativeTools(ctx context.Context, m, sp 
 func TestMCPCallRealLoopInventedToolNameIsNeverStored(t *testing.T) {
 	r := newMCPCallRig(t)
 	r.s.registry.Register("echo.llm", func(cfg *Config, spec StageSpec) (core.Processor, error) {
-		llmCfg := googleLLMConfig(spec, r.s.registry.echoLLMBreaker)
+		llmCfg := googleLLMConfig(spec, r.s.registry.breaker("llm", "echo"))
 		llmCfg.Provider = "echo"
 		llmCfg.Client = &inventingLLM{LLMClient: echo.NewLLMClient(echoLLMOptions(cfg, spec))}
 		return google.NewLLMProcessor(llmCfg)

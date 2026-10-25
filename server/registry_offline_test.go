@@ -38,7 +38,7 @@ func TestOfflineSpeechAbsentWithoutXAISpeechTag(t *testing.T) {
 
 func TestOfflineBreakersAreSeparate(t *testing.T) {
 	reg := NewRegistry()
-	if reg.offlineLLMBreaker == reg.xaiLLMBreaker || reg.offlineSTTBreaker == reg.xaiSTTBreaker || reg.offlineTTSBreaker == reg.xaiTTSBreaker {
+	if reg.breaker("llm", "offline") == reg.breaker("llm", "xai") || reg.breaker("stt", "offline") == reg.breaker("stt", "xai") || reg.breaker("tts", "offline") == reg.breaker("tts", "xai") {
 		t.Fatal("offline shares a breaker with xai: a local outage would open the real provider's circuit")
 	}
 }

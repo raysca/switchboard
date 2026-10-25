@@ -163,29 +163,11 @@ type Registry struct {
 
 	turnWarned sync.Map // agent version ids already warned about turn settings with the manager off
 
-	googleLLMBreaker *resilience.Breaker
-	googleTTSBreaker *resilience.Breaker
-	googleSTTBreaker *resilience.Breaker
-	// The simulated provider keeps its own breakers, apart from Google's.
-	echoLLMBreaker, echoSTTBreaker, echoTTSBreaker *resilience.Breaker
-	// The text-only speech provider (silence) has its own, so an outage of it never touches echo's.
-	silenceSTTBreaker, silenceTTSBreaker *resilience.Breaker
-	// One xAI breaker per stage: an STT or TTS outage must not block the LLM.
-	xaiLLMBreaker, xaiSTTBreaker, xaiTTSBreaker *resilience.Breaker
-	// The local stack keeps its own breakers too: an outage there must not open xAI's circuits.
-	offlineLLMBreaker, offlineSTTBreaker, offlineTTSBreaker *resilience.Breaker
-	deepgramBreaker                                         *resilience.Breaker
-	// One breaker per base URL: a tenant's broken vLLM must not open the
-	// breaker for every other OpenAI-compatible endpoint.
-	// ponytail: never evicted; bounded by the distinct base URLs stored.
-	openaiBreakers       sync.Map // base URL -> *resilience.Breaker
-	cartesiaBreaker      *resilience.Breaker
-	cartesiaSTTBreaker   *resilience.Breaker
-	elevenlabsBreaker    *resilience.Breaker
-	elevenlabsSTTBreaker *resilience.Breaker
-
-	nvidiaBreakers sync.Map // "llm|<base url>" / "stt|<endpoint>" / "tts|<endpoint>" (hosted) -> *resilience.Breaker (nvidia.go)
-	metrics        *Metrics // set by BindMetrics; per-endpoint breakers export their state through it
+	// breakers holds one breaker per circuit (Registry.breaker): an outage of one provider
+	// stage, or of one tenant's openai base URL, never opens another's.
+	// ponytail: never evicted; bounded by the provider stages and the distinct openai base URLs stored.
+	breakers sync.Map                // circuitKey -> *resilience.Breaker
+	metrics  atomic.Pointer[Metrics] // set by BindMetrics; observed breakers export their state through it
 
 	turnBackend smartturn.Backend // smart-turn model; nil unless turn.stop has turn-analyzer
 
@@ -275,26 +257,7 @@ func factoryKey(provider, stage string) string { return provider + "." + stage }
 
 func NewRegistry() *Registry {
 	r := &Registry{
-		factories:            make(map[string]ProcessorFactory),
-		googleLLMBreaker:     resilience.NewBreaker(resilience.DefaultConfig()),
-		googleTTSBreaker:     resilience.NewBreaker(resilience.DefaultConfig()),
-		googleSTTBreaker:     resilience.NewBreaker(resilience.DefaultConfig()),
-		echoLLMBreaker:       resilience.NewBreaker(resilience.DefaultConfig()),
-		echoSTTBreaker:       resilience.NewBreaker(resilience.DefaultConfig()),
-		echoTTSBreaker:       resilience.NewBreaker(resilience.DefaultConfig()),
-		silenceSTTBreaker:    resilience.NewBreaker(resilience.DefaultConfig()),
-		silenceTTSBreaker:    resilience.NewBreaker(resilience.DefaultConfig()),
-		xaiLLMBreaker:        resilience.NewBreaker(resilience.DefaultConfig()),
-		xaiSTTBreaker:        resilience.NewBreaker(resilience.DefaultConfig()),
-		xaiTTSBreaker:        resilience.NewBreaker(resilience.DefaultConfig()),
-		offlineLLMBreaker:    resilience.NewBreaker(resilience.DefaultConfig()),
-		offlineSTTBreaker:    resilience.NewBreaker(resilience.DefaultConfig()),
-		offlineTTSBreaker:    resilience.NewBreaker(resilience.DefaultConfig()),
-		deepgramBreaker:      resilience.NewBreaker(resilience.DefaultConfig()),
-		cartesiaBreaker:      resilience.NewBreaker(resilience.DefaultConfig()),
-		cartesiaSTTBreaker:   resilience.NewBreaker(resilience.DefaultConfig()),
-		elevenlabsBreaker:    resilience.NewBreaker(resilience.DefaultConfig()),
-		elevenlabsSTTBreaker: resilience.NewBreaker(resilience.DefaultConfig()),
+		factories: make(map[string]ProcessorFactory),
 	}
 
 	r.Register("google.stt", func(cfg *Config, spec StageSpec) (core.Processor, error) {
@@ -302,7 +265,7 @@ func NewRegistry() *Registry {
 		if err != nil {
 			return nil, fmt.Errorf("google.stt: %w", err)
 		}
-		sttCfg := googleSTTConfig(cfg, spec, r.googleSTTBreaker)
+		sttCfg := googleSTTConfig(cfg, spec, r.breaker("stt", "google"))
 		infra := cfg.Providers.GoogleSTT
 		if infra.Location != "" {
 			sttCfg.Location = infra.Location
@@ -337,7 +300,7 @@ func NewRegistry() *Registry {
 		if err != nil {
 			return nil, fmt.Errorf("google.llm: %w", err)
 		}
-		llmCfg := googleLLMConfig(spec, r.googleLLMBreaker)
+		llmCfg := googleLLMConfig(spec, r.breaker("llm", "google"))
 		llmCfg.Client = client
 		return google.NewLLMProcessor(llmCfg)
 	})
@@ -347,7 +310,7 @@ func NewRegistry() *Registry {
 		if err != nil {
 			return nil, fmt.Errorf("google.tts: %w", err)
 		}
-		ttsCfg := googleTTSConfig(cfg, spec, r.googleTTSBreaker)
+		ttsCfg := googleTTSConfig(cfg, spec, r.breaker("tts", "google"))
 		ttsCfg.CredentialsJSON, ttsCfg.APIKey = material.ServiceAccountJSON, material.APIKey
 		client, err := google.NewRealGoogleTTSClient(context.Background(), ttsCfg)
 		if err != nil {
@@ -362,7 +325,7 @@ func NewRegistry() *Registry {
 		if err != nil {
 			return nil, fmt.Errorf("xai.llm: %w", err)
 		}
-		return xaiLLMProcessor(spec, cfg.Providers.XAILLM.Endpoint, key, r.xaiLLMBreaker, "xai.llm")
+		return xaiLLMProcessor(spec, cfg.Providers.XAILLM.Endpoint, key, r.breaker("llm", "xai"), "xai.llm")
 	})
 
 	// openai.llm covers OpenAI and any chat-completions server (Groq, Together,
@@ -373,8 +336,7 @@ func NewRegistry() *Registry {
 		if err != nil {
 			return nil, fmt.Errorf("openai.llm: %w", err)
 		}
-		br, _ := r.openaiBreakers.LoadOrStore(baseURL, resilience.NewBreaker(resilience.DefaultConfig()))
-		oaCfg := openAILLMConfig(cfg, spec, key, baseURL, br.(*resilience.Breaker))
+		oaCfg := openAILLMConfig(cfg, spec, key, baseURL, r.openaiBreaker(baseURL))
 		if len(spec.Tools) > 0 {
 			loop, err := coretools.NewToolLoop(spec.Tools, spec.ToolExecutor, spec.History, spec.toolLoopConfig())
 			if err != nil {
@@ -397,7 +359,7 @@ func NewRegistry() *Registry {
 		if spec.Language != "" {
 			sttCfg.Language = spec.Language
 		}
-		sttCfg.APIKey, sttCfg.CircuitBreaker = key, r.deepgramBreaker
+		sttCfg.APIKey, sttCfg.CircuitBreaker = key, r.breaker("stt", "deepgram")
 		if spec.Failover {
 			sttCfg.RetryPolicy = failoverPolicy("stt", sttCfg.RetryPolicy)
 		}
@@ -416,7 +378,7 @@ func NewRegistry() *Registry {
 		if spec.Language != "" {
 			sttCfg.Language = spec.Language
 		}
-		sttCfg.APIKey, sttCfg.CircuitBreaker = key, r.cartesiaSTTBreaker
+		sttCfg.APIKey, sttCfg.CircuitBreaker = key, r.breaker("stt", "cartesia")
 		if spec.Failover {
 			sttCfg.RetryPolicy = failoverPolicy("stt", sttCfg.RetryPolicy)
 		}
@@ -442,7 +404,7 @@ func NewRegistry() *Registry {
 		if cfg.Providers.GoogleTTS.SampleRate > 0 {
 			ttsCfg.SampleRate = cfg.Providers.GoogleTTS.SampleRate
 		}
-		ttsCfg.APIKey, ttsCfg.CircuitBreaker = key, r.cartesiaBreaker
+		ttsCfg.APIKey, ttsCfg.CircuitBreaker = key, r.breaker("tts", "cartesia")
 		if spec.Failover {
 			ttsCfg.RetryPolicy = failoverPolicy("tts", ttsCfg.RetryPolicy)
 		}
@@ -462,7 +424,7 @@ func NewRegistry() *Registry {
 		if spec.Language != "" {
 			sttCfg.Language = spec.Language
 		}
-		sttCfg.APIKey, sttCfg.CircuitBreaker = key, r.elevenlabsSTTBreaker
+		sttCfg.APIKey, sttCfg.CircuitBreaker = key, r.breaker("stt", "elevenlabs")
 		if spec.Failover {
 			sttCfg.RetryPolicy = failoverPolicy("stt", sttCfg.RetryPolicy)
 		}
@@ -475,7 +437,7 @@ func NewRegistry() *Registry {
 			return nil, fmt.Errorf("elevenlabs.tts: %w", err)
 		}
 		ttsCfg := elevenlabsTTSConfig(cfg, spec)
-		ttsCfg.APIKey, ttsCfg.CircuitBreaker = key, r.elevenlabsBreaker
+		ttsCfg.APIKey, ttsCfg.CircuitBreaker = key, r.breaker("tts", "elevenlabs")
 		if spec.Failover {
 			ttsCfg.RetryPolicy = failoverPolicy("tts", ttsCfg.RetryPolicy)
 		}
@@ -938,7 +900,7 @@ func (r *Registry) BindMetrics(m *Metrics) {
 	if m == nil {
 		return
 	}
-	r.metrics = m
+	r.metrics.Store(m)
 	r.onSTTFailover = m.stt.failovers.add
 	r.onSTTFallbackSkipped = func() { m.stt.FallbacksSkippedTotal.Add(1) }
 	r.onSTTReplayDropped = func(n int) { m.stt.ReplayDroppedBytesTotal.Add(uint64(n)) }
@@ -953,57 +915,81 @@ func (r *Registry) BindMetrics(m *Metrics) {
 	r.onSummary = m.summary.observe
 	r.onCompletion = m.completionVerdict
 	r.onFilter = m.filters.observe
-	r.googleSTTBreaker.SetObserver(func(st resilience.State) {
-		m.STTCircuitStateGoogle.Store(circuitCode(string(st)))
-		r.circuit("stt", "google", st)
-	})
-	r.googleLLMBreaker.SetObserver(func(st resilience.State) {
-		m.LLMCircuitStateGoogle.Store(circuitCode(string(st)))
-		r.circuit("llm", "google", st)
-	})
-	r.googleTTSBreaker.SetObserver(func(st resilience.State) {
-		m.TTSCircuitStateGoogle.Store(circuitCode(string(st)))
-		r.circuit("tts", "google", st)
-	})
-	r.xaiLLMBreaker.SetObserver(func(st resilience.State) {
-		m.LLMCircuitStateXAI.Store(circuitCode(string(st)))
-		r.circuit("llm", "xai", st)
-	})
-	r.xaiSTTBreaker.SetObserver(func(st resilience.State) {
-		m.STTCircuitStateXAI.Store(circuitCode(string(st)))
-		r.circuit("stt", "xai", st)
-	})
-	r.xaiTTSBreaker.SetObserver(func(st resilience.State) {
-		m.TTSCircuitStateXAI.Store(circuitCode(string(st)))
-		r.circuit("tts", "xai", st)
-	})
-	// The simulated provider's breakers join the dynamic gauges (endpoint "simulated").
-	for stage, br := range map[string]*resilience.Breaker{"stt": r.echoSTTBreaker, "llm": r.echoLLMBreaker, "tts": r.echoTTSBreaker} {
-		m.circuits.set(stage, "echo", "simulated", 0)
-		br.SetObserver(func(st resilience.State) {
-			m.circuits.set(stage, "echo", "simulated", circuitCode(string(st)))
-			r.circuit(stage, "echo", st)
-		})
-	}
-	// So do the text-only speech provider's (endpoint "text"; it has no model stage).
-	for stage, br := range map[string]*resilience.Breaker{"stt": r.silenceSTTBreaker, "tts": r.silenceTTSBreaker} {
-		m.circuits.set(stage, silenceProvider, "text", 0)
-		br.SetObserver(func(st resilience.State) {
-			m.circuits.set(stage, silenceProvider, "text", circuitCode(string(st)))
-			r.circuit(stage, silenceProvider, st)
-		})
-	}
-	// So do the local stack's (endpoint "local"), for the stages this build has.
-	for stage, br := range map[string]*resilience.Breaker{"stt": r.offlineSTTBreaker, "llm": r.offlineLLMBreaker, "tts": r.offlineTTSBreaker} {
-		if !r.Supports("offline", stage) {
-			continue
+	// The fixed circuits show at 0 from the start; the others (nvidia) from first use.
+	for _, p := range []string{"google", "xai", "echo", silenceProvider, "offline"} {
+		for _, stage := range strings.Fields(breakerSpecs[p].stages) {
+			if p != "offline" || r.Supports(p, stage) { // the local stack only for the stages this build has
+				r.breaker(stage, p)
+				m.circuits.ensure(r.circuitOf(stage, p))
+			}
 		}
-		m.circuits.set(stage, "offline", "local", 0)
-		br.SetObserver(func(st resilience.State) {
-			m.circuits.set(stage, "offline", "local", circuitCode(string(st)))
-			r.circuit(stage, "offline", st)
+	}
+}
+
+// breakerSpec is how a provider's breakers are keyed and reported.
+type breakerSpec struct {
+	stages   string // the stages that have a breaker
+	endpoint string // the endpoint label of voice_<stage>_circuit_state; "" for none
+	observed bool   // exports the gauge and reports transitions to call timelines (/ready, probes, timelines)
+}
+
+// breakerSpecs lists every provider stage with a breaker; openai has one per base URL (openaiBreaker),
+// nvidia one per hosted endpoint. deepgram, cartesia and elevenlabs are not observed.
+var breakerSpecs = map[string]breakerSpec{
+	"google":        {"stt llm tts", "", true},
+	"xai":           {"stt llm tts", "", true},
+	"echo":          {"stt llm tts", "simulated", true},
+	silenceProvider: {"stt tts", "text", true},
+	"offline":       {"stt llm tts", "local", true},
+	"nvidia":        {"stt llm tts", "", true}, // endpoint: the stage's hosted host (circuitOf)
+	"deepgram":      {"stt", "", false},
+	"cartesia":      {"stt tts", "", false},
+	"elevenlabs":    {"stt tts", "", false},
+}
+
+// circuitOf is the circuit of a provider stage.
+func (r *Registry) circuitOf(stage, provider string) circuitKey {
+	if provider == "nvidia" {
+		return circuitKey{stage, provider, nvidiaEndpoint(stage)}
+	}
+	return circuitKey{stage, provider, breakerSpecs[provider].endpoint}
+}
+
+// breaker is the breaker of a provider stage (nil when it has none). Factories and failover
+// both take it from here, so failover checks the breaker the processor records on.
+func (r *Registry) breaker(stage, provider string) *resilience.Breaker {
+	sp, ok := breakerSpecs[provider]
+	if !ok || !slices.Contains(strings.Fields(sp.stages), stage) {
+		return nil
+	}
+	return r.keyed(r.circuitOf(stage, provider), sp.observed)
+}
+
+// openaiBreaker is the breaker of one openai-compatible base URL. It is not observed: the base
+// URL is a tenant's and must not become a metric label, and call timelines key by provider only,
+// so one tenant's outage would show on every openai call.
+func (r *Registry) openaiBreaker(baseURL string) *resilience.Breaker {
+	return r.keyed(circuitKey{"llm", "openai", baseURL}, false)
+}
+
+func (r *Registry) keyed(k circuitKey, observed bool) *resilience.Breaker {
+	if b, ok := r.breakers.Load(k); ok {
+		return b.(*resilience.Breaker)
+	}
+	b := resilience.NewBreaker(resilience.DefaultConfig())
+	if observed { // before the store: no transition is missed, and a live state is never reset
+		if m := r.metrics.Load(); m != nil {
+			m.circuits.ensure(k)
+		}
+		b.SetObserver(func(st resilience.State) {
+			if m := r.metrics.Load(); m != nil {
+				m.circuits.set(k.stage, k.provider, k.endpoint, circuitCode(string(st)))
+			}
+			r.circuit(k.stage, k.provider, st)
 		})
 	}
+	got, _ := r.breakers.LoadOrStore(k, b)
+	return got.(*resilience.Breaker)
 }
 
 // circuit passes a breaker state report on to the server's call timelines.

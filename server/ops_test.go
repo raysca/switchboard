@@ -33,7 +33,7 @@ func TestNvidiaBreakerStateIsObservable(t *testing.T) {
 	enableTestManagement(t, s)
 	s.ready.Store(true)
 
-	br := s.registry.nvidiaBreaker("llm|" + nvidiaNIMBaseURL)
+	br := s.registry.breaker("llm", "nvidia")
 	if out := scrape(t, s); !strings.Contains(out, `voice_llm_circuit_state{provider="nvidia",endpoint="integrate.api.nvidia.com"} 0`) {
 		t.Fatalf("closed nvidia breaker not exported:\n%s", out)
 	}
@@ -149,7 +149,7 @@ func TestEchoBreakerStateIsObservable(t *testing.T) {
 		t.Fatalf("closed echo breaker not exported:\n%s", out)
 	}
 	for i := 0; i < 5; i++ {
-		s.registry.echoLLMBreaker.RecordFailure()
+		s.registry.breaker("llm", "echo").RecordFailure()
 	}
 	if out := scrape(t, s); !strings.Contains(out, `voice_llm_circuit_state{provider="echo",endpoint="simulated"} 1`) {
 		t.Fatalf("open echo breaker not exported:\n%s", out)

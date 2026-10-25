@@ -113,7 +113,7 @@ func TestCircuitStateReadsTheGaugesAndTheWorstEndpointWins(t *testing.T) {
 		code int64
 		want string
 	}{{0, "closed"}, {1, "open"}, {2, "half_open"}} {
-		m.LLMCircuitStateGoogle.Store(tc.code)
+		m.circuits.set("llm", "google", "", tc.code)
 		if got := m.circuitState("google", "llm"); got != tc.want {
 			t.Errorf("code %d: %q, want %q", tc.code, got, tc.want)
 		}

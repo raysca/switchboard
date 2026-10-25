@@ -235,7 +235,7 @@ func TestElevenLabsSTTFactoryRegisteredAndValidatesKey(t *testing.T) {
 	if !reg.Supports("elevenlabs", "stt") || !reg.Supports("elevenlabs", "tts") || reg.Supports("elevenlabs", "llm") {
 		t.Fatal("elevenlabs offers stt and tts")
 	}
-	if reg.sttBreaker("elevenlabs") == nil || reg.sttBreaker("elevenlabs") == reg.elevenlabsBreaker {
+	if reg.breaker("stt", "elevenlabs") == nil || reg.breaker("stt", "elevenlabs") == reg.breaker("tts", "elevenlabs") {
 		t.Fatal("elevenlabs STT needs its own breaker")
 	}
 	f := reg.factories["elevenlabs.stt"]
@@ -305,7 +305,7 @@ func TestCartesiaSTTFactoryRegisteredAndValidatesKey(t *testing.T) {
 	if _, ok := p.(core.STTCounters); !ok {
 		t.Fatal("cartesia stt must report STT counters")
 	}
-	if reg.sttBreaker("cartesia") != reg.cartesiaSTTBreaker || reg.cartesiaSTTBreaker == reg.cartesiaBreaker {
+	if reg.breaker("stt", "cartesia") != reg.breaker("stt", "cartesia") || reg.breaker("stt", "cartesia") == reg.breaker("tts", "cartesia") {
 		t.Fatal("cartesia stt needs its own breaker")
 	}
 	_ = p.(interface{ Close() error }).Close()
@@ -344,8 +344,8 @@ func TestOpenAILLMFactoryAndCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Breakers are per base URL.
-	a, _ := reg.openaiBreakers.Load("https://api.groq.com/openai/v1")
-	b, _ := reg.openaiBreakers.Load("http://10.0.0.5:8000/v1")
+	a, _ := reg.breakers.Load(circuitKey{"llm", "openai", "https://api.groq.com/openai/v1"})
+	b, _ := reg.breakers.Load(circuitKey{"llm", "openai", "http://10.0.0.5:8000/v1"})
 	if a == nil || b == nil || a == b {
 		t.Fatal("openai breakers must be scoped per base URL")
 	}

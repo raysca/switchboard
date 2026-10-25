@@ -29,7 +29,7 @@ func registerXAISpeech(r *Registry) {
 		if cfg.Providers.XAISTT.Endpoint != "" {
 			sttCfg.Endpoint = cfg.Providers.XAISTT.Endpoint
 		}
-		sttCfg.APIKey, sttCfg.CircuitBreaker = key, r.xaiSTTBreaker
+		sttCfg.APIKey, sttCfg.CircuitBreaker = key, r.breaker("stt", "xai")
 		if spec.Failover {
 			sttCfg.RetryPolicy = failoverPolicy("stt", sttCfg.RetryPolicy)
 		}
@@ -52,7 +52,7 @@ func registerXAISpeech(r *Registry) {
 		if cfg.Providers.GoogleTTS.SampleRate > 0 {
 			ttsCfg.SampleRate = cfg.Providers.GoogleTTS.SampleRate
 		}
-		ttsCfg.APIKey, ttsCfg.CircuitBreaker = key, r.xaiTTSBreaker
+		ttsCfg.APIKey, ttsCfg.CircuitBreaker = key, r.breaker("tts", "xai")
 		if spec.Failover {
 			ttsCfg.RetryPolicy = failoverPolicy("tts", ttsCfg.RetryPolicy)
 		}

@@ -19,7 +19,7 @@ func populatedScrape(t *testing.T) string {
 	s := apiTestServer(t)
 	s.metrics.OTelStats = func() (uint64, uint64) { return 0, 0 }
 	s.metrics.SmartTurnWorkers = func() (int, int) { return 1, 1 }
-	s.registry.nvidiaBreaker("llm|" + nvidiaNIMBaseURL)
+	s.registry.breaker("llm", "nvidia")
 	s.metrics.providerErrors.add("nvidia", "llm", 1)
 	netpool.CountRequest("google", "llm")
 	return scrape(t, s)

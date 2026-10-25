@@ -26,21 +26,13 @@ const (
 	nvidiaNIMModel = "openai/gpt-oss-20b"
 )
 
-// nvidiaBreaker returns the breaker for key ("llm|<base url>", "stt|<endpoint>", "tts|<endpoint>");
-// the endpoint is the metric label. Only the three hosted endpoints exist.
-func (r *Registry) nvidiaBreaker(key string) *resilience.Breaker {
-	br, loaded := r.nvidiaBreakers.LoadOrStore(key, resilience.NewBreaker(resilience.DefaultConfig()))
-	b := br.(*resilience.Breaker)
-	if !loaded && r.metrics != nil { // first use: export the gauge (voice_<stage>_circuit_state, /ready)
-		stage, endpoint, _ := strings.Cut(key, "|")
-		endpoint = endpointLabel(endpoint)
-		r.metrics.circuits.set(stage, "nvidia", endpoint, 0)
-		b.SetObserver(func(st resilience.State) {
-			r.metrics.circuits.set(stage, "nvidia", endpoint, circuitCode(string(st)))
-			r.circuit(stage, "nvidia", st)
-		})
+// nvidiaEndpoint is the endpoint label of an nvidia stage's breaker. Only the hosted endpoints
+// exist, so a secret never names a breaker.
+func nvidiaEndpoint(stage string) string {
+	if stage == "llm" {
+		return endpointLabel(nvidiaNIMBaseURL)
 	}
-	return b
+	return endpointLabel(nvidia.DefaultEndpoint)
 }
 
 // endpointLabel reduces a base URL or host:port to host[:port] for a metric label
@@ -92,7 +84,7 @@ func (r *Registry) registerNvidia() {
 		if model == "" {
 			model = nvidiaNIMModel
 		}
-		oaCfg := nvidiaLLMConfig(spec, model, key, r.nvidiaBreaker("llm|"+nvidiaNIMBaseURL))
+		oaCfg := nvidiaLLMConfig(spec, model, key, r.breaker("llm", "nvidia"))
 		if len(spec.Tools) > 0 {
 			loop, err := coretools.NewToolLoop(spec.Tools, spec.ToolExecutor, spec.History, spec.toolLoopConfig())
 			if err != nil {
@@ -116,7 +108,7 @@ func (r *Registry) registerNvidia() {
 		if spec.Language != "" {
 			sttCfg.Language = spec.Language
 		}
-		sttCfg.CircuitBreaker = r.sttBreaker("nvidia")
+		sttCfg.CircuitBreaker = r.breaker("stt", "nvidia")
 		if spec.Failover {
 			sttCfg.RetryPolicy = failoverPolicy("stt", sttCfg.RetryPolicy)
 		}
@@ -142,7 +134,7 @@ func (r *Registry) registerNvidia() {
 			ttsCfg.Model = spec.Model
 		}
 		ttsCfg.SampleRate = ttsRate(cfg)
-		ttsCfg.CircuitBreaker = r.ttsBreaker("nvidia")
+		ttsCfg.CircuitBreaker = r.breaker("tts", "nvidia")
 		if spec.Failover {
 			ttsCfg.RetryPolicy = failoverPolicy("tts", ttsCfg.RetryPolicy)
 		}

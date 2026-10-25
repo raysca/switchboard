@@ -25,8 +25,8 @@ func TestMetrics_ExpositionFormatAndBoundedLabels(t *testing.T) {
 	m.AdmissionRejectsLimit.Add(2)
 	m.LeakedWorkTotal.Add(1)
 	m.LeakedSessionsTotal.Add(1)
-	m.LLMCircuitStateGoogle.Store(0)
-	m.LLMCircuitStateXAI.Store(1)
+	m.circuits.set("llm", "google", "", 0)
+	m.circuits.set("llm", "xai", "", 1)
 	m.MCPSyncOKTotal.Add(3)
 	m.MCPSyncFailedTotal.Add(1)
 

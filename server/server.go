@@ -965,23 +965,18 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 
 // circuitReport lists the circuits of providers built into this binary, for
 // diagnosis; calls are per agent, so an open circuit only affects agents using
-// that provider. Nvidia breakers are per endpoint: "nvidia_<stage>:<endpoint>".
+// that provider. Keys are "<provider>_<stage>", with ":<endpoint>" for a circuit that has one.
 func (s *Server) circuitReport() map[string]string {
-	m := s.metrics
 	out := map[string]string{}
-	add := func(provider, stage string, v *atomic.Int64) {
-		if s.registry.Supports(provider, stage) {
-			out[provider+"_"+stage] = circuitStateName(v.Load())
+	for k, v := range s.metrics.circuits.snapshot() {
+		if !s.registry.Supports(k.provider, k.stage) {
+			continue
 		}
-	}
-	add("google", "stt", &m.STTCircuitStateGoogle)
-	add("google", "llm", &m.LLMCircuitStateGoogle)
-	add("google", "tts", &m.TTSCircuitStateGoogle)
-	add("xai", "stt", &m.STTCircuitStateXAI)
-	add("xai", "llm", &m.LLMCircuitStateXAI)
-	add("xai", "tts", &m.TTSCircuitStateXAI)
-	for k, v := range m.circuits.snapshot() {
-		out[k.provider+"_"+k.stage+":"+k.endpoint] = circuitStateName(v)
+		key := k.provider + "_" + k.stage
+		if k.endpoint != "" {
+			key += ":" + k.endpoint
+		}
+		out[key] = circuitStateName(v)
 	}
 	return out
 }

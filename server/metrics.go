@@ -57,24 +57,18 @@ type Metrics struct {
 	STTErrorsTotal           atomic.Uint64
 	STTRotationsTotal        atomic.Uint64
 	STTRotationFailuresTotal atomic.Uint64
-	STTCircuitStateGoogle    atomic.Int64
-	STTCircuitStateXAI       atomic.Int64
 
 	// LLM Metrics
 	LLMRequestsTotal        atomic.Uint64
 	LLMErrorsTotal          atomic.Uint64
 	LLMRetriesTotal         atomic.Uint64
 	LLMStaleDeltasDiscarded atomic.Uint64
-	LLMCircuitStateGoogle   atomic.Int64 // 0=Closed, 1=Open, 2=HalfOpen
-	LLMCircuitStateXAI      atomic.Int64
 
 	// TTS Metrics
 	TTSRequestsTotal       atomic.Uint64
 	TTSErrorsTotal         atomic.Uint64
 	TTSRetriesTotal        atomic.Uint64
 	TTSStaleAudioDiscarded atomic.Uint64
-	TTSCircuitStateGoogle  atomic.Int64
-	TTSCircuitStateXAI     atomic.Int64
 
 	// Transport Metrics
 	ConnectedClients       atomic.Int64
@@ -97,7 +91,7 @@ type Metrics struct {
 
 	TurnsTotal atomic.Uint64 // recorded call turns
 
-	// circuits holds breakers that exist per endpoint (nvidia: one per NIM base URL / Riva endpoint);
+	// circuits holds the gauge of every observed breaker (Registry.breaker);
 	// providerErrors counts stage errors per provider (see Server.recordProcessorMetrics).
 	circuits       dynamicCircuits
 	providerErrors providerErrors
@@ -262,8 +256,6 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	)
 	fmt.Fprintf(w, "# HELP voice_stt_circuit_state STT circuit state (0=closed, 1=open, 2=half_open).\n")
 	fmt.Fprintf(w, "# TYPE voice_stt_circuit_state gauge\n")
-	fmt.Fprintf(w, "voice_stt_circuit_state{provider=\"google\"} %d\n", m.STTCircuitStateGoogle.Load())
-	fmt.Fprintf(w, "voice_stt_circuit_state{provider=\"xai\"} %d\n", m.STTCircuitStateXAI.Load())
 	m.circuits.write(w, "stt")
 
 	// LLM
@@ -275,8 +267,6 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	)
 	fmt.Fprintf(w, "# HELP voice_llm_circuit_state Circuit state (0=closed, 1=open, 2=half_open).\n")
 	fmt.Fprintf(w, "# TYPE voice_llm_circuit_state gauge\n")
-	fmt.Fprintf(w, "voice_llm_circuit_state{provider=\"google\"} %d\n", m.LLMCircuitStateGoogle.Load())
-	fmt.Fprintf(w, "voice_llm_circuit_state{provider=\"xai\"} %d\n", m.LLMCircuitStateXAI.Load())
 	m.circuits.write(w, "llm")
 
 	// TTS
@@ -288,8 +278,6 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	)
 	fmt.Fprintf(w, "# HELP voice_tts_circuit_state TTS circuit state (0=closed, 1=open, 2=half_open).\n")
 	fmt.Fprintf(w, "# TYPE voice_tts_circuit_state gauge\n")
-	fmt.Fprintf(w, "voice_tts_circuit_state{provider=\"google\"} %d\n", m.TTSCircuitStateGoogle.Load())
-	fmt.Fprintf(w, "voice_tts_circuit_state{provider=\"xai\"} %d\n", m.TTSCircuitStateXAI.Load())
 	m.circuits.write(w, "tts")
 
 	m.providerErrors.write(w)
@@ -382,7 +370,7 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	)
 }
 
-// dynamicCircuits is the circuit gauge of breakers created per endpoint at run time.
+// dynamicCircuits is the circuit gauge of every observed breaker (Registry.breaker).
 type dynamicCircuits struct {
 	mu sync.Mutex
 	m  map[circuitKey]*atomic.Int64
@@ -391,8 +379,15 @@ type dynamicCircuits struct {
 type circuitKey struct{ stage, provider, endpoint string }
 
 func (d *dynamicCircuits) set(stage, provider, endpoint string, state int64) {
-	k := circuitKey{stage, provider, endpoint}
+	d.gauge(circuitKey{stage, provider, endpoint}).Store(state)
+}
+
+// ensure exports k's gauge at 0 (closed) unless it already exists.
+func (d *dynamicCircuits) ensure(k circuitKey) { d.gauge(k) }
+
+func (d *dynamicCircuits) gauge(k circuitKey) *atomic.Int64 {
 	d.mu.Lock()
+	defer d.mu.Unlock()
 	if d.m == nil {
 		d.m = map[circuitKey]*atomic.Int64{}
 	}
@@ -401,8 +396,7 @@ func (d *dynamicCircuits) set(stage, provider, endpoint string, state int64) {
 		g = new(atomic.Int64)
 		d.m[k] = g
 	}
-	d.mu.Unlock()
-	g.Store(state)
+	return g
 }
 
 func (d *dynamicCircuits) snapshot() map[circuitKey]int64 {
@@ -431,7 +425,11 @@ func (d *dynamicCircuits) write(w io.Writer, stage string) {
 		return keys[i].endpoint < keys[j].endpoint
 	})
 	for _, k := range keys {
-		fmt.Fprintf(w, "voice_%s_circuit_state{provider=%q,endpoint=%q} %d\n", stage, k.provider, k.endpoint, snap[k])
+		if k.endpoint == "" {
+			fmt.Fprintf(w, "voice_%s_circuit_state{provider=%q} %d\n", stage, k.provider, snap[k])
+		} else {
+			fmt.Fprintf(w, "voice_%s_circuit_state{provider=%q,endpoint=%q} %d\n", stage, k.provider, k.endpoint, snap[k])
+		}
 	}
 }
 

@@ -55,31 +55,6 @@ func sttClassify(err error) string {
 	return agent.ClassOf(err, resilience.Verdict{ClientError: client})
 }
 
-// sttBreaker is the breaker an STT stage of this provider uses (nil if unknown).
-func (r *Registry) sttBreaker(provider string) *resilience.Breaker {
-	switch provider {
-	case "google":
-		return r.googleSTTBreaker
-	case "echo":
-		return r.echoSTTBreaker
-	case silenceProvider:
-		return r.silenceSTTBreaker
-	case "xai":
-		return r.xaiSTTBreaker
-	case "offline":
-		return r.offlineSTTBreaker
-	case "deepgram":
-		return r.deepgramBreaker
-	case "nvidia":
-		return r.nvidiaBreaker("stt|" + nvidia.DefaultEndpoint)
-	case "cartesia":
-		return r.cartesiaSTTBreaker
-	case "elevenlabs":
-		return r.elevenlabsSTTBreaker
-	}
-	return nil
-}
-
 // buildSTT builds the STT stage: the primary alone (the pre-failover pipeline,
 // unchanged: no wrapper, no audio copies) or, with fallbacks, a core.STTFailover
 // over the chain. Fallbacks that cannot be built are skipped (counted in
@@ -104,7 +79,7 @@ func (r *Registry) buildSTT(cfg *Config, call CallSpec, build func(string, Stage
 			continue
 		}
 		c := core.STTCandidate{Provider: sp.Provider, Proc: p}
-		br := r.sttBreaker(sp.Provider)
+		br := r.breaker("stt", sp.Provider)
 		if br != nil {
 			c.Open = br.WouldRefuse
 		}

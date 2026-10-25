@@ -20,14 +20,14 @@ const silenceProvider = agent.SilenceProvider
 // with breakers of their own so a silence outage never touches echo's. The model is chosen separately.
 func registerSilence(r *Registry) {
 	r.Register("silence.stt", func(cfg *Config, spec StageSpec) (core.Processor, error) {
-		sttCfg := googleSTTConfig(cfg, spec, r.silenceSTTBreaker)
+		sttCfg := googleSTTConfig(cfg, spec, r.breaker("stt", silenceProvider))
 		sttCfg.Provider = silenceProvider
 		sttCfg.StreamOpener = silenceSTTOpener{}
 		return google.NewSTTProcessor(sttCfg)
 	})
 
 	r.Register("silence.tts", func(cfg *Config, spec StageSpec) (core.Processor, error) {
-		ttsCfg := googleTTSConfig(cfg, spec, r.silenceTTSBreaker)
+		ttsCfg := googleTTSConfig(cfg, spec, r.breaker("tts", silenceProvider))
 		ttsCfg.Provider = silenceProvider
 		ttsCfg.Client = silenceTTSClient{}
 		return googleTTSProcessor(cfg, ttsCfg)

@@ -71,24 +71,13 @@ func llmClassify(err error) string {
 
 // llmBreaker is the breaker an LLM stage of this provider uses (nil if unknown).
 func (r *Registry) llmBreaker(spec StageSpec) *resilience.Breaker {
-	switch spec.Provider {
-	case "google":
-		return r.googleLLMBreaker
-	case "echo":
-		return r.echoLLMBreaker
-	case "xai":
-		return r.xaiLLMBreaker
-	case "offline":
-		return r.offlineLLMBreaker
-	case "nvidia":
-		return r.nvidiaBreaker("llm|" + nvidiaNIMBaseURL)
-	case "openai":
+	if spec.Provider == "openai" {
 		if _, baseURL, err := openAICredential(spec.Secret); err == nil {
-			br, _ := r.openaiBreakers.LoadOrStore(baseURL, resilience.NewBreaker(resilience.DefaultConfig()))
-			return br.(*resilience.Breaker)
+			return r.openaiBreaker(baseURL)
 		}
+		return nil
 	}
-	return nil
+	return r.breaker("llm", spec.Provider)
 }
 
 // countingExecutor counts tool executions so a failed generation that already

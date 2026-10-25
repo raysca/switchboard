@@ -1,6 +1,7 @@
 package server
 
 import (
+	"strings"
 	"testing"
 
 	"govoice/core"
@@ -26,7 +27,7 @@ func TestNvidiaLLM(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = p.(core.LLMCounters)
-	if _, ok := reg.nvidiaBreakers.Load("llm|" + nvidiaNIMBaseURL); !ok {
+	if _, ok := reg.breakers.Load(circuitKey{"llm", "nvidia", "integrate.api.nvidia.com"}); !ok {
 		t.Fatal("breaker not keyed by the NIM base URL")
 	}
 	self := []byte(`{"api_key":"k","base_url":"http://10.0.0.5:8000/v1"}`)
@@ -53,10 +54,13 @@ func TestNvidiaSTT(t *testing.T) {
 	if _, err := build(&Config{}, StageSpec{Secret: []byte(`{"endpoint":"riva.internal:50051","use_tls":false}`)}); err == nil {
 		t.Fatal("self-hosted Riva endpoint honoured")
 	}
-	if _, ok := reg.nvidiaBreakers.Load("stt|riva.internal:50051"); ok {
-		t.Fatal("breaker created for a self-hosted endpoint")
-	}
-	if reg.sttBreaker("nvidia") == nil {
+	reg.breakers.Range(func(k, _ any) bool {
+		if strings.Contains(k.(circuitKey).endpoint, "riva.internal") {
+			t.Fatal("breaker created for a self-hosted endpoint")
+		}
+		return true
+	})
+	if reg.breaker("stt", "nvidia") == nil {
 		t.Fatal("no stt breaker for failover")
 	}
 }
@@ -83,7 +87,7 @@ func TestNvidiaTTS(t *testing.T) {
 	if _, ok := p.(core.TTSCounters); !ok {
 		t.Fatal("nvidia TTS must export counters")
 	}
-	if reg.ttsBreaker("nvidia") == nil || reg.ttsBreaker("nvidia") == reg.sttBreaker("nvidia") {
+	if reg.breaker("tts", "nvidia") == nil || reg.breaker("tts", "nvidia") == reg.breaker("stt", "nvidia") {
 		t.Fatal("nvidia TTS needs its own breaker")
 	}
 	// NVCF hosts ASR and TTS as separate functions: tts_function_id wins for TTS.

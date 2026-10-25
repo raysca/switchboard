@@ -11,7 +11,7 @@ import (
 // M3-04: one xAI stage's outage must not block the others.
 func TestXAIBreakersAreSplitPerStage(t *testing.T) {
 	r := NewRegistry()
-	llm, stt, tts := r.llmBreaker(StageSpec{Provider: "xai"}), r.sttBreaker("xai"), r.ttsBreaker("xai")
+	llm, stt, tts := r.llmBreaker(StageSpec{Provider: "xai"}), r.breaker("stt", "xai"), r.breaker("tts", "xai")
 	if llm == nil || stt == nil || tts == nil || llm == stt || llm == tts || stt == tts {
 		t.Fatalf("xai stages share a breaker: llm=%p stt=%p tts=%p", llm, stt, tts)
 	}

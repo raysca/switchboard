@@ -39,7 +39,7 @@ func registerOffline(r *Registry) {
 		if err := offlineEndpoint("llm_endpoint", cfg.Providers.Offline.LLMEndpoint); err != nil {
 			return nil, err
 		}
-		return xaiLLMProcessor(spec, cfg.Providers.Offline.LLMEndpoint, offlineBearer, r.offlineLLMBreaker, "offline.llm")
+		return xaiLLMProcessor(spec, cfg.Providers.Offline.LLMEndpoint, offlineBearer, r.breaker("llm", "offline"), "offline.llm")
 	})
 	registerOfflineSpeech(r)
 }

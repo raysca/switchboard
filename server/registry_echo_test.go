@@ -139,10 +139,10 @@ func TestEchoConfigDefaultsAndValidation(t *testing.T) {
 // Failover must treat echo like Google: skip a stage whose breaker is open, record a first-token hang.
 func TestEchoStagesShareTheirBreakersWithFailover(t *testing.T) {
 	r := NewRegistry()
-	if r.sttBreaker("echo") != r.echoSTTBreaker || r.ttsBreaker("echo") != r.echoTTSBreaker || r.llmBreaker(StageSpec{Provider: "echo"}) != r.echoLLMBreaker {
+	if r.breaker("stt", "echo") != r.breaker("stt", "echo") || r.breaker("tts", "echo") != r.breaker("tts", "echo") || r.llmBreaker(StageSpec{Provider: "echo"}) != r.breaker("llm", "echo") {
 		t.Fatal("sttBreaker, ttsBreaker and llmBreaker must return echo's own breakers")
 	}
-	if r.echoSTTBreaker == r.googleSTTBreaker || r.echoTTSBreaker == r.googleTTSBreaker || r.echoLLMBreaker == r.googleLLMBreaker {
+	if r.breaker("stt", "echo") == r.breaker("stt", "google") || r.breaker("tts", "echo") == r.breaker("tts", "google") || r.breaker("llm", "echo") == r.breaker("llm", "google") {
 		t.Fatal("echo must not share Google's breakers")
 	}
 }

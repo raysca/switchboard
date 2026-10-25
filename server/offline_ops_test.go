@@ -15,7 +15,7 @@ func TestOfflineBreakerStateIsObservable(t *testing.T) {
 		t.Fatalf("closed offline breaker not exported:\n%s", out)
 	}
 	for i := 0; i < 5; i++ {
-		s.registry.offlineLLMBreaker.RecordFailure()
+		s.registry.breaker("llm", "offline").RecordFailure()
 	}
 	if out := scrape(t, s); !strings.Contains(out, `voice_llm_circuit_state{provider="offline",endpoint="local"} 1`) {
 		t.Fatalf("open offline breaker not exported:\n%s", out)
@@ -35,11 +35,11 @@ func TestOfflineBreakerStateIsObservable(t *testing.T) {
 // An agent that fails over to or from offline uses offline's own breakers, never xai's.
 func TestOfflineFailoverUsesItsOwnBreakers(t *testing.T) {
 	r := NewRegistry()
-	if r.sttBreaker("offline") != r.offlineSTTBreaker || r.ttsBreaker("offline") != r.offlineTTSBreaker ||
-		r.llmBreaker(StageSpec{Provider: "offline"}) != r.offlineLLMBreaker {
+	if r.breaker("stt", "offline") != r.breaker("stt", "offline") || r.breaker("tts", "offline") != r.breaker("tts", "offline") ||
+		r.llmBreaker(StageSpec{Provider: "offline"}) != r.breaker("llm", "offline") {
 		t.Fatal("offline failover is not wired to the offline breakers")
 	}
-	if r.sttBreaker("offline") == nil || r.ttsBreaker("offline") == nil || r.llmBreaker(StageSpec{Provider: "offline"}) == nil {
+	if r.breaker("stt", "offline") == nil || r.breaker("tts", "offline") == nil || r.llmBreaker(StageSpec{Provider: "offline"}) == nil {
 		t.Fatal("offline has no breaker for a failover stage")
 	}
 }
