@@ -16,6 +16,9 @@ export PATH := $(PATH):$(HOME)/go/bin:/opt/homebrew/bin
 help: ## build|Show this help
 	@scripts/make-help.sh $(firstword $(MAKEFILE_LIST))
 
+deploy-cloudflare: ## deploy|Deploy Switchboard to Cloudflare Workers/Containers
+	cd deploy/cloudflare && npx wrangler deploy --config wrangler.jsonc
+
 # xAI STT/TTS are in launch scope: every build, vet and test of the shipped server uses -tags xaispeech
 # (the production Dockerfile does the same). Override with GOTAGS= to build without them.
 GOTAGS ?= xaispeech
@@ -135,7 +138,7 @@ proto-gen: ## build|Regenerate the protobuf frame code
 	@mkdir -p core/transport/v1/framespb
 	protoc --proto_path=proto --go_out=core/transport/v1/framespb --go_opt=Mframes.proto=govoice/core/transport/v1/framespb --go_opt=paths=source_relative frames.proto
 
-.PHONY: build test verify deadcode release-security proto-gen
+.PHONY: build test verify deadcode release-security proto-gen deploy-cloudflare
 
 # Postgres storage tests (skipped by `make test`; run by the `postgres` job in .github/workflows/ci.yml,
 # which provides a service container and sets TEST_POSTGRES_DSN). Uses TEST_POSTGRES_DSN if set,
