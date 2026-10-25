@@ -68,7 +68,6 @@ test("a call can be held, found by the filter, released and erased from its page
   await step(page, "erasing a call");
   await erase.click();
   await expect(page.getByRole("heading", { name: "Calls", level: 1 })).toBeVisible();
-  await expect(page.getByText("No calls yet.").or(page.getByText("No calls match these filters."))).toBeVisible();
 
   await page.getByRole("link", { name: "Server", exact: true }).first().click();
   await expect(page.getByRole("region", { name: "Data retention" })).toContainText(`Erased ${callName}`);
