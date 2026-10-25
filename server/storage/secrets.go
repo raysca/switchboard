@@ -64,20 +64,16 @@ func (r SecretsRepository) Changes(ctx context.Context, limit int) ([]SecretChan
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []SecretChange
-	for rows.Next() {
+	return collect(rows, nil, func(row rowScanner) (SecretChange, error) {
 		var c SecretChange
 		var at string
-		if err := rows.Scan(&at, &c.Action, &c.Name, &c.RequestID); err != nil {
-			return nil, err
+		if err := row.Scan(&at, &c.Action, &c.Name, &c.RequestID); err != nil {
+			return c, err
 		}
-		if c.At, err = parseTime(at); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
+		var err error
+		c.At, err = parseTime(at)
+		return c, err
+	})
 }
 
 // Get returns sql.ErrNoRows when the secret does not exist.
@@ -99,32 +95,23 @@ func (r SecretsRepository) List(ctx context.Context) ([]SecretRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []SecretRow
-	for rows.Next() {
+	return collect(rows, nil, func(sc rowScanner) (SecretRow, error) {
 		var row SecretRow
 		var created, updated string
 		var used sql.NullString
-		if err := rows.Scan(&row.Name, &row.KeyID, &row.Nonce, &row.Ciphertext, &created, &updated, &used); err != nil {
-			return nil, err
+		if err := sc.Scan(&row.Name, &row.KeyID, &row.Nonce, &row.Ciphertext, &created, &updated, &used); err != nil {
+			return row, err
 		}
-		if row, err = finishSecret(row, created, updated, used); err != nil {
-			return nil, err
-		}
-		out = append(out, row)
-	}
-	return out, rows.Err()
+		return finishSecret(row, created, updated, used)
+	})
 }
 
 // Delete returns sql.ErrNoRows when the secret does not exist. A non-empty requestID also records the change.
 func (r SecretsRepository) Delete(ctx context.Context, name, requestID string) error {
 	return r.s.WithTx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, r.s.bind("DELETE FROM secrets WHERE name=?"), name)
-		if err != nil {
+		if err := oneRow(res, err); err != nil {
 			return err
-		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			return sql.ErrNoRows
 		}
 		return r.audit(ctx, tx, "delete", name, requestID)
 	})
@@ -162,14 +149,9 @@ func (r SecretsRepository) Uses(ctx context.Context, name string) ([]SecretUse, 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []SecretUse
-	for rows.Next() {
+	return collect(rows, nil, func(row rowScanner) (SecretUse, error) {
 		u := SecretUse{Kind: "mcp_server"}
-		if err := rows.Scan(&u.ID, &u.Name); err != nil {
-			return nil, err
-		}
-		out = append(out, u)
-	}
-	return out, rows.Err()
+		err := row.Scan(&u.ID, &u.Name)
+		return u, err
+	})
 }

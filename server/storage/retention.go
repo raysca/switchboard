@@ -54,20 +54,14 @@ LIMIT ?`
 	if err != nil {
 		return res, err
 	}
-	defer rows.Close()
-
-	var sessionIDs []string
-	for rows.Next() {
+	sessionIDs, err := collect(rows, nil, func(row rowScanner) (string, error) {
 		var id, endedAt string
-		if err := rows.Scan(&id, &endedAt); err != nil {
-			return res, err
-		}
-		sessionIDs = append(sessionIDs, id)
-	}
-	if err := rows.Err(); err != nil {
+		err := row.Scan(&id, &endedAt)
+		return id, err
+	})
+	if err != nil {
 		return res, err
 	}
-	rows.Close()
 	res.Examined = len(sessionIDs)
 	if r.s.purgeContentHook != nil {
 		r.s.purgeContentHook()
@@ -131,24 +125,10 @@ WHERE status = 'ended'
 ORDER BY ended_at ASC
 LIMIT ?`
 
-	rows, err := r.s.db.QueryContext(ctx, r.s.bind(query), utc(cutoff), limit)
+	sessionIDs, err := queryIDs(ctx, r.s.db, r.s.bind(query), utc(cutoff), limit)
 	if err != nil {
 		return stats, err
 	}
-	defer rows.Close()
-
-	var sessionIDs []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return stats, err
-		}
-		sessionIDs = append(sessionIDs, id)
-	}
-	if err := rows.Err(); err != nil {
-		return stats, err
-	}
-	rows.Close()
 
 	const subBatchSize = 25
 	for i := 0; i < len(sessionIDs); i += subBatchSize {

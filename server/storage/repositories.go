@@ -36,16 +36,11 @@ func (r AgentRepository) SelectedTools(ctx context.Context, versionID string) ([
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []SelectedTool
-	for rows.Next() {
+	return collect(rows, nil, func(row rowScanner) (SelectedTool, error) {
 		var tool SelectedTool
-		if err := rows.Scan(&tool.ServerID, &tool.RemoteName, &tool.SchemaHash, &tool.Required); err != nil {
-			return nil, err
-		}
-		out = append(out, tool)
-	}
-	return out, rows.Err()
+		err := row.Scan(&tool.ServerID, &tool.RemoteName, &tool.SchemaHash, &tool.Required)
+		return tool, err
+	})
 }
 
 // ErrInvalidToolSelection: a selected MCP tool's server is missing, disabled or
@@ -144,25 +139,21 @@ func (r AgentRepository) List(ctx context.Context, limit, offset int) ([]Agent, 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var agents []Agent
-	for rows.Next() {
+	return collect(rows, nil, func(row rowScanner) (Agent, error) {
 		var a Agent
 		var current sql.NullString
 		var created, updated string
-		if err := rows.Scan(&a.ID, &a.Name, &a.Description, &a.Enabled, &a.Archived, &current, &created, &updated); err != nil {
-			return nil, err
+		if err := row.Scan(&a.ID, &a.Name, &a.Description, &a.Enabled, &a.Archived, &current, &created, &updated); err != nil {
+			return a, err
 		}
 		a.CurrentVersionID = current.String
+		var err error
 		if a.CreatedAt, err = parseTime(created); err != nil {
-			return nil, err
+			return a, err
 		}
-		if a.UpdatedAt, err = parseTime(updated); err != nil {
-			return nil, err
-		}
-		agents = append(agents, a)
-	}
-	return agents, rows.Err()
+		a.UpdatedAt, err = parseTime(updated)
+		return a, err
+	})
 }
 
 func (r AgentRepository) Version(ctx context.Context, id string) (AgentVersion, error) {
@@ -210,45 +201,28 @@ func (r AgentRepository) ListVersions(ctx context.Context, agentID string) ([]Ag
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []AgentVersionSummary
-	for rows.Next() {
+	return collect(rows, nil, func(row rowScanner) (AgentVersionSummary, error) {
 		var v AgentVersionSummary
 		var created string
-		if err := rows.Scan(&v.Number, &v.ConfigHash, &created, &v.MCPReviewRequired, &v.ToolCount); err != nil {
-			return nil, err
+		if err := row.Scan(&v.Number, &v.ConfigHash, &created, &v.MCPReviewRequired, &v.ToolCount); err != nil {
+			return v, err
 		}
-		if v.CreatedAt, err = parseTime(created); err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
+		var err error
+		v.CreatedAt, err = parseTime(created)
+		return v, err
+	})
 }
 
 // Unarchive makes an archived agent editable again. It stays disabled until it is enabled on purpose; sql.ErrNoRows
 // when the agent does not exist.
 func (r AgentRepository) Unarchive(ctx context.Context, id string) error {
 	result, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE agents SET archived=?,updated_at=? WHERE id=?"), boolValue(r.s.dialect, false), utc(time.Now()), id)
-	if err != nil {
-		return err
-	}
-	if n, _ := result.RowsAffected(); n == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
+	return oneRow(result, err)
 }
 
 func (r AgentRepository) Archive(ctx context.Context, id string) error {
 	result, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE agents SET archived=?,enabled=?,updated_at=? WHERE id=?"), boolValue(r.s.dialect, true), boolValue(r.s.dialect, false), utc(time.Now()), id)
-	if err != nil {
-		return err
-	}
-	n, _ := result.RowsAffected()
-	if n == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
+	return oneRow(result, err)
 }
 
 type MCPServer struct {
@@ -320,42 +294,40 @@ func (r MCPRepository) ListServers(ctx context.Context) ([]MCPServer, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []MCPServer
-	for rows.Next() {
+	return collect(rows, nil, func(row rowScanner) (MCPServer, error) {
 		var m MCPServer
 		var auth string
 		var latest, connected, discovered, checked sql.NullString
 		var enabled bool
 		var created, updated string
-		if err := rows.Scan(&m.ID, &m.Name, &m.Description, &m.Endpoint, &m.Transport, &auth, &enabled, &m.ValidationState, &latest, &connected, &discovered, &checked, &created, &updated, &m.PendingDelete); err != nil {
-			return nil, err
+		if err := row.Scan(&m.ID, &m.Name, &m.Description, &m.Endpoint, &m.Transport, &auth, &enabled, &m.ValidationState, &latest, &connected, &discovered, &checked, &created, &updated, &m.PendingDelete); err != nil {
+			return m, err
 		}
 		m.AuthEnv, m.LatestDiscoveryID, m.Enabled = auth, latest.String, enabled
+		var err error
 		if m.CreatedAt, err = parseTime(created); err != nil {
-			return nil, err
+			return m, err
 		}
 		if m.UpdatedAt, err = parseTime(updated); err != nil {
-			return nil, err
+			return m, err
 		}
 		if connected.Valid {
 			if m.LastConnectedAt, err = parseTime(connected.String); err != nil {
-				return nil, err
+				return m, err
 			}
 		}
 		if discovered.Valid {
 			if m.LastDiscoveredAt, err = parseTime(discovered.String); err != nil {
-				return nil, err
+				return m, err
 			}
 		}
 		if checked.Valid {
 			if m.LastCheckedAt, err = parseTime(checked.String); err != nil {
-				return nil, err
+				return m, err
 			}
 		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+		return m, nil
+	})
 }
 
 func (r MCPRepository) LatestDiscovery(ctx context.Context, serverID string) (MCPDiscovery, error) {
@@ -372,17 +344,7 @@ func (r MCPRepository) LatestDiscovery(ctx context.Context, serverID string) (MC
 
 func (r MCPRepository) SetValidation(ctx context.Context, id, state string, connected, discovered time.Time) error {
 	result, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE mcp_servers SET validation_state=?,last_connected_at=COALESCE(?,last_connected_at),last_discovered_at=COALESCE(?,last_discovered_at),last_checked_at=?,updated_at=? WHERE id=?"), state, nullTime(connected), nullTime(discovered), utc(time.Now()), utc(time.Now()), id)
-	if err != nil {
-		return err
-	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n != 1 {
-		return sql.ErrNoRows
-	}
-	return nil
+	return oneRow(result, err)
 }
 
 var ErrMCPReferenced = errors.New("MCP server is referenced by a current agent or active session")
@@ -401,16 +363,11 @@ func (r MCPRepository) CurrentReferences(ctx context.Context, id string) ([]MCPA
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []MCPAgentReference
-	for rows.Next() {
+	return collect(rows, nil, func(row rowScanner) (MCPAgentReference, error) {
 		var ref MCPAgentReference
-		if err := rows.Scan(&ref.AgentID, &ref.AgentName, &ref.AgentVersionID, &ref.RemoteName, &ref.Required); err != nil {
-			return nil, err
-		}
-		out = append(out, ref)
-	}
-	return out, rows.Err()
+		err := row.Scan(&ref.AgentID, &ref.AgentName, &ref.AgentVersionID, &ref.RemoteName, &ref.Required)
+		return ref, err
+	})
 }
 
 // UpdateServer stores an edit's name, description, endpoint and auth_env. With resetValidation
@@ -425,47 +382,17 @@ func (r MCPRepository) UpdateServer(ctx context.Context, m MCPServer, resetValid
 	}
 	args = append(args, m.ID, boolValue(r.s.dialect, false))
 	result, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE mcp_servers SET "+set+" WHERE id=? AND pending_delete=?"), args...)
-	if err != nil {
-		return err
-	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n != 1 {
-		return sql.ErrNoRows
-	}
-	return nil
+	return oneRow(result, err)
 }
 
 func (r MCPRepository) DisableServer(ctx context.Context, id string) error {
 	result, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE mcp_servers SET enabled=?,validation_state=?,updated_at=? WHERE id=?"), boolValue(r.s.dialect, false), "disabled", utc(time.Now()), id)
-	if err != nil {
-		return err
-	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n != 1 {
-		return sql.ErrNoRows
-	}
-	return nil
+	return oneRow(result, err)
 }
 
 func (r MCPRepository) EnableServer(ctx context.Context, id string) error {
 	result, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE mcp_servers SET enabled=?,validation_state=CASE WHEN validation_state='disabled' THEN 'not_validated' ELSE validation_state END,updated_at=? WHERE id=? AND pending_delete=?"), boolValue(r.s.dialect, true), utc(time.Now()), id, boolValue(r.s.dialect, false))
-	if err != nil {
-		return err
-	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n != 1 {
-		return sql.ErrNoRows
-	}
-	return nil
+	return oneRow(result, err)
 }
 
 func (r MCPRepository) DeleteServer(ctx context.Context, id string) error {
@@ -484,17 +411,7 @@ func (r MCPRepository) DeleteServer(ctx context.Context, id string) error {
 			return ErrMCPReferenced
 		}
 		result, err := tx.ExecContext(ctx, r.s.bind("DELETE FROM mcp_servers WHERE id=?"), id)
-		if err != nil {
-			return err
-		}
-		n, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if n != 1 {
-			return sql.ErrNoRows
-		}
-		return nil
+		return oneRow(result, err)
 	})
 }
 
@@ -510,24 +427,10 @@ func (r MCPRepository) DetachAndDelete(ctx context.Context, id string) error {
 		// Match publication/session-start lock order: agent rows first, then the
 		// MCP server row. This makes detach serialize with new assignments without
 		// holding the server lock while waiting on an agent.
-		rows, err := tx.QueryContext(ctx, r.s.bind("SELECT DISTINCT a.id FROM agents a JOIN agent_mcp_tools t ON t.agent_version_id=a.current_version_id WHERE t.mcp_server_id=? ORDER BY a.id"), id)
+		agentIDs, err := queryIDs(ctx, tx, r.s.bind("SELECT DISTINCT a.id FROM agents a JOIN agent_mcp_tools t ON t.agent_version_id=a.current_version_id WHERE t.mcp_server_id=? ORDER BY a.id"), id)
 		if err != nil {
 			return err
 		}
-		var agentIDs []string
-		for rows.Next() {
-			var agentID string
-			if err := rows.Scan(&agentID); err != nil {
-				rows.Close()
-				return err
-			}
-			agentIDs = append(agentIDs, agentID)
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return err
-		}
-		rows.Close()
 		if r.s.dialect == Postgres {
 			for _, agentID := range agentIDs {
 				var locked string
@@ -544,25 +447,19 @@ func (r MCPRepository) DetachAndDelete(ctx context.Context, id string) error {
 		if err := tx.QueryRowContext(ctx, r.s.bind(lock), id).Scan(&serverID); err != nil {
 			return err
 		}
-		rows, err = tx.QueryContext(ctx, r.s.bind("SELECT a.id,a.current_version_id FROM agents a JOIN agent_mcp_tools t ON t.agent_version_id=a.current_version_id WHERE t.mcp_server_id=? ORDER BY a.id"), id)
+		rows, err := tx.QueryContext(ctx, r.s.bind("SELECT a.id,a.current_version_id FROM agents a JOIN agent_mcp_tools t ON t.agent_version_id=a.current_version_id WHERE t.mcp_server_id=? ORDER BY a.id"), id)
 		if err != nil {
 			return err
 		}
 		type currentAgent struct{ id, versionID string }
-		var agents []currentAgent
-		for rows.Next() {
+		agents, err := collect(rows, nil, func(row rowScanner) (currentAgent, error) {
 			var a currentAgent
-			if err := rows.Scan(&a.id, &a.versionID); err != nil {
-				rows.Close()
-				return err
-			}
-			agents = append(agents, a)
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
+			err := row.Scan(&a.id, &a.versionID)
+			return a, err
+		})
+		if err != nil {
 			return err
 		}
-		rows.Close()
 		for _, a := range agents {
 			query := "SELECT config_json,config_hash FROM agent_versions WHERE id=?"
 			var config, hash string
@@ -610,24 +507,10 @@ func (r MCPRepository) FinalizePendingDeletes(ctx context.Context) error {
 	if r.s.dialect == SQLite {
 		query = "SELECT id FROM mcp_servers WHERE pending_delete=1 ORDER BY id"
 	}
-	rows, err := r.s.db.QueryContext(ctx, query)
+	ids, err := queryIDs(ctx, r.s.db, query)
 	if err != nil {
 		return err
 	}
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return err
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	rows.Close()
 	for _, id := range ids {
 		current, active, err := countMCPReferences(ctx, r.s.db, r.s, id)
 		if err != nil {
@@ -712,17 +595,7 @@ func (r MCPRepository) AddDiscovery(ctx context.Context, serverID string, tools 
 			}
 		}
 		result, err := tx.ExecContext(ctx, r.s.bind("UPDATE mcp_servers SET latest_discovery_id=?,updated_at=? WHERE id=?"), out.ID, utc(time.Now()), serverID)
-		if err != nil {
-			return err
-		}
-		n, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if n != 1 {
-			return sql.ErrNoRows
-		}
-		return nil
+		return oneRow(result, err)
 	})
 	if err == nil && existing != "" {
 		return r.Discovery(ctx, existing)
@@ -743,15 +616,12 @@ func (r MCPRepository) Discovery(ctx context.Context, id string) (MCPDiscovery, 
 	if err != nil {
 		return d, err
 	}
-	defer rows.Close()
-	for rows.Next() {
+	d.Tools, err = collect(rows, d.Tools, func(row rowScanner) (MCPTool, error) {
 		var t MCPTool
-		if err := rows.Scan(&t.RemoteName, &t.Description, &t.SchemaJSON, &t.SchemaHash); err != nil {
-			return d, err
-		}
-		d.Tools = append(d.Tools, t)
-	}
-	return d, rows.Err()
+		err := row.Scan(&t.RemoteName, &t.Description, &t.SchemaJSON, &t.SchemaHash)
+		return t, err
+	})
+	return d, err
 }
 
 func nullable(s string) any {

@@ -129,20 +129,16 @@ func (r RetentionRepository) RecentActions(ctx context.Context, limit int) ([]Re
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []RetentionAction
-	for rows.Next() {
+	return collect(rows, nil, func(row rowScanner) (RetentionAction, error) {
 		var a RetentionAction
 		var at string
-		if err := rows.Scan(&at, &a.Action, &a.Subject, &a.Detail, &a.Request); err != nil {
-			return nil, err
+		if err := row.Scan(&at, &a.Action, &a.Subject, &a.Detail, &a.Request); err != nil {
+			return a, err
 		}
-		if a.At, err = parseTime(at); err != nil {
-			return nil, err
-		}
-		out = append(out, a)
-	}
-	return out, rows.Err()
+		var err error
+		a.At, err = parseTime(at)
+		return a, err
+	})
 }
 
 // SetHold places or lifts a hold on a call and returns whether the flag changed. Placing a hold again only replaces
@@ -292,21 +288,8 @@ func (r RetentionRepository) EraseCaller(ctx context.Context, label, requestID s
 	if dryRun {
 		return out, nil
 	}
-	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT id FROM sessions WHERE caller=? AND status='ended' AND "+notHeld+" ORDER BY ended_at, id LIMIT ?"), label, EraseCallerLimit)
+	ids, err := queryIDs(ctx, r.s.db, r.s.bind("SELECT id FROM sessions WHERE caller=? AND status='ended' AND "+notHeld+" ORDER BY ended_at, id LIMIT ?"), label, EraseCallerLimit)
 	if err != nil {
-		return out, err
-	}
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return out, err
-		}
-		ids = append(ids, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
 		return out, err
 	}
 	finish := func(runErr error) (CallerErasure, error) {

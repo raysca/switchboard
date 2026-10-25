@@ -230,16 +230,13 @@ func (r EvalRepository) ListRuns(ctx context.Context, agentID string, includeDra
 	if err != nil {
 		return nil, fmt.Errorf("list eval runs: %w", err)
 	}
-	defer rows.Close()
-	out := make([]EvalRun, 0, limit)
-	for rows.Next() {
-		e, err := scanEvalRun(rows)
+	return collect(rows, make([]EvalRun, 0, limit), func(row rowScanner) (EvalRun, error) {
+		e, err := scanEvalRun(row)
 		if err != nil {
-			return nil, fmt.Errorf("scan eval run: %w", err)
+			return e, fmt.Errorf("scan eval run: %w", err)
 		}
-		out = append(out, e)
-	}
-	return out, rows.Err()
+		return e, nil
+	})
 }
 
 // RunJobs returns the run's jobs ordered by subject (a run has at most MaxPendingJobsPerAgent).
@@ -248,16 +245,13 @@ func (r EvalRepository) RunJobs(ctx context.Context, runID string) ([]EvalJob, e
 	if err != nil {
 		return nil, fmt.Errorf("list eval jobs: %w", err)
 	}
-	defer rows.Close()
-	out := make([]EvalJob, 0, 16)
-	for rows.Next() {
-		j, err := scanEvalJob(rows)
+	return collect(rows, make([]EvalJob, 0, 16), func(row rowScanner) (EvalJob, error) {
+		j, err := scanEvalJob(row)
 		if err != nil {
-			return nil, fmt.Errorf("scan eval job: %w", err)
+			return j, fmt.Errorf("scan eval job: %w", err)
 		}
-		out = append(out, j)
-	}
-	return out, rows.Err()
+		return j, nil
+	})
 }
 
 const evalResultCols = "id,subject_kind,subject_id,scorer,scorer_version,version_key,agent_id,agent_version_id,config_hash,run_id,case_id,case_hash,session_id,score,outcome,reason,judge_model,created_at"
@@ -268,20 +262,17 @@ func (r EvalRepository) RunResults(ctx context.Context, runID string) ([]EvalRes
 	if err != nil {
 		return nil, fmt.Errorf("list eval results: %w", err)
 	}
-	defer rows.Close()
-	out := make([]EvalResult, 0, 16)
-	for rows.Next() {
+	return collect(rows, make([]EvalResult, 0, 16), func(row rowScanner) (EvalResult, error) {
 		var e EvalResult
 		var id string
 		var ver, run, caseID, caseHash, judge sql.NullString
 		var created string
-		if err := rows.Scan(&id, &e.SubjectKind, &e.SubjectID, &e.Scorer, &e.ScorerVersion, &e.VersionKey, &e.AgentID, &ver, &e.ConfigHash, &run, &caseID, &caseHash, &e.SessionID, &e.Score, &e.Outcome, &e.Reason, &judge, &created); err != nil {
-			return nil, fmt.Errorf("scan eval result: %w", err)
+		if err := row.Scan(&id, &e.SubjectKind, &e.SubjectID, &e.Scorer, &e.ScorerVersion, &e.VersionKey, &e.AgentID, &ver, &e.ConfigHash, &run, &caseID, &caseHash, &e.SessionID, &e.Score, &e.Outcome, &e.Reason, &judge, &created); err != nil {
+			return e, fmt.Errorf("scan eval result: %w", err)
 		}
 		e.AgentVersionID, e.RunID, e.CaseID, e.CaseHash, e.JudgeModel, e.CreatedAt = ver.String, run.String, caseID.String, caseHash.String, judge.String, scanTime(created)
-		out = append(out, e)
-	}
-	return out, rows.Err()
+		return e, nil
+	})
 }
 
 // MarkRunStarted moves a pending run to running; any other status is left as it is.

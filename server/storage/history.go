@@ -301,27 +301,24 @@ func (r SessionRepository) List(ctx context.Context, filter SessionFilter) ([]Se
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	out := make([]SessionRecord, 0)
-	for rows.Next() {
+	return collect(rows, make([]SessionRecord, 0), func(row rowScanner) (SessionRecord, error) {
 		var v SessionRecord
 		var started string
 		var ended sql.NullString
-		if err := rows.Scan(&v.ID, &v.AgentID, &v.AgentVersionID, &v.ConfigHash, &started, &ended, &v.Status, &v.ProviderStackJSON, &v.TurnCount, &v.SafeSummary, &v.RuntimeSnapshotJSON, &v.Draft, &v.Caller, &v.EndReason, &v.Held, &v.HoldReason); err != nil {
-			return nil, err
+		if err := row.Scan(&v.ID, &v.AgentID, &v.AgentVersionID, &v.ConfigHash, &started, &ended, &v.Status, &v.ProviderStackJSON, &v.TurnCount, &v.SafeSummary, &v.RuntimeSnapshotJSON, &v.Draft, &v.Caller, &v.EndReason, &v.Held, &v.HoldReason); err != nil {
+			return v, err
 		}
+		var err error
 		if v.StartedAt, err = parseTime(started); err != nil {
-			return nil, err
+			return v, err
 		}
 		if ended.Valid {
 			if v.EndedAt, err = parseTime(ended.String); err != nil {
-				return nil, err
+				return v, err
 			}
 		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
+		return v, nil
+	})
 }
 
 // TurnLatencies returns the stored latencies JSON of every turn of the given sessions, keyed by session
@@ -387,29 +384,26 @@ func (r SessionRepository) Turns(ctx context.Context, sessionID string) ([]TurnR
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	out := make([]TurnRecord, 0)
-	for rows.Next() {
+	return collect(rows, make([]TurnRecord, 0), func(row rowScanner) (TurnRecord, error) {
 		var v TurnRecord
 		var started string
 		var ended, transcript, assistant sql.NullString
-		if err := rows.Scan(&v.ID, &v.SessionID, &v.Ordinal, &started, &ended, &transcript, &assistant, &v.LatenciesJSON, &v.Interrupted); err != nil {
-			return nil, err
+		if err := row.Scan(&v.ID, &v.SessionID, &v.Ordinal, &started, &ended, &transcript, &assistant, &v.LatenciesJSON, &v.Interrupted); err != nil {
+			return v, err
 		}
+		var err error
 		if v.StartedAt, err = parseTime(started); err != nil {
-			return nil, err
+			return v, err
 		}
 		if ended.Valid {
 			if v.EndedAt, err = parseTime(ended.String); err != nil {
-				return nil, err
+				return v, err
 			}
 		}
 		v.Transcript = transcript.String
 		v.AssistantText = assistant.String
-		out = append(out, v)
-	}
-	return out, rows.Err()
+		return v, nil
+	})
 }
 
 type TraceSpan struct {
@@ -482,30 +476,27 @@ func (r TraceRepository) Spans(ctx context.Context, sessionID, turnID string) ([
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	out := make([]TraceSpan, 0)
-	for rows.Next() {
+	return collect(rows, make([]TraceSpan, 0), func(row rowScanner) (TraceSpan, error) {
 		var v TraceSpan
 		var sess, turn, parent, ended sql.NullString
 		var started string
-		if err := rows.Scan(&v.ID, &sess, &turn, &parent, &v.Name, &started, &ended, &v.AttributesJSON); err != nil {
-			return nil, err
+		if err := row.Scan(&v.ID, &sess, &turn, &parent, &v.Name, &started, &ended, &v.AttributesJSON); err != nil {
+			return v, err
 		}
+		var err error
 		v.SessionID = sess.String
 		v.TurnID = turn.String
 		v.ParentID = parent.String
 		if v.StartedAt, err = parseTime(started); err != nil {
-			return nil, err
+			return v, err
 		}
 		if ended.Valid {
 			if v.EndedAt, err = parseTime(ended.String); err != nil {
-				return nil, err
+				return v, err
 			}
 		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
+		return v, nil
+	})
 }
 
 func (r TraceRepository) AddEvent(ctx context.Context, v TraceEvent) error {
@@ -551,25 +542,22 @@ func (r TraceRepository) Events(ctx context.Context, sessionID, turnID string) (
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	out := make([]TraceEvent, 0)
-	for rows.Next() {
+	return collect(rows, make([]TraceEvent, 0), func(row rowScanner) (TraceEvent, error) {
 		var v TraceEvent
 		var span, sess, turn sql.NullString
 		var occurred string
-		if err := rows.Scan(&v.ID, &span, &sess, &turn, &v.Name, &occurred, &v.AttributesJSON); err != nil {
-			return nil, err
+		if err := row.Scan(&v.ID, &span, &sess, &turn, &v.Name, &occurred, &v.AttributesJSON); err != nil {
+			return v, err
 		}
+		var err error
 		v.SpanID = span.String
 		v.SessionID = sess.String
 		v.TurnID = turn.String
 		if v.OccurredAt, err = parseTime(occurred); err != nil {
-			return nil, err
+			return v, err
 		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
+		return v, nil
+	})
 }
 
 func (r TraceRepository) AddToolCall(ctx context.Context, v ToolCallRecord) error {
@@ -616,29 +604,26 @@ func (r TraceRepository) ToolCalls(ctx context.Context, sessionID, turnID string
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	out := make([]ToolCallRecord, 0)
-	for rows.Next() {
+	return collect(rows, make([]ToolCallRecord, 0), func(row rowScanner) (ToolCallRecord, error) {
 		var v ToolCallRecord
 		var turn, mcpServer, ended sql.NullString
 		var started string
-		if err := rows.Scan(&v.ID, &v.SessionID, &turn, &mcpServer, &v.RemoteName, &v.SchemaHash, &started, &ended, &v.Status, &v.ErrorCategory); err != nil {
-			return nil, err
+		if err := row.Scan(&v.ID, &v.SessionID, &turn, &mcpServer, &v.RemoteName, &v.SchemaHash, &started, &ended, &v.Status, &v.ErrorCategory); err != nil {
+			return v, err
 		}
+		var err error
 		v.TurnID = turn.String
 		v.MCPServerID = mcpServer.String
 		if v.StartedAt, err = parseTime(started); err != nil {
-			return nil, err
+			return v, err
 		}
 		if ended.Valid {
 			if v.EndedAt, err = parseTime(ended.String); err != nil {
-				return nil, err
+				return v, err
 			}
 		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
+		return v, nil
+	})
 }
 func metadata(s string) (string, error) {
 	if s == "" {

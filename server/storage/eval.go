@@ -138,8 +138,8 @@ func (r EvalRepository) UpdateCase(ctx context.Context, c EvalCase) (EvalCase, e
 	if err != nil {
 		return EvalCase{}, fmt.Errorf("update eval case: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return EvalCase{}, sql.ErrNoRows
+	if err := oneRow(res, nil); err != nil {
+		return EvalCase{}, err
 	}
 	return r.GetCase(ctx, c.AgentID, c.ID)
 }
@@ -150,10 +150,7 @@ func (r EvalRepository) DeleteCase(ctx context.Context, agentID, id string) erro
 	if err != nil {
 		return fmt.Errorf("delete eval case: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
+	return oneRow(res, nil)
 }
 
 // GetCase returns sql.ErrNoRows when the agent has no such case.
@@ -167,16 +164,13 @@ func (r EvalRepository) ListCases(ctx context.Context, agentID string) ([]EvalCa
 	if err != nil {
 		return nil, fmt.Errorf("list eval cases: %w", err)
 	}
-	defer rows.Close()
-	out := make([]EvalCase, 0, 8)
-	for rows.Next() {
-		c, err := scanEvalCase(rows)
+	return collect(rows, make([]EvalCase, 0, 8), func(row rowScanner) (EvalCase, error) {
+		c, err := scanEvalCase(row)
 		if err != nil {
-			return nil, fmt.Errorf("scan eval case: %w", err)
+			return c, fmt.Errorf("scan eval case: %w", err)
 		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
+		return c, nil
+	})
 }
 
 // Suite returns the agent's suite setting, or the defaults (1 run, 1 must pass, threshold 1.0, no judge) when none is saved.
@@ -213,23 +207,20 @@ func (r EvalRepository) ScorerSettings(ctx context.Context, agentID string) ([]E
 	if err != nil {
 		return nil, fmt.Errorf("list eval scorer settings: %w", err)
 	}
-	defer rows.Close()
-	out := make([]EvalScorerSetting, 0, 5)
-	for rows.Next() {
+	return collect(rows, make([]EvalScorerSetting, 0, 5), func(row rowScanner) (EvalScorerSetting, error) {
 		st := EvalScorerSetting{AgentID: agentID}
 		var th sql.NullFloat64
 		var jp, jm sql.NullString
 		var updated string
-		if err := rows.Scan(&st.Scorer, &th, &jp, &jm, &updated); err != nil {
-			return nil, fmt.Errorf("scan eval scorer setting: %w", err)
+		if err := row.Scan(&st.Scorer, &th, &jp, &jm, &updated); err != nil {
+			return st, fmt.Errorf("scan eval scorer setting: %w", err)
 		}
 		if th.Valid {
 			st.Threshold = &th.Float64
 		}
 		st.JudgeProvider, st.JudgeModel, st.UpdatedAt = jp.String, jm.String, scanTime(updated)
-		out = append(out, st)
-	}
-	return out, rows.Err()
+		return st, nil
+	})
 }
 
 // PutScorerSetting creates or replaces one scorer's override for the agent.

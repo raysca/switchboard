@@ -77,11 +77,8 @@ func (r HTTPToolRepository) NewDefinition(ctx context.Context, id, name, hash st
 		}
 		now := utc(time.Now())
 		res, err := tx.ExecContext(ctx, r.s.bind("UPDATE http_tools SET name=?,current_hash=?,updated_at=? WHERE id=?"), name, hash, now, id)
-		if err != nil {
+		if err := oneRow(res, err); err != nil {
 			return err
-		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			return sql.ErrNoRows
 		}
 		_, err = tx.ExecContext(ctx, r.s.bind("INSERT INTO http_tool_definitions(tool_id,hash,definition_json,created_at) VALUES(?,?,?,?) ON CONFLICT(tool_id,hash) DO NOTHING"), id, hash, string(definition), now)
 		return err
@@ -103,7 +100,7 @@ func (r HTTPToolRepository) nameFree(ctx context.Context, tx *sql.Tx, name, id s
 
 const httpToolColumns = "id,name,enabled,current_hash,created_at,updated_at"
 
-func scanHTTPTool(row interface{ Scan(...any) error }) (HTTPTool, error) {
+func scanHTTPTool(row rowScanner) (HTTPTool, error) {
 	var t HTTPTool
 	var created, updated string
 	if err := row.Scan(&t.ID, &t.Name, &t.Enabled, &t.CurrentHash, &created, &updated); err != nil {
@@ -127,16 +124,7 @@ func (r HTTPToolRepository) List(ctx context.Context) ([]HTTPTool, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []HTTPTool
-	for rows.Next() {
-		t, err := scanHTTPTool(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, t)
-	}
-	return out, rows.Err()
+	return collect(rows, nil, scanHTTPTool)
 }
 
 // Definition returns the stored definition JSON of a tool at a hash; sql.ErrNoRows when there is none.
@@ -158,30 +146,19 @@ func (r HTTPToolRepository) AllDefinitions(ctx context.Context) ([]StoredDefinit
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []StoredDefinition
-	for rows.Next() {
+	return collect(rows, nil, func(row rowScanner) (StoredDefinition, error) {
 		var d StoredDefinition
 		var raw string
-		if err := rows.Scan(&d.ToolID, &d.Name, &d.Hash, &raw); err != nil {
-			return nil, err
-		}
+		err := row.Scan(&d.ToolID, &d.Name, &d.Hash, &raw)
 		d.JSON = []byte(raw)
-		out = append(out, d)
-	}
-	return out, rows.Err()
+		return d, err
+	})
 }
 
 // SetEnabled returns sql.ErrNoRows when the tool does not exist.
 func (r HTTPToolRepository) SetEnabled(ctx context.Context, id string, enabled bool) error {
 	res, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE http_tools SET enabled=?,updated_at=? WHERE id=?"), boolValue(r.s.dialect, enabled), utc(time.Now()), id)
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
+	return oneRow(res, err)
 }
 
 // CurrentReferences lists the agents whose current version pins the tool.
@@ -198,16 +175,11 @@ func (r HTTPToolRepository) references(ctx context.Context, q rowQuerier, id str
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []HTTPToolReference
-	for rows.Next() {
+	return collect(rows, nil, func(row rowScanner) (HTTPToolReference, error) {
 		var ref HTTPToolReference
-		if err := rows.Scan(&ref.AgentID, &ref.AgentName, &ref.AgentVersionID, &ref.Required); err != nil {
-			return nil, err
-		}
-		out = append(out, ref)
-	}
-	return out, rows.Err()
+		err := row.Scan(&ref.AgentID, &ref.AgentName, &ref.AgentVersionID, &ref.Required)
+		return ref, err
+	})
 }
 
 // Delete removes a tool no agent version has ever pinned, with its definitions; a tool with history is disabled
@@ -233,13 +205,7 @@ func (r HTTPToolRepository) Delete(ctx context.Context, id string) error {
 			return err
 		}
 		res, err := tx.ExecContext(ctx, r.s.bind("DELETE FROM http_tools WHERE id=?"), id)
-		if err != nil {
-			return err
-		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			return sql.ErrNoRows
-		}
-		return nil
+		return oneRow(res, err)
 	})
 }
 
