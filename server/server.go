@@ -63,6 +63,7 @@ type Server struct {
 	management             *auth.Management
 	providerManagementAPI  http.Handler
 	agentManagementAPI     http.Handler
+	evalManagementAPI      http.Handler
 	mcpManagementAPI       http.Handler
 	secretsManagementAPI   http.Handler
 	retentionManagementAPI http.Handler
@@ -309,6 +310,12 @@ func (s *Server) setProviderManagementAPI(handler http.Handler) {
 // authentication. Configure it before serving requests.
 func (s *Server) setAgentManagementAPI(handler http.Handler) {
 	s.agentManagementAPI = handler
+}
+
+// setEvalManagementAPI installs the eval handler (/api/v1/agents/{id}/eval/...) behind management
+// authentication. Configure it before serving requests.
+func (s *Server) setEvalManagementAPI(handler http.Handler) {
+	s.evalManagementAPI = handler
 }
 
 // setMCPManagementAPI installs the MCP handler behind the management listener

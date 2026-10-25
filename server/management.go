@@ -146,6 +146,7 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	s.setProviderManagementAPI(s.providersRoutes())
 	s.agents = agents
 	s.setAgentManagementAPI(api.NewAgentsHandler(s.agents))
+	s.setEvalManagementAPI(api.NewEvalHandler(s.agents, store, s.evalPolicy()))
 	s.setMCPManagementAPI(mcp.Handler(mcpService))
 	s.setHTTPToolsManagementAPI(httptool.Handler(httpTools))
 	s.setSecretsManagementAPI(secrets.Handler(secrets.Sources{Env: secrets.Env{Getenv: func(k string) string { return s.env(k) }}, Dir: secrets.Dir{Path: s.cfg.Secrets.Dir}, Store: m.secrets, Uses: httpTools.SecretUses, Logger: s.logger}))

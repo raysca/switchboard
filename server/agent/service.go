@@ -526,6 +526,11 @@ const (
 	ReadinessToolUnavailable = "tool_dependency_unavailable"
 )
 
+// Callable reports whether an agent in this readiness state may run calls.
+func Callable(state string) bool {
+	return state == ReadinessReady || state == ReadinessWithToolWarning
+}
+
 // agentReadiness evaluates an already-loaded version (with its MCPTools)
 // against the current provider availability.
 func (s *Service) agentReadiness(ctx context.Context, version storage.AgentVersion, enabled, archived bool) (Readiness, []MCPToolSnapshot) {

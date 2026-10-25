@@ -146,17 +146,23 @@ func ParsePagination(r *http.Request) (Pagination, error) {
 	return p, nil
 }
 
-func DecodeJSON(r *http.Request, dst any) error {
+// ErrBodyTooLarge: the JSON body is over the limit. Its text is the one DecodeJSON has always given.
+var ErrBodyTooLarge = errors.New("JSON body exceeds size limit")
+
+func DecodeJSON(r *http.Request, dst any) error { return DecodeJSONLimit(r, dst, MaxBodyBytes) }
+
+// DecodeJSONLimit is DecodeJSON with a body limit of max bytes.
+func DecodeJSONLimit(r *http.Request, dst any, max int) error {
 	mediaType := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]))
 	if mediaType != "application/json" {
 		return errors.New("content type must be application/json")
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, MaxBodyBytes+1))
+	body, err := io.ReadAll(io.LimitReader(r.Body, int64(max)+1))
 	if err != nil {
 		return errors.New("invalid JSON body")
 	}
-	if len(body) > MaxBodyBytes {
-		return errors.New("JSON body exceeds size limit")
+	if len(body) > max {
+		return ErrBodyTooLarge
 	}
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()

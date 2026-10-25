@@ -22,39 +22,39 @@ import (
 // tags use the same snake_case keys as the YAML ones.
 type Case struct {
 	Name   string `yaml:"name" json:"name"`
-	Agent  string `yaml:"agent" json:"agent,omitempty"` // agent name or id; stored cases belong to an agent and leave it empty
+	Agent  string `yaml:"agent,omitempty" json:"agent,omitempty"` // agent name or id; stored cases belong to an agent and leave it empty
 	Caller Caller `yaml:"caller" json:"caller"`
-	Expect Expect `yaml:"expect" json:"expect"`
+	Expect Expect `yaml:"expect,omitempty" json:"expect"`
 	// ExpectedAnswer is extra evidence for the correctness judge, not an exact-match assertion.
-	ExpectedAnswer string `yaml:"expected_answer" json:"expected_answer,omitempty"`
+	ExpectedAnswer string `yaml:"expected_answer,omitempty" json:"expected_answer,omitempty"`
 	File           string `yaml:"-" json:"-"`
 }
 
 // Caller is exactly one of a fixed script or an LLM persona.
 type Caller struct {
-	Script  []string `yaml:"script" json:"script,omitempty"`
-	Persona *Persona `yaml:"persona" json:"persona,omitempty"`
+	Script  []string `yaml:"script,omitempty" json:"script,omitempty"`
+	Persona *Persona `yaml:"persona,omitempty" json:"persona,omitempty"`
 }
 
 // Persona is who the simulated caller plays and what it wants.
 type Persona struct {
 	Who      string `yaml:"who" json:"who"`
 	Goal     string `yaml:"goal" json:"goal"`
-	MaxTurns int    `yaml:"max_turns" json:"max_turns"`
+	MaxTurns int    `yaml:"max_turns,omitempty" json:"max_turns"`
 }
 
 // Expect lists the assertions; tools_called entries are "name" (succeeded) or "name:status".
 // ToolsOrdered additionally requires the tools_called entries to appear in the call in the listed order.
 type Expect struct {
-	Path             []string `yaml:"path" json:"path,omitempty"`
-	ToolsCalled      []string `yaml:"tools_called" json:"tools_called,omitempty"`
-	ToolsOrdered     bool     `yaml:"tools_ordered" json:"tools_ordered,omitempty"`
-	ToolsNotCalled   []string `yaml:"tools_not_called" json:"tools_not_called,omitempty"`
-	Say              []string `yaml:"say" json:"say,omitempty"`
-	NeverSay         []string `yaml:"never_say" json:"never_say,omitempty"`
-	EndReason        string   `yaml:"end_reason" json:"end_reason,omitempty"`
-	MaxTurns         int      `yaml:"max_turns" json:"max_turns,omitempty"`
-	MedianReplyMSMax int      `yaml:"median_reply_ms_max" json:"median_reply_ms_max,omitempty"`
+	Path             []string `yaml:"path,omitempty" json:"path,omitempty"`
+	ToolsCalled      []string `yaml:"tools_called,omitempty" json:"tools_called,omitempty"`
+	ToolsOrdered     bool     `yaml:"tools_ordered,omitempty" json:"tools_ordered,omitempty"`
+	ToolsNotCalled   []string `yaml:"tools_not_called,omitempty" json:"tools_not_called,omitempty"`
+	Say              []string `yaml:"say,omitempty" json:"say,omitempty"`
+	NeverSay         []string `yaml:"never_say,omitempty" json:"never_say,omitempty"`
+	EndReason        string   `yaml:"end_reason,omitempty" json:"end_reason,omitempty"`
+	MaxTurns         int      `yaml:"max_turns,omitempty" json:"max_turns,omitempty"`
+	MedianReplyMSMax int      `yaml:"median_reply_ms_max,omitempty" json:"median_reply_ms_max,omitempty"`
 }
 
 const (

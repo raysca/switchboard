@@ -120,6 +120,14 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			s.handleLiveCall(w, r, requestID, id, action)
 			return
 		}
+		if evalPath(r.URL.Path) { // under /api/v1/agents, so matched before the prefix table
+			if s.evalManagementAPI == nil {
+				api.WriteError(w, http.StatusServiceUnavailable, "eval_management_unavailable", "eval management storage is unavailable", requestID)
+				return
+			}
+			s.evalManagementAPI.ServeHTTP(w, r.WithContext(api.WithRequestID(r.Context(), requestID)))
+			return
+		}
 		// A table, not http.ServeMux: ServeMux would add path cleaning and redirects this API never had.
 		for _, p := range [...]struct {
 			prefix, code, message string
@@ -186,7 +194,7 @@ func (s *Server) issueVoiceToken(ctx context.Context, in api.VoiceTokenRequest, 
 	if err != nil {
 		return api.VoiceTokenResponse{}, "", err
 	}
-	if !(skipVersionReady && in.Draft != nil) && !agentCallable(target.Readiness.State) {
+	if !(skipVersionReady && in.Draft != nil) && !agent.Callable(target.Readiness.State) {
 		return api.VoiceTokenResponse{}, "", &notReadyError{Readiness: target.Readiness}
 	}
 	now := time.Now()
@@ -197,7 +205,7 @@ func (s *Server) issueVoiceToken(ctx context.Context, in api.VoiceTokenRequest, 
 		if err != nil {
 			return api.VoiceTokenResponse{}, "", &draftCheckError{err}
 		}
-		if !agentCallable(readiness.State) {
+		if !agent.Callable(readiness.State) {
 			return api.VoiceTokenResponse{}, "", &notReadyError{Readiness: readiness, Draft: true}
 		}
 		if err := s.drafts.put(tokenID, draftCall{snapshot: snapshot, expires: now.Add(lifetime)}, now); err != nil {
@@ -235,11 +243,6 @@ func voiceTokenLifetime(cfg *Config) time.Duration {
 		lifetime = time.Minute
 	}
 	return lifetime.Truncate(time.Second)
-}
-
-// agentCallable reports whether an agent in this readiness state may run calls.
-func agentCallable(state string) bool {
-	return state == agent.ReadinessReady || state == agent.ReadinessWithToolWarning
 }
 
 // writeDraftError maps a draft's validation failure the way a publish maps its own.

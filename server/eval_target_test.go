@@ -209,7 +209,7 @@ func TestIssueVoiceTokenDraftSkipsVersionReadiness(t *testing.T) {
 	s := evalTestServer(t)
 	a := paidAgent(t, s)
 	s.env = mapEnv(nil) // the paid providers lose their keys: the current version is not ready
-	if got, err := s.agents.Get(t.Context(), a.ID); err != nil || agentCallable(got.Readiness.State) {
+	if got, err := s.agents.Get(t.Context(), a.ID); err != nil || agent.Callable(got.Readiness.State) {
 		t.Fatalf("setup: readiness %q err %v, want not callable", got.Readiness.State, err)
 	}
 	in := api.VoiceTokenRequest{Principal: eval.Principal, AgentID: a.ID, Draft: &api.DraftRequest{Config: agentConfigJSON("SALES", "v")}}
