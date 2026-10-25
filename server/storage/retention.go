@@ -68,6 +68,9 @@ LIMIT ?`
 	}
 	rows.Close()
 	res.Examined = len(sessionIDs)
+	if r.s.purgeContentHook != nil {
+		r.s.purgeContentHook()
+	}
 
 	if len(sessionIDs) == 0 {
 		return res, nil
@@ -88,7 +91,7 @@ LIMIT ?`
 			for _, sessID := range batch {
 				// Redact turns: set transcript and assistant_text to NULL
 				resTurns, err := tx.ExecContext(ctx, r.s.bind(
-					// The session is checked again here: a hold placed since it was selected must still protect it.
+					// The session is checked again here, so a hold placed since it was selected protects it (on Postgres a hold committed during this very statement can still be missed).
 					"UPDATE turns SET transcript = NULL, assistant_text = NULL WHERE session_id = ? AND (transcript IS NOT NULL OR assistant_text IS NOT NULL) AND session_id IN (SELECT id FROM sessions WHERE status = 'ended' AND "+notHeld+")",
 				), sessID)
 				if err != nil {

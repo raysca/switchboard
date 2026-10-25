@@ -395,3 +395,23 @@ func TestDeleteSessionDoesNothingToACallHeldAfterItWasSelected(t *testing.T) {
 		}
 	})
 }
+
+// A hold placed after PurgeContent chose its calls, before it blanked them, still protects the call.
+func TestPurgeContentLeavesACallHeldAfterItWasSelected(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		ctx := context.Background()
+		id := seedCall(t, s, "race-"+NewID(), 60*24*time.Hour)
+		s.purgeContentHook = func() {
+			if _, err := s.Retention().SetHold(ctx, id, true, "", "r"); err != nil {
+				t.Error(err)
+			}
+		}
+		defer func() { s.purgeContentHook = nil }()
+		if _, err := s.Retention().PurgeContent(ctx, time.Now().Add(-time.Hour), 500); err != nil {
+			t.Fatal(err)
+		}
+		if count(t, s, "SELECT count(*) FROM turns WHERE session_id=? AND transcript IS NOT NULL", id) != 1 {
+			t.Fatal("a call held after selection was blanked")
+		}
+	})
+}

@@ -13,8 +13,12 @@ CREATE INDEX idx_trace_events_turn ON trace_events(turn_id);
 CREATE INDEX idx_trace_spans_session ON trace_spans(session_id);
 CREATE INDEX idx_trace_spans_turn ON trace_spans(turn_id);
 CREATE INDEX idx_tool_calls_session ON tool_calls(session_id);
+CREATE INDEX idx_tool_calls_turn ON tool_calls(turn_id);
+CREATE INDEX idx_trace_spans_parent ON trace_spans(parent_id);
 
 -- +goose Down
+DROP INDEX idx_trace_spans_parent;
+DROP INDEX idx_tool_calls_turn;
 DROP INDEX idx_tool_calls_session;
 DROP INDEX idx_trace_spans_turn;
 DROP INDEX idx_trace_spans_session;
