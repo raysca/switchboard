@@ -69,7 +69,7 @@ The codebase is strictly bifurcated into an independent **Core Library** and an 
 - **Every queue must be bounded.** Never create unbounded Go channels or unbounded slices that grow with incoming audio or tokens.
 - **Generation fencing:** Every asynchronous task and frame stream must respect `CurrentGeneration()` to avoid race conditions or late-arriving audio from interrupted turns.
 - **Zero Race Conditions:** All code must run and pass cleanly under `go test -race ./...`.
-- **No goroutine leaks:** the listed packages that own goroutines (`core/sttunit`, `core/ttsunit`, `transport/ws`, `transport/wsclient`, `vad`, `server`) end their tests with a `go.uber.org/goleak` check; a new package that starts goroutines adds one. (Not yet covered, recorded as a gap: `core` itself, whose tests leave one deliberately hung test processor, `core.hungProcessor`; `smartturn`; and the other packages that start goroutines, such as `core/turn`, `core/record`, `core/tools`, `providers/xai`, `server/otelexport`, `server/runtime` and `offline/adapter`.)
+- **No goroutine leaks:** the listed packages that own goroutines (`core/sttunit`, `core/ttsunit`, `transport/ws`, `transport/wsclient`, `vad`, `server`, `server/eval`) end their tests with a `go.uber.org/goleak` check; a new package that starts goroutines adds one. (Not yet covered, recorded as a gap: `core` itself, whose tests leave one deliberately hung test processor, `core.hungProcessor`; `smartturn`; and the other packages that start goroutines, such as `core/turn`, `core/record`, `core/tools`, `providers/xai`, `server/otelexport`, `server/runtime` and `offline/adapter`.)
 
 ---
 

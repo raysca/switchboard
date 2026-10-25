@@ -122,4 +122,77 @@ describe("TestSuiteTab", () => {
       vi.useRealTimers();
     }
   });
+
+  it("keeps each case's suite result after a single-case run and ignores drafts", async () => {
+    const suite = run({ id: "rs", scope: "suite", created_at: "2026-10-24T09:00:00Z" });
+    const single = run({ id: "r1c", scope: "case", created_at: "2026-10-24T10:00:00Z" });
+    const draftRun = run({ id: "rd", draft: true, created_at: "2026-10-24T11:00:00Z" });
+    const two = { ...kase, id: "c2", name: "cancels" };
+    const get = vi.fn(async (_a: string, id: string) => ({
+      run: run({ id }),
+      case_runs: [{ case_id: "c1", case_name: "books-a-visit", repeat: 0, status: "done", passed: id === "rs", scores: [] }, ...(id === "rs" ? [{ case_id: "c2", case_name: "cancels", repeat: 0, status: "done", passed: true, scores: [] }] : [])],
+    }));
+    setup({ listEvalCases: vi.fn().mockResolvedValue([kase, two]), listEvalRuns: vi.fn().mockResolvedValue([draftRun, single, suite]), getEvalRun: get });
+    const cases = within(await screen.findByRole("table", { name: "Test cases" }));
+    expect(await cases.findAllByText("1 of 1 runs passed")).toHaveLength(2);
+    expect(get).toHaveBeenCalledWith("a1", "rs");
+  });
+
+  it("refuses an emptied suite field instead of saving 0", async () => {
+    const put = vi.fn().mockResolvedValue({});
+    setup({ putEvalSuite: put });
+    const u = userEvent.setup();
+    await u.clear(await screen.findByLabelText("Pass threshold (%)"));
+    await u.click(screen.getByRole("button", { name: "Save suite settings" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Pass threshold must be a number");
+    expect(put).not.toHaveBeenCalled();
+  });
+});
+
+describe("TestSuiteTab polling", () => {
+  const withTimers = async (fn: () => Promise<void>) => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await fn();
+    } finally {
+      vi.useRealTimers();
+    }
+  };
+
+  it("polls the runs list every 2000 ms while a run is active and stops when it is done", async () => {
+    await withTimers(async () => {
+      const list = vi.fn().mockResolvedValueOnce([run({ status: "running" })]).mockResolvedValue([run()]);
+      setup({ listEvalRuns: list });
+      await waitFor(() => expect(list).toHaveBeenCalledTimes(1));
+      await vi.advanceTimersByTimeAsync(1900);
+      expect(list).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(200);
+      await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(list).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("stops polling the run detail at a terminal status", async () => {
+    await withTimers(async () => {
+      const get = vi.fn().mockResolvedValueOnce({ ...detail, run: run({ status: "running" }) }).mockResolvedValue(detail);
+      setup({ listEvalRuns: vi.fn().mockResolvedValue([run({ status: "running" })]), getEvalRun: get });
+      await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
+      await vi.advanceTimersByTimeAsync(2100);
+      await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(get).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("does not poll the run detail after an error", async () => {
+    await withTimers(async () => {
+      const get = vi.fn().mockRejectedValue(new ApiError("gone", "not_found", 404, "q"));
+      setup({ getEvalRun: get });
+      await waitFor(() => expect(get).toHaveBeenCalled());
+      const n = get.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(get.mock.calls.length).toBe(n);
+    });
+  });
 });

@@ -1,6 +1,6 @@
 # Agent evals
 
-`tools/eval/agents` checks what an agent does on a call: a simulated caller talks to a stored agent (its current version, an older one, or a draft) and assertions score the call. It is one command, `go run ./tools/eval/agents`, that drives the public API like any integration. It adds nothing to the server.
+`tools/eval/agents` checks what an agent does on a call: a simulated caller talks to a stored agent (its current version, an older one, or a draft) and assertions score the call. It is one command, `go run ./tools/eval/agents`, that drives the public API like any integration. It needs the server's eval API and worker, and keeps no state of its own.
 
 Use it before and after you change a prompt, a step, a handoff or a tool selection, to see whether the call still goes where it should.
 
@@ -108,7 +108,7 @@ Eval state lives only in the database, so several servers sharing Postgres work 
 - A claim holds a 2 minute lease, extended every 30 s. A job whose server is lost is taken by another once the lease expires; a restart mid-job costs that job one of its 3 attempts. A failed attempt retries after 30 s, doubling to at most 10 minutes.
 - Keep server clocks within a minute: leases compare time supplied by the workers.
 - Eval calls are real sessions and count against the session limits and metrics (`voice_eval_*` metrics, [observability](../observability.md)).
-- Runs and results are deleted after `retention.eval_retention_days` (default 180).
+- Runs, their finished jobs (which hold each case run's name and repeat) and results are all deleted together after `retention.eval_retention_days` (default 180), not at `metadata_retention_days`, so a run's detail stays complete for the run's whole life. Pending and running jobs are never purged.
 
 ## Running it
 

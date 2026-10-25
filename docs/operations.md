@@ -88,7 +88,7 @@ Agent evals ([agent evals](operations/agent-evals.md), [Eval API](api/eval.md)) 
 - `evaluation.max_concurrent_calls`: 0 means this instance never runs evals; it cannot exceed `max_sessions_per_principal` or `max_sessions_per_ip`.
 - A claim has a 2 minute lease, extended every 30 s. Leases compare time supplied by the workers, so keep clocks within a minute.
 - A restart mid-job costs that job one of its 3 attempts; another server takes it when the lease expires, and the agent's real tools may be called again.
-- `retention.eval_retention_days` (default 180) bounds runs and results.
+- `retention.eval_retention_days` (default 180) bounds runs, their finished jobs and results (a run's detail is built from its jobs, so they go together).
 
 ## Idle handling (`idle:`)
 

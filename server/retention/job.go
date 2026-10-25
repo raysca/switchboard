@@ -15,7 +15,7 @@ import (
 type Store interface {
 	PurgeContent(ctx context.Context, cutoff time.Time, limit int) (storage.ContentPurgeResult, error)
 	PurgeMetadata(ctx context.Context, cutoff time.Time, limit int) (stats storage.PurgeMetadataStats, err error)
-	PurgeEval(ctx context.Context, resultsCutoff, jobsCutoff time.Time, limit int) (storage.PurgeEvalStats, error)
+	PurgeEval(ctx context.Context, cutoff time.Time, limit int) (storage.PurgeEvalStats, error)
 	Preview(ctx context.Context, contentCutoff, metadataCutoff time.Time) (storage.RetentionPreview, error)
 }
 
@@ -203,20 +203,16 @@ func (j *Job) run(ctx context.Context) (RunResult, error) {
 		}
 	}
 
-	// 3. Eval pass: results and runs at their own lifetime, finished jobs at the metadata lifetime (or with the results
-	// when there is none). A zero cutoff leaves that part out.
-	var resultsCutoff, jobsCutoff time.Time
-	if j.policy.EvalRetention > 0 {
-		resultsCutoff = now.Add(-j.policy.EvalRetention)
+	// 3. Eval pass: finished jobs, results and runs all at the eval lifetime, so a run's detail lives as long as the run.
+	if j.policy.EvalRetention <= 0 {
+		return res, nil
 	}
-	if j.policy.MetadataRetention > 0 {
-		jobsCutoff = now.Add(-j.policy.MetadataRetention)
-	}
-	for !resultsCutoff.IsZero() || !jobsCutoff.IsZero() {
+	cutoff := now.Add(-j.policy.EvalRetention)
+	for {
 		if ctx.Err() != nil {
 			return res, ctx.Err()
 		}
-		stats, err := j.store.PurgeEval(ctx, resultsCutoff, jobsCutoff, batchSize)
+		stats, err := j.store.PurgeEval(ctx, cutoff, batchSize)
 		if err != nil {
 			return res, err
 		}

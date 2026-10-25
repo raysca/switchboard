@@ -342,7 +342,7 @@ func (r EvalRepository) Fleet(ctx context.Context, limit, offset int) (FleetPage
 		f.Below = f.Latest != nil && f.Latest.Total > 0 && float64(f.Latest.Passed)/float64(f.Latest.Total) < f.Threshold
 	}
 	err = r.s.db.QueryRowContext(ctx, r.s.bind("SELECT count(*) FROM (SELECT r.agent_id AS agent_id, r.passed_cases AS passed, r.total_cases AS total, "+rankedRuns+
-		" AS rn FROM eval_runs r JOIN agents a ON a.id=r.agent_id WHERE a.archived=? AND "+qualifyingRuns+") t LEFT JOIN eval_suites s ON s.agent_id=t.agent_id WHERE t.rn=1 AND t.total>0 AND CAST(t.passed AS DOUBLE PRECISION)/t.total < COALESCE(s.pass_threshold,?)"),
+		" AS rn FROM eval_runs r JOIN agents a ON a.id=r.agent_id WHERE a.archived=? AND "+qualifyingRuns+") t LEFT JOIN eval_suites s ON s.agent_id=t.agent_id WHERE t.rn=1 AND CAST(t.passed AS DOUBLE PRECISION)/NULLIF(t.total,0) < COALESCE(s.pass_threshold,?)"),
 		notArchived, notDraft, defaultPassRate).Scan(&page.BelowThreshold)
 	if err != nil {
 		return FleetPage{}, fmt.Errorf("count agents below threshold: %w", err)

@@ -292,13 +292,12 @@ WHERE s.status='ended' AND s.ended_at IS NOT NULL AND s.ended_at <= ? AND (t.tra
 // PurgeEvalStats counts the rows one PurgeEval call deleted.
 type PurgeEvalStats struct{ Jobs, Results, Runs int64 }
 
-// PurgeEval deletes, at most limit rows per kind: finished (done or dead) jobs last updated at or before jobsCutoff
-// (resultsCutoff when jobsCutoff is zero, so that finished jobs are purged even with no metadata lifetime), results
-// created at or before resultsCutoff, and then done runs that ended at or before resultsCutoff and have no job or
-// result left. A zero cutoff leaves that kind out (a zero resultsCutoff also leaves the runs). Pending and running
-// jobs are never touched. A result is not tied to a session (no foreign key), so purging sessions and purging results
-// are independent.
-func (r RetentionRepository) PurgeEval(ctx context.Context, resultsCutoff, jobsCutoff time.Time, limit int) (PurgeEvalStats, error) {
+// PurgeEval deletes, at most limit rows per kind, everything of an eval run that is at or before cutoff: finished
+// (done or dead) jobs last updated then, results created then, and then done runs that ended then and have no job or
+// result left. Jobs go with the run, not earlier, because the run detail is built from them. A zero cutoff does
+// nothing. Pending and running jobs are never touched. A result is not tied to a session (no foreign key), so
+// purging sessions and purging results are independent.
+func (r RetentionRepository) PurgeEval(ctx context.Context, cutoff time.Time, limit int) (PurgeEvalStats, error) {
 	var st PurgeEvalStats
 	del := func(dst *int64, query string, args ...any) error {
 		res, err := r.s.db.ExecContext(ctx, r.s.bind(query), args...)
@@ -308,22 +307,18 @@ func (r RetentionRepository) PurgeEval(ctx context.Context, resultsCutoff, jobsC
 		*dst, _ = res.RowsAffected()
 		return nil
 	}
-	if jobsCutoff.IsZero() {
-		jobsCutoff = resultsCutoff
+	if cutoff.IsZero() {
+		return st, nil
 	}
-	if !jobsCutoff.IsZero() {
-		if err := del(&st.Jobs, "DELETE FROM eval_jobs WHERE id IN (SELECT id FROM eval_jobs WHERE status IN ('done','dead') AND updated_at <= ? ORDER BY updated_at LIMIT ?)", utc(jobsCutoff), limit); err != nil {
-			return st, fmt.Errorf("purge eval jobs: %w", err)
-		}
+	if err := del(&st.Jobs, "DELETE FROM eval_jobs WHERE id IN (SELECT id FROM eval_jobs WHERE status IN ('done','dead') AND updated_at <= ? ORDER BY updated_at LIMIT ?)", utc(cutoff), limit); err != nil {
+		return st, fmt.Errorf("purge eval jobs: %w", err)
 	}
-	if !resultsCutoff.IsZero() {
-		if err := del(&st.Results, "DELETE FROM eval_results WHERE id IN (SELECT id FROM eval_results WHERE created_at <= ? ORDER BY created_at LIMIT ?)", utc(resultsCutoff), limit); err != nil {
-			return st, fmt.Errorf("purge eval results: %w", err)
-		}
-		if err := del(&st.Runs, `DELETE FROM eval_runs WHERE id IN (SELECT r.id FROM eval_runs r WHERE r.status='done' AND r.ended_at <= ?
-			AND NOT EXISTS (SELECT 1 FROM eval_jobs j WHERE j.run_id=r.id) AND NOT EXISTS (SELECT 1 FROM eval_results e WHERE e.run_id=r.id) ORDER BY r.ended_at LIMIT ?)`, utc(resultsCutoff), limit); err != nil {
-			return st, fmt.Errorf("purge eval runs: %w", err)
-		}
+	if err := del(&st.Results, "DELETE FROM eval_results WHERE id IN (SELECT id FROM eval_results WHERE created_at <= ? ORDER BY created_at LIMIT ?)", utc(cutoff), limit); err != nil {
+		return st, fmt.Errorf("purge eval results: %w", err)
+	}
+	if err := del(&st.Runs, `DELETE FROM eval_runs WHERE id IN (SELECT r.id FROM eval_runs r WHERE r.status='done' AND r.ended_at <= ?
+		AND NOT EXISTS (SELECT 1 FROM eval_jobs j WHERE j.run_id=r.id) AND NOT EXISTS (SELECT 1 FROM eval_results e WHERE e.run_id=r.id) ORDER BY r.ended_at LIMIT ?)`, utc(cutoff), limit); err != nil {
+		return st, fmt.Errorf("purge eval runs: %w", err)
 	}
 	return st, nil
 }

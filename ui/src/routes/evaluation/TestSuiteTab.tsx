@@ -63,6 +63,7 @@ function SuiteSettings({ client, agentId, providers }: { client: ApiClient; agen
   const qc = useQueryClient();
   const suite = useQuery({ queryKey: ["eval", agentId, "suite"], queryFn: () => client.getEvalSuite(agentId), retry: false });
   const [draft, setDraft] = useState<{ runs: string; minPass: string; threshold: string; judge: Judge } | null>(null);
+  const [fieldError, setFieldError] = useState<string | null>(null);
   const save = useMutation({
     mutationFn: () =>
       client.putEvalSuite(agentId, { runs: Number(form.runs), min_pass: Number(form.minPass), pass_threshold: Number(form.threshold) / 100, judge: form.judge }),
@@ -82,7 +83,14 @@ function SuiteSettings({ client, agentId, providers }: { client: ApiClient; agen
       aria-label="Suite settings"
       onSubmit={(e) => {
         e.preventDefault();
-        save.mutate();
+        // Number("") is 0, and a threshold of 0 would never flag the agent: refuse empty or non-numeric fields.
+        const bad = [
+          ["Runs per case", form.runs],
+          ["Passes needed per case", form.minPass],
+          ["Pass threshold", form.threshold],
+        ].find(([, v]) => v.trim() === "" || !Number.isFinite(Number(v)));
+        setFieldError(bad ? `${bad[0]} must be a number` : null);
+        if (!bad) save.mutate();
       }}
     >
       <h2>Suite settings</h2>
@@ -102,6 +110,7 @@ function SuiteSettings({ client, agentId, providers }: { client: ApiClient; agen
         <JudgeFields id="suite-judge" judge={form.judge} onChange={(judge) => set({ judge })} providers={providers} />
       </div>
       <p className="subtext">Without a judge, correctness, answer relevancy and toxicity are recorded as skipped.</p>
+      {fieldError && <p role="alert" className="field-error">{fieldError}</p>}
       {save.isError && <ErrorState title="Could not save suite settings" error={evalError(save.error)} />}
       <button type="submit" className="action-button" disabled={save.isPending}>
         Save suite settings
@@ -195,14 +204,15 @@ export function TestSuiteTab({ client, agentId, agentName, currentVersion }: Tes
   const scorers = useQuery({ queryKey: ["eval", agentId, "scorers"], queryFn: () => client.getEvalScorers(agentId), retry: false });
 
   const runList: EvalRunDTO[] = runs.data ?? [];
-  const lastDone = runList.find((r) => r.status === "done");
+  // A case's latest result comes from the newest finished whole-suite run; single-case and draft runs do not count.
+  const lastDone = runList.find((r) => r.status === "done" && r.scope === "suite" && !r.draft);
   const shown = openRun ?? runList[0]?.id ?? null;
   const detail = useQuery({
     queryKey: ["eval", agentId, "run", shown],
     queryFn: () => client.getEvalRun(agentId, shown!),
     enabled: !!shown,
     retry: false,
-    refetchInterval: (q) => (!q.state.data || active(q.state.data.run.status) ? POLL_MS : false),
+    refetchInterval: (q) => (q.state.status !== "error" && (!q.state.data || active(q.state.data.run.status)) ? POLL_MS : false),
   });
   const lastDoneDetail = useQuery({
     queryKey: ["eval", agentId, "run", lastDone?.id],
@@ -264,7 +274,7 @@ export function TestSuiteTab({ client, agentId, agentName, currentVersion }: Tes
         ) : (
           <DataTable
             caption="Test cases"
-            columns={["Case", "Caller", "Latest result", "Actions"]}
+            columns={["Case", "Caller", "Latest result (last whole-suite run)", "Actions"]}
             rows={cases.data.map((c) => [
               c.name,
               "persona" in c.caller ? "persona" : "script",

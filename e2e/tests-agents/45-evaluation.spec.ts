@@ -7,7 +7,8 @@ import { api, connectAdmin, stage } from "../lib/agents-helpers";
 test.skip(LIVE, "echo-provider spec");
 test.describe.configure({ mode: "serial" });
 
-const NAME = "E2E Eval Agent";
+// Unique per run so reruns and other specs' agents never collide with this one.
+const NAME = `E2E Eval Agent ${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 const CASES = `name: greets
 caller:
   script: ["hello there"]
@@ -28,7 +29,13 @@ test("a suite runs on echo through the console, fails the broken case and shows 
   });
   await connectAdmin(page, stack);
   await page.getByRole("link", { name: "Evaluation", exact: true }).first().click();
-  await page.getByRole("table", { name: "Latest suite result per agent" }).getByRole("link", { name: NAME }).click();
+  const fleet = page.getByRole("table", { name: "Latest suite result per agent" });
+  await expect(fleet).toBeVisible();
+  // The fleet is paged by name: the agent may be on a later page.
+  const link = fleet.getByRole("link", { name: NAME });
+  const next = page.getByRole("button", { name: "Next" });
+  while (!(await link.isVisible()) && (await next.isEnabled())) await next.click();
+  await link.click();
   await expect(page).toHaveURL(/\/evaluation\/[^/]+$/);
   await page.getByRole("tab", { name: "Test suite" }).click();
   await expect(page.getByRole("note").first()).toContainText("Eval calls run this agent's real tools");
@@ -61,7 +68,9 @@ test("a suite runs on echo through the console, fails the broken case and shows 
 
   await page.getByRole("link", { name: "Evaluation", exact: true }).first().click();
   const row = page.getByRole("row").filter({ hasText: NAME });
+  while (!(await row.isVisible()) && (await next.isEnabled())) await next.click(); // the row may sit on a later page
   await expect(row).toContainText("50%");
   await expect(row).toContainText("Below threshold");
-  await expect(page.getByText("1 agent below its suite threshold")).toBeVisible();
+  // Other agents may be below threshold too: assert the banner exists and counts at least this one.
+  await expect(page.getByRole("status").filter({ hasText: /\d+ agents? below/ })).toBeVisible();
 });

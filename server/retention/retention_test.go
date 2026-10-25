@@ -589,7 +589,7 @@ func (b blockingStore) PurgeMetadata(ctx context.Context, _ time.Time, _ int) (s
 	return storage.PurgeMetadataStats{}, ctx.Err()
 }
 
-func (b blockingStore) PurgeEval(ctx context.Context, _, _ time.Time, _ int) (storage.PurgeEvalStats, error) {
+func (b blockingStore) PurgeEval(ctx context.Context, _ time.Time, _ int) (storage.PurgeEvalStats, error) {
 	return storage.PurgeEvalStats{}, ctx.Err()
 }
 
@@ -635,7 +635,6 @@ type evalRecorder struct {
 	blockingStore
 	calls []string
 	evalR time.Time
-	evalJ time.Time
 	stats []storage.PurgeEvalStats // returned by successive PurgeEval calls, then zeros
 }
 
@@ -649,9 +648,9 @@ func (e *evalRecorder) PurgeMetadata(context.Context, time.Time, int) (storage.P
 	return storage.PurgeMetadataStats{}, nil
 }
 
-func (e *evalRecorder) PurgeEval(_ context.Context, results, jobs time.Time, _ int) (storage.PurgeEvalStats, error) {
+func (e *evalRecorder) PurgeEval(_ context.Context, cutoff time.Time, _ int) (storage.PurgeEvalStats, error) {
 	e.calls = append(e.calls, "eval")
-	e.evalR, e.evalJ = results, jobs
+	e.evalR = cutoff
 	if len(e.stats) == 0 {
 		return storage.PurgeEvalStats{}, nil
 	}
@@ -660,7 +659,7 @@ func (e *evalRecorder) PurgeEval(_ context.Context, results, jobs time.Time, _ i
 	return st, nil
 }
 
-// A run purges eval rows after the metadata pass: results at eval_retention, finished jobs at the metadata lifetime.
+// A run purges eval rows after the metadata pass: jobs, results and runs all at eval_retention.
 func TestRunOncePurgesEval(t *testing.T) {
 	now := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
 	rec := &evalRecorder{}
@@ -672,8 +671,8 @@ func TestRunOncePurgesEval(t *testing.T) {
 	if fmt.Sprint(rec.calls) != "[content metadata eval]" {
 		t.Fatalf("calls: %v", rec.calls)
 	}
-	if !rec.evalR.Equal(now.Add(-180*24*time.Hour)) || !rec.evalJ.Equal(now.Add(-30*24*time.Hour)) {
-		t.Fatalf("cutoffs: results %v jobs %v", rec.evalR, rec.evalJ)
+	if !rec.evalR.Equal(now.Add(-180 * 24 * time.Hour)) {
+		t.Fatalf("cutoff: %v", rec.evalR)
 	}
 	// Off when the policy gives eval rows no lifetime.
 	rec = &evalRecorder{}

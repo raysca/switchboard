@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sort"
 	"testing"
 	"time"
 )
@@ -368,6 +369,58 @@ func TestHistoryLimitClamps(t *testing.T) {
 		}
 		if h, err := s.Eval().History(ctx, a, 0); err != nil || len(h) != 1 {
 			t.Fatalf("below one: %v %d", err, len(h))
+		}
+	})
+}
+
+// A suite run with no cases (total 0) neither errors the below-threshold count nor counts as below.
+func TestFleetZeroTotalRunIsNotBelow(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		a, v := fleetAgent(t, s, "fleet-zero")
+		insertRun(t, s, a, v, "suite", false, "done", 0, 0, time.Now().Add(-time.Hour))
+		page, err := s.Eval().Fleet(ctx, 200, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f := rowFor(t, page, a); f.Below || page.BelowThreshold != 0 {
+			t.Fatalf("an empty run is not below: %+v %d", f, page.BelowThreshold)
+		}
+	})
+}
+
+// Runs that ended at the same instant order by id, newest id first, in the fleet's latest run and in the history.
+func TestFleetAndHistoryBreakEndedAtTiesByID(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		a, v := fleetAgent(t, s, "fleet-tie")
+		at := time.Now().Add(-time.Hour)
+		// Inserted in an order that is neither ascending nor descending by id, so only the tiebreak yields 3, 2, 1.
+		ids := []string{"00000000-0000-7000-8000-000000000002", "00000000-0000-7000-8000-000000000003", "00000000-0000-7000-8000-000000000001"}
+		for i, id := range ids {
+			run := insertRun(t, s, a, v, "suite", false, "done", i, 3, at)
+			if _, err := s.DB().ExecContext(ctx, s.bind("UPDATE eval_runs SET id=? WHERE id=?"), id, run); err != nil {
+				t.Fatal(err)
+			}
+		}
+		sort.Sort(sort.Reverse(sort.StringSlice(ids)))
+		page, err := s.Eval().Fleet(ctx, 200, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f := rowFor(t, page, a); f.Latest == nil || f.Latest.RunID != ids[0] {
+			t.Fatalf("latest must be the highest id %s: %+v", ids[0], f.Latest)
+		}
+		h, err := s.Eval().History(ctx, a, 50)
+		if err != nil || len(h) != 3 {
+			t.Fatalf("history: %v %+v", err, h)
+		}
+		for i, row := range h {
+			if row.RunID != ids[i] {
+				t.Fatalf("history[%d] = %s, want %s", i, row.RunID, ids[i])
+			}
 		}
 	})
 }

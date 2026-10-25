@@ -61,6 +61,10 @@ export function EvaluationView({ client, keyValue }: EvaluationViewProps) {
       </>
     );
   }
+  if (page > 0 && data.agents.length === 0) {
+    // The list shrank under us; step back to the last page that exists.
+    setPage(Math.max(0, Math.ceil(data.total / PAGE) - 1));
+  }
   const first = page * PAGE + 1;
   const last = page * PAGE + data.agents.length;
   return (

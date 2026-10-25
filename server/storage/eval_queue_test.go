@@ -645,27 +645,28 @@ func TestPurgeEval(t *testing.T) {
 		day := 24 * time.Hour
 
 		oldRun, _ := finishedRun(t, s, cut(100*day)) // finished 100 days ago
+		midRun, _ := finishedRun(t, s, cut(40*day))  // past the 30 day metadata lifetime, inside the 50 day cutoff below
 		newRun, _ := finishedRun(t, s, cut(time.Hour))
 		openRun, _, _ := seedRun(t, s, 1, cut(200*day)) // old but still pending: never purged
 
-		// Jobs at 30 days, results at 180: the old run's job goes, its result and run stay.
-		st, err := r.PurgeEval(ctx, cut(180*day), cut(30*day), 100)
-		if err != nil || st != (PurgeEvalStats{Jobs: 1}) {
-			t.Fatalf("jobs only: %v %+v", err, st)
+		// Nothing is older than 180 days; the 100-day-old run keeps its job, result and row (its detail is built from the job).
+		st, err := r.PurgeEval(ctx, cut(180*day), 100)
+		if err != nil || st != (PurgeEvalStats{}) {
+			t.Fatalf("180 days: %v %+v", err, st)
 		}
-		if got, _ := s.Eval().RunResults(ctx, oldRun.ID); len(got) != 1 {
-			t.Fatalf("the result must outlive its job: %d", len(got))
+		if got, _ := s.Eval().RunJobs(ctx, oldRun.ID); len(got) != 1 {
+			t.Fatalf("a run's jobs must outlive the metadata lifetime: %d", len(got))
 		}
-		if _, err := s.Eval().GetRun(ctx, oldRun.AgentID, oldRun.ID); err != nil {
-			t.Fatalf("a run with results is kept: %v", err)
-		}
-		// Results at 50 days: now the old run's result and, in the same call, the emptied run go.
-		st, err = r.PurgeEval(ctx, cut(50*day), cut(30*day), 100)
-		if err != nil || st != (PurgeEvalStats{Results: 1, Runs: 1}) {
+		// At 50 days the old run's job, result and, in the same call, the emptied run go.
+		st, err = r.PurgeEval(ctx, cut(50*day), 100)
+		if err != nil || st != (PurgeEvalStats{Jobs: 1, Results: 1, Runs: 1}) {
 			t.Fatalf("results and run: %v %+v", err, st)
 		}
 		if _, err := s.Eval().GetRun(ctx, oldRun.AgentID, oldRun.ID); !errors.Is(err, sql.ErrNoRows) {
 			t.Fatalf("old run still stored: %v", err)
+		}
+		if got, _ := s.Eval().RunJobs(ctx, midRun.ID); len(got) != 1 {
+			t.Fatal("a run's job was purged before its run")
 		}
 		if got, _ := s.Eval().RunResults(ctx, newRun.ID); len(got) != 1 {
 			t.Fatal("a recent result was purged")
@@ -677,7 +678,7 @@ func TestPurgeEval(t *testing.T) {
 			t.Fatalf("an unfinished run was purged: %v", err)
 		}
 		// A zero cutoff leaves that pass out.
-		if st, err = r.PurgeEval(ctx, time.Time{}, time.Time{}, 100); err != nil || st != (PurgeEvalStats{}) {
+		if st, err = r.PurgeEval(ctx, time.Time{}, 100); err != nil || st != (PurgeEvalStats{}) {
 			t.Fatalf("zero cutoffs: %v %+v", err, st)
 		}
 	})
@@ -695,7 +696,7 @@ func TestPurgeEvalBatches(t *testing.T) {
 		cutoff := time.Now().Add(-time.Hour)
 		var jobs, results, runs int64
 		for calls := 0; ; calls++ {
-			st, err := s.Retention().PurgeEval(ctx, cutoff, cutoff, 2)
+			st, err := s.Retention().PurgeEval(ctx, cutoff, 2)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1142,7 +1143,7 @@ func TestPurgeEvalKeepsUnfinishedJobsAndRuns(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		st, err := s.Retention().PurgeEval(ctx, cutoff, cutoff, 100)
+		st, err := s.Retention().PurgeEval(ctx, cutoff, 100)
 		if err != nil || st != (PurgeEvalStats{}) {
 			t.Fatalf("purge: %v %+v", err, st)
 		}
@@ -1157,42 +1158,20 @@ func TestPurgeEvalKeepsUnfinishedJobsAndRuns(t *testing.T) {
 	})
 }
 
-// A done run stays while any of its jobs does: the jobs cutoff holds the run back even after its results are gone.
+// A done run stays while any of its jobs does: a job newer than the cutoff holds the run back even after its results are gone.
 func TestPurgeEvalKeepsRunWhileJobsRemain(t *testing.T) {
 	eachStore(t, func(t *testing.T, s *Store) {
 		resetEval(t, s)
 		ctx := context.Background()
 		day := 24 * time.Hour
 		run, job := finishedRun(t, s, time.Now().Add(-100*day))
-		setJobAge(t, s, job.ID, time.Now().Add(-time.Hour)) // inside the jobs cutoff
-		st, err := s.Retention().PurgeEval(ctx, time.Now().Add(-50*day), time.Now().Add(-30*day), 100)
+		setJobAge(t, s, job.ID, time.Now().Add(-time.Hour)) // newer than the cutoff
+		st, err := s.Retention().PurgeEval(ctx, time.Now().Add(-50*day), 100)
 		if err != nil || st != (PurgeEvalStats{Results: 1}) {
 			t.Fatalf("purge: %v %+v", err, st)
 		}
 		if _, err := s.Eval().GetRun(ctx, run.AgentID, run.ID); err != nil {
 			t.Fatalf("a run with a job left was purged: %v", err)
-		}
-	})
-}
-
-// With no metadata lifetime the jobs have no cutoff of their own; finished ones then go with the results, or they
-// would never be purged.
-func TestPurgeEvalFinishedJobsFollowResultsWithoutMetadataCutoff(t *testing.T) {
-	eachStore(t, func(t *testing.T, s *Store) {
-		resetEval(t, s)
-		ctx := context.Background()
-		day := 24 * time.Hour
-		oldRun, _ := finishedRun(t, s, time.Now().Add(-100*day))
-		newRun, _ := finishedRun(t, s, time.Now().Add(-time.Hour))
-		st, err := s.Retention().PurgeEval(ctx, time.Now().Add(-50*day), time.Time{}, 100)
-		if err != nil || st != (PurgeEvalStats{Jobs: 1, Results: 1, Runs: 1}) {
-			t.Fatalf("purge: %v %+v", err, st)
-		}
-		if _, err := s.Eval().GetRun(ctx, oldRun.AgentID, oldRun.ID); !errors.Is(err, sql.ErrNoRows) {
-			t.Fatalf("old run: %v", err)
-		}
-		if got, _ := s.Eval().RunJobs(ctx, newRun.ID); len(got) != 1 {
-			t.Fatal("a recent finished job was purged")
 		}
 	})
 }
@@ -1211,7 +1190,7 @@ func TestPurgeEvalCutoffIsInclusive(t *testing.T) {
 		if _, err := s.DB().ExecContext(ctx, s.bind("UPDATE eval_runs SET ended_at=? WHERE id=?"), utc(cutoff), run.ID); err != nil {
 			t.Fatal(err)
 		}
-		st, err := s.Retention().PurgeEval(ctx, cutoff, cutoff, 100)
+		st, err := s.Retention().PurgeEval(ctx, cutoff, 100)
 		if err != nil || st != (PurgeEvalStats{Jobs: 1, Results: 1, Runs: 1}) {
 			t.Fatalf("rows exactly at the cutoff must go: %v %+v", err, st)
 		}

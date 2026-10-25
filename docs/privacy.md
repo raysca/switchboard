@@ -81,7 +81,7 @@ separately: see [observability.md](observability.md) (OpenTelemetry export).
 
 ### What each run does
 
-The job (`server/retention/job.go`) runs every `retention.interval` and makes two passes.
+The job (`server/retention/job.go`) runs every `retention.interval` and makes three passes.
 
 1. **Content purge.** For ended sessions whose `ended_at` is older than
    `content_retention_days`, `turns.transcript` and `turns.assistant_text` are
@@ -96,6 +96,11 @@ The job (`server/retention/job.go`) runs every `retention.interval` and makes tw
    unlinking `parent_id`), `tool_calls`, `turns`, `session_mcp_tools` and the
    `sessions` row. Standalone trace spans and events older than the cutoff are
    removed too.
+3. **Eval purge** (when `eval_retention_days`, default 180, is above 0). Finished
+   eval jobs, eval results and eval runs go together once they are older than
+   `eval_retention_days`, so a run's detail stays complete for the run's whole life.
+   A judge `reason` can quote call content and is kept for `eval_retention_days`
+   (180 days by default), longer than `content_retention_days`.
 
 **Upgrade note.** A database written by a build between commits `5be193e` and
 `12a7884` (2026-10-05/06) with a trace content mode configured may hold content

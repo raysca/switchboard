@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
@@ -76,5 +76,14 @@ describe("EvaluationView", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: "Next" }));
     await screen.findByText("Agents 26–28 of 60");
     expect(get).toHaveBeenLastCalledWith(25, 25);
+  });
+
+  it("steps back when the list shrinks under the current page", async () => {
+    const get = vi.fn(async (_l: number, offset: number) => (offset === 0 ? { ...fleet, total: 28 } : { agents: [], total: 25, below_threshold: 0 }));
+    renderView(get as unknown as ApiClient["getEvalFleet"]);
+    await screen.findByRole("link", { name: "Support" });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(get).toHaveBeenLastCalledWith(25, 0));
+    expect(screen.queryByText(/Agents 26/)).toBeNull();
   });
 });
