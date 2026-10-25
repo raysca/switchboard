@@ -43,6 +43,8 @@ type Store struct {
 	// finalizePendingDeletesHook is a package-test fault injection seam for
 	// exercising retry behavior after the session status transaction commits.
 	finalizePendingDeletesHook func(context.Context) error
+	// purgeContentHook is a package-test seam: it runs after PurgeContent selected its calls and before it blanks them.
+	purgeContentHook func()
 }
 
 // ErrPreEnvironmentCredentials refuses a database made before provider secrets

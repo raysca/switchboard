@@ -17,12 +17,67 @@ type SecretsRepository struct{ s *Store }
 
 func (s *Store) Secrets() SecretsRepository { return SecretsRepository{s} }
 
-// Put creates the secret or replaces its value, keeping CreatedAt.
-func (r SecretsRepository) Put(ctx context.Context, row SecretRow) error {
-	now := utc(time.Now())
-	_, err := r.s.db.ExecContext(ctx, r.s.bind("INSERT INTO secrets(name,key_id,nonce,ciphertext,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET key_id=excluded.key_id, nonce=excluded.nonce, ciphertext=excluded.ciphertext, updated_at=excluded.updated_at"),
-		row.Name, row.KeyID, row.Nonce, row.Ciphertext, now, now)
+// SecretChange is one audited change to a stored secret: what happened to which name, and the request that did it.
+type SecretChange struct {
+	At                      time.Time
+	Action, Name, RequestID string
+}
+
+// MaxSecretChanges bounds a list of changes.
+const MaxSecretChanges = 100
+
+func (r SecretsRepository) audit(ctx context.Context, tx *sql.Tx, action, name, requestID string) error {
+	if requestID == "" {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO secret_audit(id,at,action,name,request_id) VALUES(?,?,?,?,?)"), NewID(), utc(time.Now()), action, name, requestID)
 	return err
+}
+
+// Put creates the secret or replaces its value, keeping CreatedAt. A non-empty requestID also records the change in
+// the audit trail, in the same transaction (re-sealing under a new key passes none).
+func (r SecretsRepository) Put(ctx context.Context, row SecretRow, requestID string) error {
+	return r.s.WithTx(ctx, func(tx *sql.Tx) error {
+		var exists int
+		if err := tx.QueryRowContext(ctx, r.s.bind("SELECT count(*) FROM secrets WHERE name=?"), row.Name).Scan(&exists); err != nil {
+			return err
+		}
+		now := utc(time.Now())
+		if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO secrets(name,key_id,nonce,ciphertext,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET key_id=excluded.key_id, nonce=excluded.nonce, ciphertext=excluded.ciphertext, updated_at=excluded.updated_at"),
+			row.Name, row.KeyID, row.Nonce, row.Ciphertext, now, now); err != nil {
+			return err
+		}
+		action := "create"
+		if exists > 0 {
+			action = "replace"
+		}
+		return r.audit(ctx, tx, action, row.Name, requestID)
+	})
+}
+
+// Changes returns the audit trail, newest first, at most MaxSecretChanges.
+func (r SecretsRepository) Changes(ctx context.Context, limit int) ([]SecretChange, error) {
+	if limit <= 0 || limit > MaxSecretChanges {
+		limit = MaxSecretChanges
+	}
+	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT at,action,name,request_id FROM secret_audit ORDER BY at DESC, id DESC LIMIT ?"), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SecretChange
+	for rows.Next() {
+		var c SecretChange
+		var at string
+		if err := rows.Scan(&at, &c.Action, &c.Name, &c.RequestID); err != nil {
+			return nil, err
+		}
+		if c.At, err = parseTime(at); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 // Get returns sql.ErrNoRows when the secret does not exist.
@@ -61,16 +116,18 @@ func (r SecretsRepository) List(ctx context.Context) ([]SecretRow, error) {
 	return out, rows.Err()
 }
 
-// Delete returns sql.ErrNoRows when the secret does not exist.
-func (r SecretsRepository) Delete(ctx context.Context, name string) error {
-	res, err := r.s.db.ExecContext(ctx, r.s.bind("DELETE FROM secrets WHERE name=?"), name)
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
+// Delete returns sql.ErrNoRows when the secret does not exist. A non-empty requestID also records the change.
+func (r SecretsRepository) Delete(ctx context.Context, name, requestID string) error {
+	return r.s.WithTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, r.s.bind("DELETE FROM secrets WHERE name=?"), name)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return sql.ErrNoRows
+		}
+		return r.audit(ctx, tx, "delete", name, requestID)
+	})
 }
 
 // Touch records a use, at most once a minute per secret so a busy tool does not write on every call.

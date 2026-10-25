@@ -111,22 +111,63 @@ To sustain hundreds of concurrent voice calls with sub-200ms interruption latenc
 
 ---
 
-## Mandatory Code Review Workflow
+## Mandatory Delivery Workflow
 
-All engineering tasks, features, and refactors must conclude with an **independent agent review**:
+Every feature, fix and refactor goes through these stages, in order. A small change does not skip a stage; it makes the stage short. A documentation-only change skips the code checks of stage 4 and runs only the two doc guards (`node scripts/check-links.mjs --paths` and `node scripts/check-vocabulary.mjs`) as its gate in stage 5; it still runs in a worktree, still gets the stage 2 review, and still reports evidence.
 
-1. **Adversarial Reviewer:** An independent agent (running in a dedicated review context) must evaluate the diff before work is considered complete.
-2. **YAGNI & Bloat Audit:** The reviewer must explicitly evaluate:
-   - Is this code over-engineered or unnecessarily complex?
-   - Does this add unneeded abstractions or dead paths?
-   - Will every new library capability genuinely be consumed by the server?
-3. **Correctness & Concurrency Audit:**
-   - Race conditions, unsynchronized mutations, deadlock potential, or goroutine leaks.
-   - Monotonic vs. wall-clock time comparisons.
-   - Error handling, recover blocks, and resource cleanup (`Close()`, `defer cancel()`).
-4. **Verification Gate:**
-   - `gofmt -w .`
-   - `make verify`: vet and `go test -race` in every module of the Makefile's `MODULES`, the Go end-to-end tests, gofmt, the protobuf fixture and manifest checks, and the docs link checker (`scripts/check-links.mjs`), and the vocabulary guard (`scripts/check-vocabulary.mjs`, exceptions in `scripts/vocabulary-allow.txt`).
-   - `make deadcode`: no unreachable function outside `scripts/deadcode-allow.txt` (advisory in CI).
-   - `make e2e-echo` (Go and browser end-to-end on the free echo provider) and, when the offline stack is running, `make offline-test`. Paid/live targets only when asked.
-   - Clean git status with descriptive conventional commit messages.
+**Reviewer briefs.** Every independent review in this workflow is done by a separate agent in a fresh context, read-only, with the worktree path, the documents or the diff command (`git diff main...HEAD`), and this file. It is not given the author's conclusions. The final report names each reviewer agent and what it found.
+
+### 1. Work in a worktree
+
+- **All work happens in its own git worktree**, never in the main checkout: `git worktree add .claude/worktrees/<name> -b <branch> main` (or the session's worktree tool), branched from the current `main`. One worktree per piece of work.
+- **Give the worktree its own prerequisites:** `make ort` (the pinned ONNX Runtime into `third_party/`, hash-checked); `git submodule update --init pipecat-impl`; `npm ci` in `ui`, `e2e`, `tools/compat` and `examples/rtvi_client` (`make verify` runs the compat and UI tests, and `make e2e-echo` installs `e2e` itself). **Never symlink `node_modules`** (or any dependency folder) to another checkout: `npm ci` writes through the link and destroys the target, and a stray link can be committed. Check `git status` before staging.
+- **Never edit, reset or switch branches in a checkout or worktree you did not create.** Other sessions may be working in it. You may remove only a worktree you created.
+
+### 2. Spec and plan, reviewed before any code
+
+- **Write the spec and the plan first**, in the worktree: the spec says what and why, the decisions taken and the non-goals; the plan says the slices, the files and the tests. They live in `docs/decisions/` (or `docs/superpowers/specs` and `plans`). A bug or wording fix needs a written paragraph of intent instead.
+- **An independent agent reviews the spec and the plan, or the paragraph and the code it touches, before you edit anything.** It looks for: edge cases; scenarios not covered; error and failure paths; concurrency and ordering; security and privacy exposure (secrets, retention, logs); migrations and compatibility (SQLite and Postgres, existing data, old clients and old agent versions); operational impact (metrics, alerts, rollback); and acceptance criteria that are missing or cannot be tested.
+- **Every finding is resolved in the document or rejected with the reason written down.** When the build later differs from the plan, the document records where and why.
+
+### 3. Build
+
+- **Tests with the code.** Each behaviour has a test that fails if it breaks, and the failure paths (refusals, errors, races, the empty and the very large case) are tested, not only the happy path. Follow the Development Principles and the Go standards above.
+- **Small conventional commits**, staged by name or after reading `git status`.
+
+### 4. Independent code review, before the gate
+
+The reviewer reports findings ranked by severity, each with `file:line` and a concrete failure scenario, and says explicitly when it finds nothing serious. It must evaluate:
+
+1. **Bugs and correctness:** logic errors; races, unsynchronized mutations, deadlocks, goroutine leaks; monotonic versus wall-clock time; error handling, `recover` blocks, cleanup (`Close()`, `defer cancel()`); SQL that works on SQLite and Postgres; existing data.
+2. **Bloat and over-engineering:** abstractions with one user, speculative options, dead paths, duplicated logic, and library code the server does not consume that is neither listed in `docs/pipecat-parity-matrix.md` as `planned (hook exists)` or `parked` nor in `scripts/deadcode-allow.txt` (`make deadcode` semantics: tests are not roots).
+3. **God files and god functions:** one file or function doing several jobs, mixed layers (`core/` knowing about `server/`, handlers holding business logic); say how to split it.
+4. **Security and privacy:** secrets in responses, logs, spans or errors; injection and SSRF; PII exposure; the management boundary.
+5. **Tests:** do they test what they claim (an assertion that passes either way is a finding); are failure cases missing?
+6. **Docs against code:** the names, codes, limits and behaviours the docs state are the ones the code has.
+
+Each finding is fixed, or rejected in writing with the reason. After a fix, the affected tests run again; a second review is required when the fixes touch more than five files or any concurrency, security or storage code.
+
+### 5. Verification gate
+
+Run in the worktree, **one after the other, never at the same time** (they share ports and installs):
+
+- `gofmt -w .`
+- `make verify`: vet and `go test -race` in every module of the Makefile's `MODULES`, the Go end-to-end tests, gofmt, the protobuf fixture and manifest checks, the docs link checker (`scripts/check-links.mjs`) and the vocabulary guard (`scripts/check-vocabulary.mjs`, exceptions in `scripts/vocabulary-allow.txt`).
+- `make e2e-echo`: the Go end-to-end tests, the agent eval self-test, then the browser tests, all on the free echo provider. When the offline stack is running, also `make offline-test`. Paid and live targets only when asked.
+- `make deadcode`: no unreachable function outside `scripts/deadcode-allow.txt` (advisory in CI).
+- A failure is investigated, not rerun until it passes. A flaky test is reproduced on a pristine `main` to show it is not yours, then reported and, if it blocks, fixed in its own commit.
+
+### 6. Evidence
+
+The final report to the user includes:
+
+- **A summary:** what changed and why; the spec and plan review outcome and the code review outcome, with what each found and what was done about it; the gate results with counts; what is left over or was deliberately skipped. Anything that failed or was not run is stated as such.
+- **A screenshot** of the real running feature for anything a person can see (a screen, a dialog, a sequence of screens), taken from the worktree's dev stack with seeded data and saved under the session's scratch folder; its full path is in the report and the file is sent to the user. Not a mock-up.
+- **A transcript** for behaviour with no screen (an API, a job, a metric): the request and response, or the command and its output, trimmed and with every secret removed.
+
+### 7. Merge and clean up
+
+- Only after the gate passes and the report is made. Merge the latest `main` into the branch (rerun the affected tests and the gate if that brought code; a documentation-only merge needs only the two doc guards). Never merge on a red or unrun gate.
+- **Fast-forward `main`.** If no checkout has `main` checked out, `git fetch . <branch>:main` does it. If the main checkout is on `main` and `git status` there is clean, `git merge --ff-only <branch>` in that checkout is the one command allowed in it. Otherwise (it is dirty, or `main` is checked out in a checkout you did not create) stop and report the branch name; whoever owns that checkout merges it.
+- Remove the worktree you created (`git worktree remove`) and delete the merged branch (`git branch -d`, or `-D` after `git merge-base --is-ancestor <branch> main` confirms it is in `main`). Leave no untracked files from the work.
+- Push, or open a pull request, only when asked.

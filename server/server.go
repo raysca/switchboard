@@ -669,8 +669,8 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 			}
 		}
 		ending.set(storage.EndSetupFailed)
-		s.recoverEach(sessionID, "releaseCall", releaseCall)
 		s.recoverEach(sessionID, "stopRecording", stopRecording)
+		s.recoverEach(sessionID, "releaseCall", releaseCall)
 		s.metrics.SessionsFailedTotal.Add(1)
 		timeline.Record(TimelineEvent{Type: EventError, Details: s.redactor.Redact(err.Error())})
 		s.logSetupFailure(sessionID, agentID, phase, err)
@@ -1534,6 +1534,7 @@ func (s *Server) finishCall(sessionID uint64, principal, agentID string, session
 			}
 		}
 	}
+	<-recDone // the stored call ends only once its recording is written: a janitor or an erasure then sees the final file
 	s.recoverEach(sessionID, "releaseCall", release)
 }
 

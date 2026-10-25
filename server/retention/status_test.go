@@ -112,7 +112,7 @@ func TestStatusEndpoint(t *testing.T) {
 	seed(t, s)
 	settings := retention.Settings{Enabled: true, Interval: time.Hour, Policy: retention.Policy{ContentRetention: 7 * day, MetadataRetention: 30 * day, EvalRetention: 180 * day, BatchSize: 500}, RecordingRetentionDays: 3}
 	job := retention.NewJob(s.Retention(), settings.Policy)
-	h := retention.Handler(settings, job)
+	h := retention.Handler(settings, job, s.Retention())
 	get := func(h http.Handler, path string) (*httptest.ResponseRecorder, retention.Status) {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
@@ -145,7 +145,7 @@ func TestStatusEndpoint(t *testing.T) {
 	}
 
 	// off: the configured values are shown, and there is nothing to preview
-	off := retention.Handler(retention.Settings{Enabled: false, Policy: retention.Policy{ContentRetention: day}}, nil)
+	off := retention.Handler(retention.Settings{Enabled: false, Policy: retention.Policy{ContentRetention: day}}, nil, s.Retention())
 	if w, st := get(off, "/api/v1/retention"); w.Code != 200 || st.Enabled || st.ContentRetentionDays != 1 {
 		t.Fatalf("off: %d %s", w.Code, w.Body)
 	}

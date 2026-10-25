@@ -340,6 +340,52 @@ const httpToolTestEnvelope = z.object({ data: httpToolTestSchema });
 export const httpToolServerId = (toolId: string) => `http:${toolId}`;
 export const isHTTPToolSelection = (t: { mcp_server_id: string }) => t.mcp_server_id.startsWith("http:");
 
+// Retention: the policy in force, the last run, and (on request) what the next run would remove.
+export const retentionStatusSchema = z.object({
+  enabled: z.boolean(),
+  interval_seconds: z.number(),
+  content_retention_days: z.number(),
+  metadata_retention_days: z.number(),
+  batch_size: z.number(),
+  recording_retention_days: z.number(),
+  last_run: z
+    .object({
+      started_at: z.string(),
+      duration_ms: z.number(),
+      error: z.string().optional(),
+      turns_purged: z.number(),
+      sessions_deleted: z.number(),
+      turns_deleted: z.number(),
+      tool_calls_deleted: z.number(),
+      spans_deleted: z.number(),
+      events_deleted: z.number(),
+    })
+    .nullable(),
+  dry_run: z
+    .object({
+      content_sessions: z.number(),
+      content_turns: z.number(),
+      metadata_sessions: z.number(),
+      metadata_turns: z.number(),
+      metadata_tool_calls: z.number(),
+      metadata_spans: z.number(),
+      metadata_events: z.number(),
+    })
+    .nullish(),
+  held_sessions: z.number(),
+  recent_actions: z.array(
+    z.object({
+      at: z.string(),
+      action: z.enum(["hold", "release", "erase_call", "erase_caller"]),
+      // A call id, or for erase_caller the hash of the caller label.
+      subject: z.string(),
+      request_id: z.string(),
+    }),
+  ),
+});
+export type RetentionStatus = z.infer<typeof retentionStatusSchema>;
+const retentionEnvelope = z.object({ data: retentionStatusSchema });
+
 // Secrets: names and where they live; a value is only ever sent, never received.
 export const secretSchema = z.object({
   name: z.string(),
@@ -349,7 +395,9 @@ export const secretSchema = z.object({
   last_used_at: z.string().nullish(),
 });
 export type SecretDTO = z.infer<typeof secretSchema>;
-const secretListEnvelope = z.object({ data: z.object({ store_enabled: z.boolean(), secrets: z.array(secretSchema) }) });
+export const secretChangeSchema = z.object({ at: z.string(), action: z.enum(["create", "replace", "delete"]), name: z.string(), request_id: z.string() });
+export type SecretChangeDTO = z.infer<typeof secretChangeSchema>;
+const secretListEnvelope = z.object({ data: z.object({ store_enabled: z.boolean(), secrets: z.array(secretSchema), recent_changes: z.array(secretChangeSchema).optional().default([]) }) });
 const secretEnvelope = z.object({ data: secretSchema });
 
 const mcpServersEnvelope = z.object({
@@ -473,6 +521,9 @@ export const sessionSchema = z.object({
   draft: z.boolean().optional().default(false),
   caller: z.string().optional().default(""),
   end_reason: z.string().optional().default(""),
+  // On hold: retention and erasure leave the call alone. hold_reason is the operator's note.
+  held: z.boolean().optional().default(false),
+  hold_reason: z.string().optional().default(""),
   median_reply_ms: z.number().nullish(),
   provider_stack: z.unknown().optional(),
   runtime_snapshot: z.unknown().optional(),
@@ -485,6 +536,7 @@ type SessionFilterParams = {
   offset?: number;
   status?: string;
   agent_id?: string;
+  held?: boolean;
 };
 
 const sessionsEnvelope = z.object({
@@ -493,6 +545,7 @@ const sessionsEnvelope = z.object({
 const sessionEnvelope = z.object({
   data: sessionSchema,
 });
+const erasureEnvelope = z.object({ data: z.object({ turns: z.number(), tool_calls: z.number(), spans: z.number(), events: z.number(), recordings_removed: z.number() }) });
 const turnsEnvelope = z.object({
   data: z.array(turnSchema),
 });
@@ -790,6 +843,9 @@ export function createApiClient(
     },
     testHTTPTool: async (id: string, args: unknown) => (await request(`/http-tools/${encodeURIComponent(id)}/test`, httpToolTestEnvelope, { method: "POST", body: { arguments: args } })).data,
 
+    // Retention status
+    getRetention: async (dryRun = false) => (await request(`/retention${dryRun ? "?dry_run=true" : ""}`, retentionEnvelope)).data,
+
     // Secrets endpoints
     getSecrets: async () => (await request("/secrets", secretListEnvelope)).data,
     putSecret: async (name: string, value: string) =>
@@ -909,6 +965,7 @@ export function createApiClient(
         searchParams.set("offset", String(params.offset));
       if (params?.status) searchParams.set("status", params.status);
       if (params?.agent_id) searchParams.set("agent_id", params.agent_id);
+      if (params?.held !== undefined) searchParams.set("held", String(params.held));
       const qs = searchParams.toString();
       return (
         await request(`/sessions${qs ? `?${qs}` : ""}`, sessionsEnvelope)
@@ -928,6 +985,11 @@ export function createApiClient(
           turnsEnvelope,
         )
       ).data,
+    holdSession: async (id: string, reason: string) =>
+      (await request(`/sessions/${encodeURIComponent(id)}/hold`, sessionEnvelope, { method: "PUT", body: { reason } })).data,
+    releaseSession: async (id: string) =>
+      (await request(`/sessions/${encodeURIComponent(id)}/hold`, sessionEnvelope, { method: "DELETE" })).data,
+    eraseSession: async (id: string) => (await request(`/sessions/${encodeURIComponent(id)}`, erasureEnvelope, { method: "DELETE" })).data,
     addSessionNote: async (id: string, content: string, run: boolean) =>
       (await request(`/sessions/${encodeURIComponent(id)}/context`, acceptedEnvelope, { method: "POST", body: { messages: [{ content }], run } })).data,
     runSession: async (id: string) =>

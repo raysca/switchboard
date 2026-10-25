@@ -125,6 +125,8 @@ Databases that never ran with a trace content mode need no action.
   triggers reject updates and deletes) and retention never touches them.
 - Deletes follow foreign-key order inside transactions, which satisfies the
   `ON DELETE RESTRICT` constraints on SQLite and PostgreSQL.
+- A call on hold is never blanked or deleted by a run, and the dry run does not count it
+  ([holds and erasure](#holds-and-erasure)).
 
 ### Bounded execution
 
@@ -145,8 +147,13 @@ large one.
   "last_run": { "started_at": "2026-10-24T11:00:00Z", "duration_ms": 41, "turns_purged": 12,
                 "sessions_deleted": 4, "turns_deleted": 9, "tool_calls_deleted": 2,
                 "spans_deleted": 31, "events_deleted": 70,
-                "eval_jobs_deleted": 0, "eval_results_deleted": 0, "eval_runs_deleted": 0 } } }
+                "eval_jobs_deleted": 0, "eval_results_deleted": 0, "eval_runs_deleted": 0 },
+  "held_sessions": 1,
+  "recent_actions": [ { "at": "2026-10-24T11:20:00Z", "action": "hold",
+                        "subject": "0192aaaa-0000-7000-8000-000000000001", "detail": {}, "request_id": "..." } ] } }
 ```
+
+`held_sessions` is how many calls are on hold; `recent_actions` is the last 20 holds, releases and erasures, newest first.
 
 `last_run` is `null` until the first run since the server started, and carries `error` when the run failed. With
 `?dry_run=true` the response adds `dry_run`: what a run started now would remove, counted without removing
@@ -156,10 +163,54 @@ can move them by one session. With `retention.enabled` off the endpoint still sh
 dry run answers 409 `retention_disabled`.
 
 Metrics: `voice_retention_enabled`, `voice_retention_runs_total{result}`, `voice_retention_turns_purged_total`,
-`voice_retention_sessions_deleted_total`, `voice_retention_interval_seconds` and `voice_retention_last_success_age_seconds`
+`voice_retention_sessions_deleted_total`, `voice_retention_erasures_total{kind="call"|"caller"}`, `voice_retention_interval_seconds` and `voice_retention_last_success_age_seconds`
 (the uptime until the first completed run). The `GovoiceRetentionStalled` alert fires when the job is on and has not
 completed a run for three intervals. A configuration that keeps content longer than metadata, or recordings longer than content, is refused at
 start-up with a message naming both values.
+
+### Holds and erasure
+
+All of this is behind the management key; the console's call page has the buttons for one call.
+
+**Hold.** `PUT /api/v1/sessions/{id}/hold` (optional `{"reason": "..."}`, at most 200 bytes) keeps a call out of every
+retention run, however old it gets; `DELETE /api/v1/sessions/{id}/hold` lifts it, and the next run treats the call as any
+other. Both are idempotent and return the call. A hold may be placed on a call in progress. The call's recording is kept
+by the recording janitor too, if the call has one. The reason is written by the operator, lives on the call, and goes
+with it when the call is erased; it is never logged, put in a metric or put in the audit history. Only a change of the
+flag is audited.
+
+**Erase one call.** `DELETE /api/v1/sessions/{id}` removes an ended call that is not on hold: the call row, its turns
+(transcript and assistant text), tool calls, spans, events, the tool pins captured for it, and its recording on this
+server. The response counts what was removed by class (`turns`, `tool_calls`, `spans`, `events`, `recordings_removed`).
+A call on hold is refused with 409 `session_held`, a call that has not ended with 409 `session_active`, an unknown id
+with 404. The rows go first, in one transaction with the audit entry, and the recording files after it; if a file cannot
+be removed the answer is 500 `recordings_not_removed` (the rows are already gone), and sending the same `DELETE` again
+finishes the files (200 with `recordings_removed`, or 404 once nothing is left).
+
+**Erase by caller.** `POST /api/v1/sessions/erase` with `{"caller": "<label>", "confirm_caller": "<the same label>",
+"dry_run": false}` erases the ended, non-held calls whose caller label is exactly that. Typing the label twice is the
+confirmation: a missing, blank, mismatched or over-128-character label is 400. At most 500 calls are erased per request;
+the response has `erased`, `held` and `active` (matching calls skipped), `remaining` (still to erase), the same class
+counts as above and `recordings_removed`, plus `recordings_failed`, the ids of erased calls whose files could not be
+removed (erase each id again to retry). Repeat the request until `erased` is 0. With `dry_run` it only counts.
+
+**Audit.** Every hold, release and erasure is recorded in `retention_audit` in the same transaction as the change: the
+action, the time, the call id (for an erasure by caller, the first 16 hex characters of the SHA-256 of the label, so the
+history never holds the label), counts, and the server-generated request id (a client `X-Request-ID` is ignored). It
+holds no transcript text, recording path or reason. The history is shown in the console's Server page and in the status
+above; it is not yet purged by the retention policy.
+
+**What an erasure leaves.** Agent versions, tool definitions and MCP discoveries (they belong to the agent, not the
+call); the audit entry; metrics, which are labelled by agent and provider only; anything outside the database: backups
+and snapshots, log files, an external trace backend, provider-side retention; and recordings that are not this call's:
+
+- Recordings made before holds and erasure existed are named `<agent id>-<number>-<unix time>`, not by call. They cannot
+  be tied to a call, so a hold does not protect them, an erasure does not remove them, and they age out under
+  `recording.retention_days` as before. Newer recordings are named `<call id>.wav` and `<call id>.json`.
+- `recording.dir` is local to one server instance. An erasure removes recordings only on the instance that handles the
+  request, and `recordings_removed` says how many it found. With several instances, send the `DELETE` to each (an id
+  with no rows left but files on that instance removes them), or share one directory. Cross-instance erasure is not
+  built.
 
 ## Call recording
 
@@ -172,7 +223,8 @@ callers are told they are recorded. The decision is made once at call start
 from the agent version the call pins; turning recording off affects new calls,
 not calls already in progress.
 
-- **What is stored:** `<agentid>-<sessionid>-<unix>.wav` (stereo 16-bit PCM,
+- **What is stored:** `<call id>.wav` (the stored call's id; a call with no stored record
+  keeps the older `<agentid>-<sessionid>-<unix>.wav`) (stereo 16-bit PCM,
   L = caller, R = bot) and a `.json` sidecar (session, agent (field `agent_id`) and call ids, start/end,
   format, and the user/assistant transcript turns, each capped at 4 KiB; an
   assistant turn cut off by barge-in holds only the heard prefix and is marked
@@ -184,8 +236,10 @@ not calls already in progress.
   60 ms of a track's end continues it without a gap, so network jitter never
   inserts clicks.
 - **Retention:** a janitor deletes recordings older than
-  `recording.retention_days` (hourly, by file mtime) and finalizes `.part` files
-  left by a crashed process (only files whose header this package wrote).
+  `recording.retention_days` (hourly, by file mtime), except the recording of a call on hold
+  (the database is asked per expired file; if it cannot answer the file is kept), and finalizes `.part` files
+  left by a crashed process (only files whose header this package wrote). A call does not read as
+  ended until its recording is written.
   Recordings are conversation content, so `retention_days` may not exceed
   `retention.content_retention_days` when database retention is on.
 - **Storage hygiene:** use a dedicated directory. It is created/tightened to

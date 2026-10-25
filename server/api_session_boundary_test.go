@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"govoice/server/api"
+	"govoice/server/retention"
 	"govoice/server/storage"
 )
 
@@ -24,7 +26,7 @@ func TestSessionRoutesUseManagementBoundaryAndServeQueries(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	s.setSessionManagementAPI(api.NewTracesHandler(store.Sessions(), store.Traces()))
+	s.setSessionManagementAPI(api.NewTracesHandler(store.Sessions(), store.Traces(), retention.NewLifecycle(store.Retention(), nil, slog.Default(), nil)))
 
 	key := "management-test-key-32-bytes-long-and-separate"
 	path := "/api/v1/sessions"

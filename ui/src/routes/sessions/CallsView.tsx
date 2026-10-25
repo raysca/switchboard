@@ -27,11 +27,12 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
   const raw = params.get("outcome");
   const outcomeId: OutcomeFilter = raw === "live" || raw === "ended" ? raw : "";
   const status = outcomeId === "live" ? "active" : outcomeId === "ended" ? "ended" : undefined;
+  const heldOnly = params.get("held") === "1";
 
   // One extra row tells us whether an older page exists; the API returns no total.
   const calls = useQuery({
-    queryKey: ["sessions", "list", agentId, outcomeId, page],
-    queryFn: () => client.getSessions({ limit: PAGE + 1, offset: page * PAGE, status, agent_id: agentId || undefined }),
+    queryKey: ["sessions", "list", agentId, outcomeId, heldOnly, page],
+    queryFn: () => client.getSessions({ limit: PAGE + 1, offset: page * PAGE, status, agent_id: agentId || undefined, held: heldOnly ? true : undefined }),
     enabled: !!keyValue,
     retry: false,
     refetchInterval: 10_000,
@@ -41,12 +42,13 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
   const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: () => client.getAgents(), enabled: !!keyValue, retry: false });
   const active = useActiveSessions(client, keyValue);
 
-  const setFilter = (next: { agent?: string; outcome?: OutcomeFilter }) => {
+  const setFilter = (next: { agent?: string; outcome?: OutcomeFilter; held?: boolean }) => {
     const agent = next.agent ?? agentId;
     const out = next.outcome ?? outcomeId;
     const p = new URLSearchParams();
     if (agent) p.set("agent", agent);
     if (out) p.set("outcome", out);
+    if (next.held ?? heldOnly) p.set("held", "1");
     setParams(p, { replace: true });
   };
   const goToPage = (index: number) => {
@@ -84,7 +86,7 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
   // The API returns at most LIVE_CAP live calls: at the cap the count is a floor, with or without an agent filter.
   const liveText = liveNow === undefined ? "" : (active.data?.length ?? 0) >= LIVE_CAP ? `${liveNow}+` : String(liveNow);
   const hasOlder = (calls.data?.length ?? 0) > PAGE;
-  const filtered = agentId !== "" || outcomeId !== "";
+  const filtered = agentId !== "" || outcomeId !== "" || heldOnly;
 
   return (
     <>
@@ -110,6 +112,9 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
             {o.id === "live" && liveNow !== undefined ? `Live · ${liveText}` : o.label}
           </button>
         ))}
+        <button type="button" className="chip-button" aria-pressed={heldOnly} onClick={() => setFilter({ held: !heldOnly })}>
+          On hold
+        </button>
       </div>
 
       {calls.isPending ? (
@@ -130,7 +135,7 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
           <section className="message-panel">
             <h2>No calls match these filters.</h2>
             <p>
-              <button type="button" className="action-button-small" onClick={() => setFilter({ agent: "", outcome: "" })}>
+              <button type="button" className="action-button-small" onClick={() => setFilter({ agent: "", outcome: "", held: false })}>
                 Clear filters
               </button>
             </p>
@@ -179,7 +184,7 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
                       </td>
                       <td>{callerLabel(s.caller)}</td>
                       <td>
-                        {f?.name ?? "Unknown agent"} <span className="chip">{versionLabel(s, f)}</span>{s.draft && <> <span className="chip">Draft</span></>}
+                        {f?.name ?? "Unknown agent"} <span className="chip">{versionLabel(s, f)}</span>{s.draft && <> <span className="chip">Draft</span></>}{s.held && <> <span className="chip">On hold</span></>}
                       </td>
                       <td className="num">{clock(s.started_at, s.ended_at, now)}</td>
                       <td className="num">{s.turn_count}</td>

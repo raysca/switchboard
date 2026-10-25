@@ -18,7 +18,10 @@ type SessionRecord struct {
 	Draft bool
 	// Caller is the label the integration chose for the call (the voice token's principal), at most
 	// maxCallerLen characters. EndReason is why it ended (one of EndReasons), empty while active.
-	Caller, EndReason  string
+	Caller, EndReason string
+	// Held keeps the retention job off the call; HoldReason is the operator's note.
+	Held               bool
+	HoldReason         string
 	RuntimeTools       []SelectedTool
 	StartedAt, EndedAt time.Time
 	TurnCount          int
@@ -254,8 +257,10 @@ func (r SessionRepository) AddTurn(ctx context.Context, v TurnRecord) error {
 type SessionFilter struct {
 	AgentID string
 	Status  string
-	Limit   int
-	Offset  int
+	// Held, when set, lists only calls on hold (true) or not on hold (false).
+	Held   *bool
+	Limit  int
+	Offset int
 }
 
 func (r SessionRepository) List(ctx context.Context, filter SessionFilter) ([]SessionRecord, error) {
@@ -271,7 +276,7 @@ func (r SessionRepository) List(ctx context.Context, filter SessionFilter) ([]Se
 		offset = 0
 	}
 
-	query := "SELECT id,agent_id,agent_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json,draft,caller,end_reason FROM sessions"
+	query := "SELECT id,agent_id,agent_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json,draft,caller,end_reason,held,hold_reason FROM sessions"
 	var clauses []string
 	var args []any
 	if filter.AgentID != "" {
@@ -281,6 +286,10 @@ func (r SessionRepository) List(ctx context.Context, filter SessionFilter) ([]Se
 	if filter.Status != "" {
 		clauses = append(clauses, "status=?")
 		args = append(args, filter.Status)
+	}
+	if filter.Held != nil {
+		clauses = append(clauses, "held=?")
+		args = append(args, boolValue(r.s.dialect, *filter.Held))
 	}
 	if len(clauses) > 0 {
 		query += " WHERE " + strings.Join(clauses, " AND ")
@@ -299,7 +308,7 @@ func (r SessionRepository) List(ctx context.Context, filter SessionFilter) ([]Se
 		var v SessionRecord
 		var started string
 		var ended sql.NullString
-		if err := rows.Scan(&v.ID, &v.AgentID, &v.AgentVersionID, &v.ConfigHash, &started, &ended, &v.Status, &v.ProviderStackJSON, &v.TurnCount, &v.SafeSummary, &v.RuntimeSnapshotJSON, &v.Draft, &v.Caller, &v.EndReason); err != nil {
+		if err := rows.Scan(&v.ID, &v.AgentID, &v.AgentVersionID, &v.ConfigHash, &started, &ended, &v.Status, &v.ProviderStackJSON, &v.TurnCount, &v.SafeSummary, &v.RuntimeSnapshotJSON, &v.Draft, &v.Caller, &v.EndReason, &v.Held, &v.HoldReason); err != nil {
 			return nil, err
 		}
 		if v.StartedAt, err = parseTime(started); err != nil {
@@ -346,7 +355,7 @@ func (r SessionRepository) Get(ctx context.Context, id string) (SessionRecord, e
 	var v SessionRecord
 	var started string
 	var ended sql.NullString
-	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,agent_id,agent_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json,draft,caller,end_reason FROM sessions WHERE id=?"), id).Scan(&v.ID, &v.AgentID, &v.AgentVersionID, &v.ConfigHash, &started, &ended, &v.Status, &v.ProviderStackJSON, &v.TurnCount, &v.SafeSummary, &v.RuntimeSnapshotJSON, &v.Draft, &v.Caller, &v.EndReason)
+	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,agent_id,agent_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json,draft,caller,end_reason,held,hold_reason FROM sessions WHERE id=?"), id).Scan(&v.ID, &v.AgentID, &v.AgentVersionID, &v.ConfigHash, &started, &ended, &v.Status, &v.ProviderStackJSON, &v.TurnCount, &v.SafeSummary, &v.RuntimeSnapshotJSON, &v.Draft, &v.Caller, &v.EndReason, &v.Held, &v.HoldReason)
 	if err != nil {
 		return v, err
 	}

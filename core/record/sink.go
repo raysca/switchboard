@@ -136,7 +136,9 @@ func (o *localObject) Abort() error {
 // finalizes partial recordings abandoned by a crashed process. It returns the
 // number of files removed. Only regular files named <valid id><ext> with this
 // package's extensions are touched; symlinks and anything else are left alone.
-func (l *LocalSink) Sweep(now time.Time, maxAge time.Duration) (int, error) {
+// keep, when set, is asked per expired file for the recording's id and spares
+// the file when it returns true (a recording whose call is on hold).
+func (l *LocalSink) Sweep(now time.Time, maxAge time.Duration, keep func(id string) bool) (int, error) {
 	entries, err := os.ReadDir(l.dir)
 	if err != nil {
 		return 0, err
@@ -156,6 +158,9 @@ func (l *LocalSink) Sweep(now time.Time, maxAge time.Duration) (int, error) {
 		age := now.Sub(info.ModTime())
 		switch {
 		case age > maxAge:
+			if keep != nil && keep(fileID(name)) {
+				continue
+			}
 			if err := os.Remove(path); err == nil {
 				removed++
 			} else if firstErr == nil {
@@ -170,14 +175,41 @@ func (l *LocalSink) Sweep(now time.Time, maxAge time.Duration) (int, error) {
 	return removed, firstErr
 }
 
-// ownFile reports whether name is one this sink writes.
-func ownFile(name string) bool {
-	for _, ext := range []string{wavExt + partExt, jsonExt + partExt, wavExt, jsonExt} {
-		if id, ok := strings.CutSuffix(name, ext); ok {
-			return ValidID(id)
+var exts = []string{wavExt + partExt, jsonExt + partExt, wavExt, jsonExt}
+
+// fileID is the recording id of a file this sink writes, or "".
+func fileID(name string) string {
+	for _, ext := range exts {
+		if id, ok := strings.CutSuffix(name, ext); ok && ValidID(id) {
+			return id
 		}
 	}
-	return false
+	return ""
+}
+
+// ownFile reports whether name is one this sink writes.
+func ownFile(name string) bool { return fileID(name) != "" }
+
+// Remove deletes the recording id: audio, sidecar and any leftover partial files. It returns how many files it
+// removed; a recording that does not exist is not an error.
+func (l *LocalSink) Remove(id string) (int, error) {
+	if !ValidID(id) {
+		return 0, ErrInvalidID
+	}
+	removed := 0
+	var firstErr error
+	for _, ext := range exts {
+		path := filepath.Join(l.dir, id+ext)
+		if fi, err := os.Lstat(path); err != nil || !fi.Mode().IsRegular() {
+			continue // absent, or not a file this sink wrote
+		}
+		if err := os.Remove(path); err == nil {
+			removed++
+		} else if !errors.Is(err, os.ErrNotExist) && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return removed, firstErr
 }
 
 // recoverPartial patches the sizes of an abandoned recording from its length
@@ -217,13 +249,13 @@ func recoverPartial(path string) error {
 	return os.Rename(path, strings.TrimSuffix(path, partExt))
 }
 
-// Janitor sweeps now and then every interval until ctx ends.
-func (l *LocalSink) Janitor(ctx context.Context, maxAge, interval time.Duration, log *slog.Logger) {
+// Janitor sweeps now and then every interval until ctx ends. keep is passed to Sweep.
+func (l *LocalSink) Janitor(ctx context.Context, maxAge, interval time.Duration, log *slog.Logger, keep func(id string) bool) {
 	if interval <= 0 {
 		interval = time.Hour
 	}
 	run := func() {
-		n, err := l.Sweep(time.Now(), maxAge)
+		n, err := l.Sweep(time.Now(), maxAge, keep)
 		if err != nil && log != nil {
 			log.Warn("recording sweep", "err", err.Error())
 		}

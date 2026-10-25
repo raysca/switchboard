@@ -22,6 +22,8 @@ const agent = (over: Partial<AgentDTO> = {}, config: Record<string, unknown> = {
 const graph = { start: "a", steps: [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }], handoffs: [{ id: "e1" }, { id: "e2" }, { id: "e3" }] };
 const session = (over: Partial<SessionDTO>): SessionDTO => ({
   draft: false,
+  held: false,
+  hold_reason: "",
   caller: "",
   end_reason: "",
   id: "s",

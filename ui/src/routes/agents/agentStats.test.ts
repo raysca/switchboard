@@ -16,6 +16,8 @@ const agent = (over: Partial<AgentDTO> = {}, config: Record<string, unknown> = {
 });
 const session = (over: Partial<SessionDTO>): SessionDTO => ({
   draft: false,
+  held: false,
+  hold_reason: "",
   caller: "",
   end_reason: "",
   id: "s",

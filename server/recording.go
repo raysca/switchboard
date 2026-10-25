@@ -25,9 +25,14 @@ func (s *Server) attachRecording(call CallSpec, agentID string, sessionID uint64
 		safeAgent = "agent"
 	}
 	sid := fmt.Sprint(sessionID)
+	// Named by the stored call, so a hold and an erasure find the file; a call without a stored record keeps the old name.
+	id, stored := call.StoredSessionID, call.StoredSessionID
+	if !storage.IsID(id) {
+		id, stored = fmt.Sprintf("%s-%d-%d", safeAgent, sessionID, started.Unix()), sid
+	}
 	rec := record.New(s.recSink, record.Meta{
-		ID:        fmt.Sprintf("%s-%d-%d", safeAgent, sessionID, started.Unix()),
-		SessionID: sid, AgentID: agentID, CallID: sid,
+		ID:        id,
+		SessionID: stored, AgentID: agentID, CallID: sid,
 	}, record.Config{MaxDuration: s.cfg.Recording.MaxDuration, MaxBytes: s.cfg.Recording.MaxBytes})
 	conn.SetAudioTap(rec)
 

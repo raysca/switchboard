@@ -3,7 +3,7 @@
 Planner output, read-only research on `main` at `e39dfc1c`. File:line citations were read there unless marked UNVERIFIED.
 
 > **For agentic workers:** recommended sub-skill `superpowers:subagent-driven-development`. One sonnet implementer per
-> task, one independent reviewer per task (AGENTS.md "Mandatory Code Review Workflow"), tasks in order.
+> task, one independent reviewer per task (AGENTS.md "Mandatory Delivery Workflow"), tasks in order.
 
 **Goal:** an operator saves cases for an agent, runs them (the whole suite or one case) against any published version
 or a draft from the console, the API or the CLI. Every case-run is scored by named scorers and stored per version.

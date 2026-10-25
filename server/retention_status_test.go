@@ -31,7 +31,7 @@ func TestRetentionStatusEndpointAndMetrics(t *testing.T) {
 		t.Fatalf("without the key: %d", code)
 	}
 	w := apiRequest(s, http.MethodGet, "/api/v1/retention?dry_run=true", key, "")
-	for _, want := range []string{`"enabled":true`, `"content_retention_days":7`, `"metadata_retention_days":30`, `"eval_retention_days":180`, `"last_run":null`, `"dry_run":{`} {
+	for _, want := range []string{`"enabled":true`, `"content_retention_days":7`, `"metadata_retention_days":30`, `"eval_retention_days":180`, `"last_run":null`, `"dry_run":{`, `"metadata_sessions":`, `"content_turns":`} {
 		if !strings.Contains(w.Body.String(), want) {
 			t.Fatalf("status lacks %s: %d %s", want, w.Code, w.Body)
 		}

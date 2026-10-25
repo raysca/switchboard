@@ -65,7 +65,7 @@ func TestStoreRejectsSwappedRowsWrongKeysAndBadInput(t *testing.T) {
 	_ = s.Put(ctx, "a-secret", "value-a")
 	row, _ := s.Repo.Get(ctx, "a-secret")
 	row.Name = "b-secret" // a copied row must not open under another name
-	if err := s.Repo.Put(ctx, row); err != nil {
+	if err := s.Repo.Put(ctx, row, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := s.Resolve(ctx, "b-secret"); ok {

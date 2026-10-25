@@ -2,6 +2,7 @@ package retention
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -28,7 +29,28 @@ type Status struct {
 	RecordingRetentionDays int                       `json:"recording_retention_days"`
 	LastRun                *RunStatus                `json:"last_run"`
 	DryRun                 *storage.RetentionPreview `json:"dry_run,omitempty"`
+	// HeldSessions is how many calls are on hold; RecentActions the last holds, releases and erasures, newest first.
+	HeldSessions  int64          `json:"held_sessions"`
+	RecentActions []ActionStatus `json:"recent_actions"`
 }
+
+// ActionStatus is one audited hold, release or erasure. Subject is a call id, or the hash of a caller label.
+type ActionStatus struct {
+	At        time.Time       `json:"at"`
+	Action    string          `json:"action"`
+	Subject   string          `json:"subject"`
+	Detail    json.RawMessage `json:"detail"`
+	RequestID string          `json:"request_id"`
+}
+
+// Audit is the held-call count and the audit trail the status reports.
+type Audit interface {
+	HeldCount(ctx context.Context) (int64, error)
+	RecentActions(ctx context.Context, limit int) ([]storage.RetentionAction, error)
+}
+
+// recentActions is how many audit entries the status carries.
+const recentActions = 20
 
 // RunStatus is a finished run.
 type RunStatus struct {
@@ -54,7 +76,7 @@ const dryRunTimeout = 30 * time.Second
 
 // Handler serves GET /api/v1/retention: the policy in effect and the last run; with ?dry_run=true also what a run
 // started now would remove. job is nil when the job is off. It must only be mounted behind the management boundary.
-func Handler(settings Settings, job *Job) http.Handler {
+func Handler(settings Settings, job *Job, audit Audit) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/retention", func(w http.ResponseWriter, r *http.Request) {
 		id := api.RequestID(w, r)
@@ -71,6 +93,21 @@ func Handler(settings Settings, job *Job) http.Handler {
 			EvalRetentionDays:      int(settings.Policy.EvalRetention / day),
 			BatchSize:              settings.Policy.BatchSize,
 			RecordingRetentionDays: settings.RecordingRetentionDays,
+			RecentActions:          []ActionStatus{},
+		}
+		held, herr := audit.HeldCount(r.Context())
+		actions, aerr := audit.RecentActions(r.Context(), recentActions)
+		if herr != nil || aerr != nil {
+			api.WriteError(w, http.StatusInternalServerError, "internal_error", "the retention status could not be read", id)
+			return
+		}
+		st.HeldSessions = held
+		for _, a := range actions {
+			detail := json.RawMessage(a.Detail)
+			if !json.Valid(detail) {
+				detail = json.RawMessage("{}")
+			}
+			st.RecentActions = append(st.RecentActions, ActionStatus{At: a.At, Action: a.Action, Subject: a.Subject, Detail: detail, RequestID: a.Request})
 		}
 		if job != nil {
 			if rec, ok := job.Last(); ok {

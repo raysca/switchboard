@@ -16,6 +16,8 @@ const agent = (config: Record<string, unknown> = {}): AgentDTO => ({
 const graph = { start: "r", steps: [{ id: "r", name: "Reception" }, { id: "b", name: "Billing" }], handoffs: [] };
 const session = (over: Partial<SessionDTO> = {}): SessionDTO => ({
   draft: false,
+  held: false,
+  hold_reason: "",
   caller: "",
   end_reason: "",
   id: "s1",

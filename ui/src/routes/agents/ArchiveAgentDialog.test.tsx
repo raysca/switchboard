@@ -23,4 +23,24 @@ describe("ArchiveAgentDialog", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Archive failed");
     expect(screen.getByRole("button", { name: "Archiving…" })).toBeDisabled();
   });
+
+  it("says how many calls are in progress and which tools stay pinned", () => {
+    render(<ArchiveAgentDialog name="Front desk" pending={false} error={null} liveCalls={2} tools={["lookup_order", "get_order"]} onConfirm={vi.fn()} onCancel={vi.fn()} />);
+    expect(screen.getByRole("note")).toHaveTextContent("2 calls are in progress. They finish normally; no new calls start.");
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent("It uses these tools: lookup_order, get_order.");
+    expect(dialog).toHaveTextContent("Archiving does not release them: the agent's current version keeps using them");
+  });
+
+  it("adds nothing for an agent with no live calls and no tools", () => {
+    render(<ArchiveAgentDialog name="Front desk" pending={false} error={null} liveCalls={0} tools={[]} onConfirm={vi.fn()} onCancel={vi.fn()} />);
+    expect(screen.queryByRole("note")).toBeNull();
+    expect(screen.getByRole("dialog")).not.toHaveTextContent("It uses");
+  });
+
+  it("uses the singular for one call and one tool", () => {
+    render(<ArchiveAgentDialog name="X" pending={false} error={null} liveCalls={1} tools={["get_order"]} onConfirm={vi.fn()} onCancel={vi.fn()} />);
+    expect(screen.getByRole("note")).toHaveTextContent("1 call is in progress. It finishes normally");
+    expect(screen.getByRole("dialog")).toHaveTextContent("It uses this tool: get_order.");
+  });
 });
