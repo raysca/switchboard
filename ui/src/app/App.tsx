@@ -275,7 +275,7 @@ export function App({ initialPath }: { initialPath?: string }) {
                   }
                 />
                 <Route path="/evaluation" element={<EvaluationView client={client} keyValue={keyValue} />} />
-                <Route path="/evaluation/:agentId" element={<AgentEvaluation />} />
+                <Route path="/evaluation/:agentId" element={<AgentEvaluation client={client} keyValue={keyValue} />} />
                 <Route
                   path="/server"
                   element={

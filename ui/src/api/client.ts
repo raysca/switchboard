@@ -812,6 +812,12 @@ export function createApiClient(
     getEvalSuite: async (agentId: string) => (await request(`/agents/${encodeURIComponent(agentId)}/eval/suite`, z.object({ data: evalSuiteSchema }))).data,
     putEvalSuite: async (agentId: string, body: EvalSuiteDTO) =>
       (await request(`/agents/${encodeURIComponent(agentId)}/eval/suite`, z.object({ data: evalSuiteSchema }), { method: "PUT", body })).data,
+    getEvalScorers: async (agentId: string) =>
+      (await request(`/agents/${encodeURIComponent(agentId)}/eval/scorers`, z.object({ data: z.array(evalScorerSchema) }))).data,
+    /** Replaces one scorer's setting: a field left out goes back to the default. */
+    putEvalScorer: async (agentId: string, name: string, body: { threshold?: number; judge?: { provider: string; model?: string } | null }) => {
+      await request(`/agents/${encodeURIComponent(agentId)}/eval/scorers/${encodeURIComponent(name)}`, z.unknown(), { method: "PUT", body });
+    },
     startEvalRun: async (agentId: string, body: EvalRunInput) =>
       (await request(`/agents/${encodeURIComponent(agentId)}/eval/runs`, z.object({ data: evalRunSchema }), { method: "POST", body })).data,
     listEvalRuns: async (agentId: string) => (await request(`/agents/${encodeURIComponent(agentId)}/eval/runs?include_drafts=true`, z.object({ data: z.array(evalRunSchema) }))).data,

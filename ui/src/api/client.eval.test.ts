@@ -33,4 +33,14 @@ describe("evaluation client", () => {
     const client = createApiClient(() => ({ key: "k", generation: 1 }), fetcher);
     await expect(client.startEvalRun("a1", { providers: "keep" })).rejects.toMatchObject({ code: "eval_live_required", status: 403 } satisfies Partial<ApiError>);
   });
+
+  it("reads scorers and replaces one scorer's setting", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ data: [{ name: "correctness", judged: true, default_threshold: 0.7 }] })));
+    const client = createApiClient(() => ({ key: "k", generation: 1 }), fetcher);
+    await expect(client.getEvalScorers("a1")).resolves.toHaveLength(1);
+    await client.putEvalScorer("a1", "correctness", { threshold: 0.5, judge: null });
+    const [url, init] = fetcher.mock.calls[1]!;
+    expect(url).toBe("/api/v1/agents/a1/eval/scorers/correctness");
+    expect(init).toMatchObject({ method: "PUT", body: JSON.stringify({ threshold: 0.5, judge: null }) });
+  });
 });

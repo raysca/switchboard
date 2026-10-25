@@ -3533,3 +3533,9 @@ textarea.mono {
 .sparkline polyline {
   stroke: currentColor;
 }
+.page-tabs {
+  margin: 16px 0;
+}
+.eval-breadcrumb {
+  margin: 0 0 4px;
+}
