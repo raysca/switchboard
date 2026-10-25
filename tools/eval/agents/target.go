@@ -32,7 +32,7 @@ func (t httpTarget) DraftToken(ctx context.Context, a eval.Agent) (string, error
 		tools = []agent.ToolSelection{}
 	}
 	d, err := t.srv.CallCtx(ctx, "POST", "voice-tokens", api.VoiceTokenRequest{
-		Principal: eval.Principal, AgentID: a.ID, Draft: &api.DraftRequest{Config: a.Draft, MCPTools: &tools}})
+		Principal: cliPrincipal, AgentID: a.ID, Draft: &api.DraftRequest{Config: a.Draft, MCPTools: &tools}})
 	if err != nil {
 		return "", fmt.Errorf("voice token: %w", err)
 	}
@@ -153,3 +153,6 @@ func resolveAgent(srv *stack.Server, key string, version int, mode string) (eval
 	}
 	return ref, nil
 }
+
+// cliPrincipal is the caller the CLI dials as. The server reserves eval.Principal for its own worker.
+const cliPrincipal = "agent-eval-cli"
