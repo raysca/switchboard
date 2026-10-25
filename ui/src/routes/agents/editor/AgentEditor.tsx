@@ -241,6 +241,11 @@ export function AgentEditor({ agent, providers, client, keyValue, pending, onSub
         >
           Test call
         </button>
+        {agent && (
+          <Link to={`/evaluation/${encodeURIComponent(agent.id)}`} className="action-button-small">
+            Test suite
+          </Link>
+        )}
         <button type="button" className="action-button" disabled={pending} onClick={() => setConfirming(true)}>
           {pending ? "Publishing…" : "Publish"}
         </button>

@@ -60,8 +60,14 @@ describe("AgentEditor", () => {
     expect(screen.getByRole("status")).toHaveTextContent("1 step needs setup");
   });
 
+  it("links a saved agent to its test suite, and a new one to nothing", () => {
+    setup({ agent });
+    expect(screen.getByRole("link", { name: "Test suite" })).toHaveAttribute("href", "/evaluation/a1");
+  });
+
   it("cannot test an agent that was never published", () => {
     setup();
+    expect(screen.queryByRole("link", { name: "Test suite" })).toBeNull();
     expect(screen.getByRole("button", { name: "Test call" })).toBeDisabled();
   });
 

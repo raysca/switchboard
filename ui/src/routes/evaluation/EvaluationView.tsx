@@ -53,11 +53,11 @@ export function EvaluationView({ client, keyValue }: EvaluationViewProps) {
       </>
     );
   }
-  if (data.agents.every((a) => !a.latest) && data.total <= PAGE) {
+  if (data.total === 0) {
     return (
       <>
         {head}
-        <EmptyState title="No suite has run yet">Add test cases to an agent and run its suite. The result appears here.</EmptyState>
+        <EmptyState title="No agents yet">Create an agent, then add test cases and run its suite. The result appears here.</EmptyState>
       </>
     );
   }
@@ -66,6 +66,7 @@ export function EvaluationView({ client, keyValue }: EvaluationViewProps) {
   return (
     <>
       {head}
+      {data.agents.every((a) => !a.latest) && <p className="subtext">No suite has run yet. Open an agent to add test cases and run its suite.</p>}
       <DataTable
         caption="Latest suite result per agent"
         columns={["Agent", "Latest suite", "Pass rate", "Trend", "Threshold", "Status"]}

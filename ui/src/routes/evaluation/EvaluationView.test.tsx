@@ -47,10 +47,17 @@ describe("EvaluationView", () => {
     expect(screen.getByRole("link", { name: "Support" })).toHaveAttribute("href", "/evaluation/a1");
   });
 
-  it("hides the banner at zero and shows the empty state when nothing ran", async () => {
+  it("lists agents that never ran, with a hint and a link to their suite", async () => {
     renderView(vi.fn().mockResolvedValue({ agents: [{ ...fleet.agents[2]! }], total: 1, below_threshold: 0 }));
-    expect(await screen.findByText("No suite has run yet")).toBeVisible();
+    expect(await screen.findByText(/Open an agent to add test cases/)).toBeVisible();
+    expect(screen.getByRole("link", { name: "Idle" })).toHaveAttribute("href", "/evaluation/a3");
+    expect(screen.getByText("No suite run yet")).toBeVisible();
     expect(screen.queryByText(/below/)).toBeNull();
+  });
+
+  it("shows the empty state only when there are no agents", async () => {
+    renderView(vi.fn().mockResolvedValue({ agents: [], total: 0, below_threshold: 0 }));
+    expect(await screen.findByText("No agents yet")).toBeVisible();
   });
 
   it("shows an error with retry", async () => {

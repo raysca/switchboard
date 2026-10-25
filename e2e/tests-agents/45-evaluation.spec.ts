@@ -26,15 +26,9 @@ test("a suite runs on echo through the console, fails the broken case and shows 
     method: "POST",
     body: JSON.stringify({ name: NAME, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }) } }),
   });
-  const agent = ((await api(stack, "/agents")).data as { id: string; name: string }[]).find((a) => a.name === NAME)!;
   await connectAdmin(page, stack);
   await page.getByRole("link", { name: "Evaluation", exact: true }).first().click();
-  // The fleet page lists only agents that have a finished suite, so a new agent's suite has no link yet
-  // (a console gap): enter it in-app by route, keeping the key held in memory.
-  await page.evaluate((id) => {
-    history.pushState({}, "", `/evaluation/${id}`);
-    dispatchEvent(new PopStateEvent("popstate"));
-  }, agent.id);
+  await page.getByRole("table", { name: "Latest suite result per agent" }).getByRole("link", { name: NAME }).click();
   await expect(page).toHaveURL(/\/evaluation\/[^/]+$/);
   await page.getByRole("tab", { name: "Test suite" }).click();
   await expect(page.getByRole("note").first()).toContainText("Eval calls run this agent's real tools");
