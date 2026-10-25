@@ -134,8 +134,8 @@ func TestCollectReturnsRowsErr(t *testing.T) {
 	if err == nil {
 		t.Fatalf("got %v, nil; want the step error", got)
 	}
-	if len(got) > 1 {
-		t.Fatalf("got %v; want at most the first row", got)
+	if len(got) != 1 || got[0] != 1 {
+		t.Fatalf("got %v; want the first row", got)
 	}
 	assertNoConnInUse(t, s)
 }
