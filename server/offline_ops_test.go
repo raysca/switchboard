@@ -35,7 +35,7 @@ func TestOfflineBreakerStateIsObservable(t *testing.T) {
 // An agent that fails over to or from offline uses offline's own breakers, never xai's.
 func TestOfflineFailoverUsesItsOwnBreakers(t *testing.T) {
 	r := NewRegistry()
-	if r.breaker("stt", "offline") != r.breaker("stt", "offline") || r.breaker("tts", "offline") != r.breaker("tts", "offline") ||
+	if r.breaker("stt", "offline") == nil || r.breaker("tts", "offline") == nil || r.breaker("stt", "offline") == r.breaker("stt", "xai") ||
 		r.llmBreaker(StageSpec{Provider: "offline"}) != r.breaker("llm", "offline") {
 		t.Fatal("offline failover is not wired to the offline breakers")
 	}

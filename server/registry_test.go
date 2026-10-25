@@ -305,7 +305,7 @@ func TestCartesiaSTTFactoryRegisteredAndValidatesKey(t *testing.T) {
 	if _, ok := p.(core.STTCounters); !ok {
 		t.Fatal("cartesia stt must report STT counters")
 	}
-	if reg.breaker("stt", "cartesia") != reg.breaker("stt", "cartesia") || reg.breaker("stt", "cartesia") == reg.breaker("tts", "cartesia") {
+	if reg.breaker("stt", "cartesia") == nil || reg.breaker("stt", "cartesia") == reg.breaker("tts", "cartesia") {
 		t.Fatal("cartesia stt needs its own breaker")
 	}
 	_ = p.(interface{ Close() error }).Close()

@@ -70,3 +70,17 @@ The spec review (an independent agent) found nothing critical or high. Its findi
 - **L4: metrics.** Resolved: typed value, conditional blocks set in the capture, golden file rejected with the reason above.
 - **L5: probe.** Moot now that behaviour is kept. The comment is fixed.
 - **L6: acceptance tests.** Resolved: added above.
+
+## Build notes and code review
+
+Where the build differs from the plan:
+- `sttBreaker` and `ttsBreaker` were deleted rather than kept as wrappers. Failover calls `r.breaker(stage, provider)`, the same function the factories call. `llmBreaker` stays, because openai needs the spec's base URL.
+- The **factory-wiring test is narrower than planned.** A processor does not expose the breaker it was built with, so the test cannot compare a factory's breaker with failover's. `TestEveryProviderStageHasItsOwnBreaker` instead checks that every registered provider stage has its own stable breaker. The wiring is guaranteed by construction: factories and failover both call `r.breaker`. A factory that passed a literal breaker would not be caught. Accepted gap.
+
+The independent code review found no correctness bug and confirmed the preserved behaviour site by site. Its findings and what was done:
+1. **Medium: the planned factory-wiring test is missing.** Recorded as the gap above.
+2. **Four rewritten assertions compared a lookup with itself.** Replaced with nil and not-shared checks; the `t.Fatal` messages are corrected.
+3. **No `rows.Err` test.** Added `TestCollectReturnsRowsErr`, which uses an SQLite step error.
+4. **`stages` was a space-separated string, `circuitOf` had an unused receiver, and nvidia had a dead endpoint.** `stages` is now `[]string`, `circuitOf` is a function, and nvidia's endpoint is left unset.
+5. **docs/observability.md named only Nvidia's endpoint label and left silence out of the observed providers.** Both fixed. These predate the branch.
+6. **Informational: a `Metrics` with nothing bound prints no google/xai lines.** Already recorded above.

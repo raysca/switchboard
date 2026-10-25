@@ -66,7 +66,7 @@ To prevent memory exhaustion in Prometheus and TSDB instances:
 | `voice_provider_requests_total` | Counter | Requests sent to a provider (`provider`, `stage`), retries included |
 | `voice_smartturn_fallbacks_total` | Counter | Turns that fell back to the speech timeout instead of the smart-turn model, by `reason` (`timeout`, `error`, `overload`, `unavailable`, `no_audio`) |
 | `voice_smartturn_worker_crashes_total` | Counter | Smart-turn worker processes lost (exit, hang, bad output) |
-| `voice_stt_circuit_state` / `voice_llm_circuit_state` / `voice_tts_circuit_state` | Gauge | Circuit breaker per `provider` (0=closed, 1=open, 2=half_open); Nvidia adds an `endpoint` label |
+| `voice_stt_circuit_state` / `voice_llm_circuit_state` / `voice_tts_circuit_state` | Gauge | Circuit breaker per `provider` (0=closed, 1=open, 2=half_open); echo, silence, offline and Nvidia add an `endpoint` label |
 | `voice_latency_seconds` | Histogram | Per-turn latency by `stage` (`stt_final`, `llm_ttft`, `tts_ttfb`, `voice_to_voice`, `startup`) |
 | `voice_transport_connected_clients` | Gauge | Connected WebSocket clients |
 | `voice_transport_auth_failures_total` | Counter | Token authentication failures |
@@ -111,7 +111,7 @@ Metrics (unlabelled: step ids are tenant data): `voice_handoffs_total`, `voice_h
 
 ### Provider retries and circuits
 
-`provider_retry` is recorded each time an LLM or TTS request of the call is retried (`provider`, `details` `<stage> retry <n>`; `n` = 1 for the second attempt). `circuit_state` is recorded when a provider circuit the call uses changes state (`provider`, `details` `<stage> <closed|open|half_open>`); circuits are shared by every call, so each live call that uses the provider for that stage in its start step gets the event, whichever call's requests moved the circuit. Only the circuits exported as `voice_{stt,llm,tts}_circuit_state` report (google, xai, echo, offline, nvidia): a call on an OpenAI-compatible, Deepgram, Cartesia or ElevenLabs stage gets `provider_retry` events but no `circuit_state` (those breakers have no observer). A call that starts while a circuit is already open only learns of the next state change. STT stream dials do not record retries. Breaker reports from concurrent requests can arrive out of order, so a timeline can end on `open` while the circuit has closed again (the gauge has the same race).
+`provider_retry` is recorded each time an LLM or TTS request of the call is retried (`provider`, `details` `<stage> retry <n>`; `n` = 1 for the second attempt). `circuit_state` is recorded when a provider circuit the call uses changes state (`provider`, `details` `<stage> <closed|open|half_open>`); circuits are shared by every call, so each live call that uses the provider for that stage in its start step gets the event, whichever call's requests moved the circuit. Only the circuits exported as `voice_{stt,llm,tts}_circuit_state` report (google, xai, echo, silence, offline, nvidia): a call on an OpenAI-compatible, Deepgram, Cartesia or ElevenLabs stage gets `provider_retry` events but no `circuit_state` (those breakers have no observer). A call that starts while a circuit is already open only learns of the next state change. STT stream dials do not record retries. Breaker reports from concurrent requests can arrive out of order, so a timeline can end on `open` while the circuit has closed again (the gauge has the same race).
 
 ---
 

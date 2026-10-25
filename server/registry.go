@@ -917,10 +917,10 @@ func (r *Registry) BindMetrics(m *Metrics) {
 	r.onFilter = m.filters.observe
 	// The fixed circuits show at 0 from the start; the others (nvidia) from first use.
 	for _, p := range []string{"google", "xai", "echo", silenceProvider, "offline"} {
-		for _, stage := range strings.Fields(breakerSpecs[p].stages) {
+		for _, stage := range breakerSpecs[p].stages {
 			if p != "offline" || r.Supports(p, stage) { // the local stack only for the stages this build has
 				r.breaker(stage, p)
-				m.circuits.ensure(r.circuitOf(stage, p))
+				m.circuits.ensure(circuitOf(stage, p))
 			}
 		}
 	}
@@ -928,27 +928,27 @@ func (r *Registry) BindMetrics(m *Metrics) {
 
 // breakerSpec is how a provider's breakers are keyed and reported.
 type breakerSpec struct {
-	stages   string // the stages that have a breaker
-	endpoint string // the endpoint label of voice_<stage>_circuit_state; "" for none
-	observed bool   // exports the gauge and reports transitions to call timelines (/ready, probes, timelines)
+	stages   []string // the stages that have a breaker
+	endpoint string   // the endpoint label of voice_<stage>_circuit_state; "" for none
+	observed bool     // exports the gauge and reports transitions to call timelines (/ready, probes, timelines)
 }
 
 // breakerSpecs lists every provider stage with a breaker; openai has one per base URL (openaiBreaker),
 // nvidia one per hosted endpoint. deepgram, cartesia and elevenlabs are not observed.
 var breakerSpecs = map[string]breakerSpec{
-	"google":        {"stt llm tts", "", true},
-	"xai":           {"stt llm tts", "", true},
-	"echo":          {"stt llm tts", "simulated", true},
-	silenceProvider: {"stt tts", "text", true},
-	"offline":       {"stt llm tts", "local", true},
-	"nvidia":        {"stt llm tts", "", true}, // endpoint: the stage's hosted host (circuitOf)
-	"deepgram":      {"stt", "", false},
-	"cartesia":      {"stt tts", "", false},
-	"elevenlabs":    {"stt tts", "", false},
+	"google":        {[]string{"stt", "llm", "tts"}, "", true},
+	"xai":           {[]string{"stt", "llm", "tts"}, "", true},
+	"echo":          {[]string{"stt", "llm", "tts"}, "simulated", true},
+	silenceProvider: {[]string{"stt", "tts"}, "text", true},
+	"offline":       {[]string{"stt", "llm", "tts"}, "local", true},
+	"nvidia":        {stages: []string{"stt", "llm", "tts"}, observed: true}, // endpoint: nvidiaEndpoint
+	"deepgram":      {[]string{"stt"}, "", false},
+	"cartesia":      {[]string{"stt", "tts"}, "", false},
+	"elevenlabs":    {[]string{"stt", "tts"}, "", false},
 }
 
 // circuitOf is the circuit of a provider stage.
-func (r *Registry) circuitOf(stage, provider string) circuitKey {
+func circuitOf(stage, provider string) circuitKey {
 	if provider == "nvidia" {
 		return circuitKey{stage, provider, nvidiaEndpoint(stage)}
 	}
@@ -959,10 +959,10 @@ func (r *Registry) circuitOf(stage, provider string) circuitKey {
 // both take it from here, so failover checks the breaker the processor records on.
 func (r *Registry) breaker(stage, provider string) *resilience.Breaker {
 	sp, ok := breakerSpecs[provider]
-	if !ok || !slices.Contains(strings.Fields(sp.stages), stage) {
+	if !ok || !slices.Contains(sp.stages, stage) {
 		return nil
 	}
-	return r.keyed(r.circuitOf(stage, provider), sp.observed)
+	return r.keyed(circuitOf(stage, provider), sp.observed)
 }
 
 // openaiBreaker is the breaker of one openai-compatible base URL. It is not observed: the base

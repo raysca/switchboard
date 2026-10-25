@@ -125,3 +125,17 @@ func TestQueryIDs(t *testing.T) {
 	}
 	assertNoConnInUse(t, s)
 }
+
+// An error while stepping (SQLite's abs(minint) overflows on the second row) reaches the caller with the rows
+// read so far, and the rows are closed.
+func TestCollectReturnsRowsErr(t *testing.T) {
+	s := testStore(t)
+	got, err := collect(queryRows(t, s, "SELECT 1 UNION ALL SELECT abs(-9223372036854775808)"), nil, scanInt)
+	if err == nil {
+		t.Fatalf("got %v, nil; want the step error", got)
+	}
+	if len(got) > 1 {
+		t.Fatalf("got %v; want at most the first row", got)
+	}
+	assertNoConnInUse(t, s)
+}
