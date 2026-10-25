@@ -94,8 +94,8 @@ The job (`server/retention/job.go`) runs every `retention.interval` and makes th
 2. **Metadata purge.** For ended sessions older than `metadata_retention_days`
    the job deletes, in this order, `trace_events`, `trace_spans` (after
    unlinking `parent_id`), `tool_calls`, `turns`, `session_mcp_tools` and the
-   `sessions` row, and blanks the `reason` of eval results scored on those
-   calls. Standalone trace spans and events older than the cutoff are removed too.
+   `sessions` row; just before that row goes it blanks the `reason` of eval
+   results scored on the call. Standalone trace spans and events older than the cutoff are removed too.
 3. **Eval purge** (when `eval_retention_days`, default 180, is above 0). Finished
    eval jobs, eval results and eval runs go together once they are older than
    `eval_retention_days`, so a run's detail stays complete for the run's whole life.
@@ -202,7 +202,7 @@ holds no transcript text, recording path or reason. The history is shown in the 
 above; it is not yet purged by the retention policy.
 
 **What an erasure leaves.** Agent versions, tool definitions and MCP discoveries (they belong to the agent, not the
-call); eval results scored on the call (score, outcome and the call id, without the reason), which age out under
+call); eval results scored on the call (everything but the reason), which age out under
 `eval_retention_days` and are not protected by a hold on the call; the audit entry; metrics, which are labelled by agent and provider only; anything outside the database: backups
 and snapshots, log files, an external trace backend, provider-side retention; and recordings that are not this call's:
 
