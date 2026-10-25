@@ -509,6 +509,10 @@ func TestEvalLiveGate(t *testing.T) {
 		{"paid with =0", "0", paid, true},
 		{"paid with =1", "1", paid, false},
 		{"echo without the env", "", free, false},
+		{"paid with =true", "true", paid, true},
+		{"paid with a padded 1", " 1", paid, true},
+		{"paid with =0 again", "0", paid, true},
+		{"paid with an empty value", "", paid, true},
 	}
 	for _, c := range cases {
 		s.env = mapEnv(map[string]string{"GOVOICE_LIVE": c.live})
@@ -586,5 +590,32 @@ func TestEvalWorkerPersonaWithoutOfflineIsDeadAtOnce(t *testing.T) {
 	}
 	if n := sessionCount(t, s, a.ID); n != 0 {
 		t.Fatalf("%d calls were made", n)
+	}
+}
+
+// A persona caller asks the offline provider's model: with a remote endpoint and no GOVOICE_LIVE=1 it is somebody's
+// paid model, so the job is dead at once and no call is made.
+func TestEvalWorkerPersonaRemoteOfflineNeedsLive(t *testing.T) {
+	s := evalTestServer(t, func(c *Config) { c.Providers.Offline.LLMEndpoint = "https://llm.example.com/v1/responses" })
+	s.env = mapEnv(nil)
+	if s.personaAllowed() {
+		t.Fatal("a remote offline endpoint without live must not allow a persona")
+	}
+	a, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "P", Config: agentConfigJSON("SALES", "v")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := eval.Case{Name: "p", Caller: eval.Caller{Persona: &eval.Persona{Who: "a buyer", Goal: "buy", MaxTurns: 2}}}
+	run, jobs := caseJobs(t, a.ID, a.Version.ID, c)
+	if _, err := s.store.Eval().CreateRun(t.Context(), run, jobs); err != nil {
+		t.Fatal(err)
+	}
+	waitRun(t, s.store, a.ID, run.ID)
+	if j := mustJobs(t, s.store, run.ID)[0]; j.Status != "dead" || j.Attempts != 1 || j.LastErrorCategory != "live_required" {
+		t.Fatalf("job = %+v, want dead after one attempt with category live_required", j)
+	}
+	s.env = mapEnv(map[string]string{"GOVOICE_LIVE": "1"})
+	if !s.personaAllowed() {
+		t.Fatal("GOVOICE_LIVE=1 must allow a persona")
 	}
 }

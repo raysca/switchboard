@@ -355,6 +355,9 @@ func (s *Server) runCaseJob(ctx context.Context, job storage.EvalJob) ([]storage
 	next := eval.ScriptCaller(cj.Case.Caller.Script)
 	if p := cj.Case.Caller.Persona; p != nil {
 		// The persona is the free offline model only (plan S12); with no endpoint the case cannot run at all.
+		if s.cfg.Providers.Offline.LLMEndpoint != "" && !s.personaAllowed() { // no endpoint: the completer says so
+			return nil, "live_required", true, errors.New("the persona caller reaches a remote offline endpoint and this process has no GOVOICE_LIVE=1")
+		}
 		ask, _, closeAsk, err := s.completer(ctx, "offline", "")
 		if err != nil {
 			return nil, "persona_unavailable", true, err

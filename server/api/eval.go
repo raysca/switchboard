@@ -51,6 +51,9 @@ type EvalPolicy struct {
 	LiveRequired func(config json.RawMessage) bool
 	// JudgeLiveRequired is the same for a judge on that provider.
 	JudgeLiveRequired func(provider string) bool
+	// PersonaLiveRequired is the same for a persona caller, which asks the offline provider's model: paid when that
+	// endpoint is remote.
+	PersonaLiveRequired func() bool
 	// JudgeProvider returns an error unless the provider can complete text (it does not look at keys).
 	JudgeProvider func(provider string) error
 }
@@ -271,11 +274,11 @@ func caseFromRow(c storage.EvalCase) (eval.Case, error) {
 func caseToRow(c eval.Case) (storage.EvalCase, error) {
 	caller, err := json.Marshal(c.Caller)
 	if err != nil {
-		return storage.EvalCase{}, err
+		return storage.EvalCase{}, fmt.Errorf("encode case caller: %w", err)
 	}
 	expect, err := json.Marshal(c.Expect)
 	if err != nil {
-		return storage.EvalCase{}, err
+		return storage.EvalCase{}, fmt.Errorf("encode case expectations: %w", err)
 	}
 	return storage.EvalCase{Name: c.Name, CallerJSON: caller, ExpectJSON: expect, ExpectedAnswer: c.ExpectedAnswer}, nil
 }
@@ -285,11 +288,11 @@ func caseHash(c eval.Case) (string, error) {
 	c.Agent, c.File = "", ""
 	raw, err := json.Marshal(c)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("encode case: %w", err)
 	}
 	canonical, err := storage.CanonicalJSON(raw)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("canonicalize case: %w", err)
 	}
 	sum := sha256.Sum256(canonical)
 	return hex.EncodeToString(sum[:]), nil
@@ -334,7 +337,7 @@ func parseCases(y string) ([]eval.Case, error) {
 		}
 		raw, err := json.Marshal(c)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%s#%d: encode case: %w", evalYAMLSource, i+1, err)
 		}
 		if len(raw) > evalMaxCaseBytes {
 			return nil, fmt.Errorf("%s#%d: the case is %d bytes, at most %d", evalYAMLSource, i+1, len(raw), evalMaxCaseBytes)
@@ -631,30 +634,33 @@ func (h evalHandler) putScorer(w http.ResponseWriter, r *http.Request, agentID, 
 
 // versionNumbers resolves version ids to their numbers, one lookup per distinct id.
 type versionNumbers struct {
-	ctx   context.Context
 	store EvalStore
 	seen  map[string]int
 }
 
-func (v *versionNumbers) of(id string) *int {
+func (v *versionNumbers) of(ctx context.Context, id string) (*int, error) {
 	if id == "" {
-		return nil
+		return nil, nil
 	}
 	if n, ok := v.seen[id]; ok {
-		return &n
+		return &n, nil
 	}
-	ver, err := v.store.Agents().Version(v.ctx, id)
+	ver, err := v.store.Agents().Version(ctx, id)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("load version %s: %w", id, err)
 	}
 	v.seen[id] = ver.Version
-	return &ver.Version
+	return &ver.Version, nil
 }
 
-func runDTO(run storage.EvalRun, versions *versionNumbers) EvalRunDTO {
-	return EvalRunDTO{ID: run.ID, AgentID: run.AgentID, Version: versions.of(run.AgentVersionID), AgentVersionID: run.AgentVersionID, Draft: run.Draft,
+func runDTO(ctx context.Context, run storage.EvalRun, versions *versionNumbers) (EvalRunDTO, error) {
+	number, err := versions.of(ctx, run.AgentVersionID)
+	if err != nil {
+		return EvalRunDTO{}, err
+	}
+	return EvalRunDTO{ID: run.ID, AgentID: run.AgentID, Version: number, AgentVersionID: run.AgentVersionID, Draft: run.Draft,
 		ConfigHash: run.ConfigHash, Scope: run.Scope, CaseID: run.CaseID, Providers: run.Providers, Runs: run.Runs, MinPass: run.MinPass, Status: run.Status,
-		TriggeredBy: run.TriggeredBy, PassedCases: run.PassedCases, TotalCases: run.TotalCases, CreatedAt: run.CreatedAt, StartedAt: run.StartedAt, EndedAt: run.EndedAt}
+		TriggeredBy: run.TriggeredBy, PassedCases: run.PassedCases, TotalCases: run.TotalCases, CreatedAt: run.CreatedAt, StartedAt: run.StartedAt, EndedAt: run.EndedAt}, nil
 }
 
 func (h evalHandler) runs(w http.ResponseWriter, r *http.Request, agentID, rid string) {
@@ -687,10 +693,15 @@ func (h evalHandler) runs(w http.ResponseWriter, r *http.Request, agentID, rid s
 		h.fail(w, err, rid)
 		return
 	}
-	versions := &versionNumbers{ctx: r.Context(), store: h.store, seen: map[string]int{}}
+	versions := &versionNumbers{store: h.store, seen: map[string]int{}}
 	out := make([]EvalRunDTO, 0, len(rows))
 	for _, run := range rows {
-		out = append(out, runDTO(run, versions))
+		dto, err := runDTO(r.Context(), run, versions)
+		if err != nil {
+			h.fail(w, err, rid)
+			return
+		}
+		out = append(out, dto)
 	}
 	WriteJSON(w, http.StatusOK, SuccessResponse[[]EvalRunDTO]{Data: out})
 }
@@ -738,18 +749,38 @@ func (h evalHandler) startRun(w http.ResponseWriter, r *http.Request, agentID, r
 	var versionNumber *int
 	readiness := ag.Readiness
 	if req.Draft != nil {
-		snap, rd, err := h.agents.ResolveDraft(ctx, agentID, req.Draft.Config, req.Draft.MCPTools)
+		if ag.Archived || !ag.Enabled {
+			WriteJSON(w, http.StatusConflict, ErrorResponse{Error: Error{Code: "agent_not_ready", Message: "the agent is not ready to take calls", RequestID: rid, Details: ag.Readiness}})
+			return
+		}
+		// Like a version run, only keep needs the draft's own providers attached and ready: offline and echo are
+		// resolved (tools, shape) on the rewritten config, and the run is identified by the config as sent.
+		resolve := req.Draft.Config
+		if req.Providers != eval.ModeKeep {
+			if resolve, err = eval.Rewrite(req.Draft.Config, req.Providers); err != nil {
+				WriteError(w, http.StatusBadRequest, "invalid_request", clip(err.Error(), 300), rid)
+				return
+			}
+		}
+		snap, rd, err := h.agents.ResolveDraft(ctx, agentID, resolve, req.Draft.MCPTools)
 		if err != nil {
 			h.draftFail(w, err, rid)
 			return
 		}
-		readiness, config = rd, snap.Version.Config
-		run.Draft, run.ConfigHash, run.DraftConfigJSON = true, snap.ConfigHash, config
-		if req.Draft.MCPTools != nil {
-			if run.DraftToolsJSON, err = json.Marshal(*req.Draft.MCPTools); err != nil {
-				h.fail(w, err, rid)
+		hash, canonical := snap.ConfigHash, snap.Version.Config
+		if req.Providers != eval.ModeKeep {
+			if hash, canonical, err = storage.ConfigHash(req.Draft.Config); err != nil {
+				WriteError(w, http.StatusBadRequest, "invalid_request", clip(err.Error(), 300), rid)
 				return
 			}
+		}
+		readiness, config = rd, canonical
+		run.Draft, run.ConfigHash, run.DraftConfigJSON = true, hash, config
+		// Always the selection the service checked: without mcp_tools it is the base version's, and an empty
+		// stored value would reach the worker as "no tools".
+		if run.DraftToolsJSON, err = json.Marshal(snap.Version.MCPTools); err != nil {
+			h.fail(w, fmt.Errorf("encode draft tools: %w", err), rid)
+			return
 		}
 	} else {
 		ver := ag.Version
@@ -769,8 +800,8 @@ func (h evalHandler) startRun(w http.ResponseWriter, r *http.Request, agentID, r
 		run.AgentVersionID, run.ConfigHash = ver.ID, ver.ConfigHash
 	}
 	// A version run rewritten to offline or echo does not use the providers the current readiness is about (their keys
-	// may be absent), so only keep needs it; a draft's readiness is its own.
-	needReady := req.Draft != nil || req.Providers == eval.ModeKeep
+	// may be absent), so only keep needs it (a draft's readiness is its own).
+	needReady := req.Providers == eval.ModeKeep
 	if ag.Archived || !ag.Enabled || (needReady && !agent.Callable(readiness.State)) {
 		WriteJSON(w, http.StatusConflict, ErrorResponse{Error: Error{Code: "agent_not_ready", Message: "the agent is not ready to take calls", RequestID: rid, Details: readiness}})
 		return
@@ -808,6 +839,16 @@ func (h evalHandler) startRun(w http.ResponseWriter, r *http.Request, agentID, r
 		return
 	}
 	run.Runs, run.MinPass = suite.Runs, suite.MinPass
+	if len(rows)*suite.Runs > storage.MaxPendingJobsPerAgent {
+		WriteError(w, http.StatusConflict, "suite_too_large", fmt.Sprintf("cases x runs exceeds %d, the most one agent can have queued; remove cases or lower the suite's runs", storage.MaxPendingJobsPerAgent), rid)
+		return
+	}
+	for _, row := range rows {
+		if c, err := caseFromRow(row); err == nil && c.Caller.Persona != nil && h.policy.PersonaLiveRequired() {
+			WriteError(w, http.StatusForbidden, "eval_live_required", "a persona caller asks the offline provider's model, which is a remote endpoint; start the server with GOVOICE_LIVE=1", rid)
+			return
+		}
+	}
 	if r.Header.Get("X-Switchboard-UI") == "1" {
 		run.TriggeredBy = "console"
 	}
@@ -837,7 +878,11 @@ func (h evalHandler) startRun(w http.ResponseWriter, r *http.Request, agentID, r
 		h.fail(w, err, rid)
 		return
 	}
-	dto := runDTO(created, &versionNumbers{ctx: ctx, store: h.store, seen: map[string]int{}})
+	dto, err := runDTO(ctx, created, &versionNumbers{store: h.store, seen: map[string]int{}})
+	if err != nil {
+		h.fail(w, err, rid)
+		return
+	}
 	dto.Version = versionNumber
 	WriteJSON(w, http.StatusAccepted, SuccessResponse[EvalRunDTO]{Data: dto})
 }
@@ -845,6 +890,8 @@ func (h evalHandler) startRun(w http.ResponseWriter, r *http.Request, agentID, r
 // draftFail maps a draft the agent service refused, as the voice-token endpoint does.
 func (h evalHandler) draftFail(w http.ResponseWriter, err error, rid string) {
 	switch {
+	case errors.Is(err, sql.ErrNoRows): // the agent has no published version to base a draft on
+		WriteError(w, http.StatusConflict, "agent_not_ready", "the agent is not ready to take calls", rid)
 	case errors.Is(err, agent.ErrNotAttached):
 		WriteError(w, http.StatusBadRequest, "agent_not_attached", err.Error(), rid)
 	case errors.Is(err, agent.ErrInvalidConfig), errors.Is(err, storage.ErrInvalidToolSelection):
@@ -892,6 +939,10 @@ func (h evalHandler) runDetail(w http.ResponseWriter, r *http.Request, agentID, 
 		out = append(out, EvalCaseRunDTO{CaseID: cj.CaseID, CaseName: cj.Case.Name, Repeat: cj.Repeat, Status: j.Status, ErrorCategory: j.LastErrorCategory,
 			SessionID: sessions[subject], Passed: j.Status == "done" && !failed[subject], Scores: ss})
 	}
-	versions := &versionNumbers{ctx: ctx, store: h.store, seen: map[string]int{}}
-	WriteJSON(w, http.StatusOK, SuccessResponse[EvalRunDetailDTO]{Data: EvalRunDetailDTO{Run: runDTO(run, versions), CaseRuns: out}})
+	runOut, err := runDTO(ctx, run, &versionNumbers{store: h.store, seen: map[string]int{}})
+	if err != nil {
+		h.fail(w, err, rid)
+		return
+	}
+	WriteJSON(w, http.StatusOK, SuccessResponse[EvalRunDetailDTO]{Data: EvalRunDetailDTO{Run: runOut, CaseRuns: out}})
 }

@@ -787,7 +787,7 @@ and no request is made), so a judge saved earlier or by another instance can nev
     `api_routes.go:190`, which lives in package `server`; move it to `server/agent` as `agent.Callable(state)` and
     use it from both).
   - Cases: all, or `case_id`. Fan out jobs per S8, with payload `eval.CaseJob` (T8) and `MaxAttempts=3`. An empty suite
-    is refused (400, `no_cases`) before `CreateRun`, which itself returns `storage.ErrNoJobs` for a run with no jobs.
+    is refused (409, `no_cases`) before `CreateRun`, which itself returns `storage.ErrNoJobs` for a run with no jobs.
   - `triggered_by` = `console` when `X-Switchboard-UI: 1` (sent by the UI client, `ui/src/api/client.ts:536-609`),
     else `api`.
   - Persist the case snapshot in the payload so later edits do not change a queued run.

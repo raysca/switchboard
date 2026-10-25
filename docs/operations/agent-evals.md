@@ -10,7 +10,7 @@ It runs a call over the real `/ws` with text turns (RTVI `send-text`). Speech is
 
 **MCP tools run for real:** an eval call executes the agent's selected tools with whatever arguments the model sends. Point evals at agents whose tools hit test systems; `GOVOICE_LIVE` gates model cost only, not what tools do.
 
-Every eval call is a normal draft call. It appears on the Calls page with caller `agent-eval` and `draft: true`, and the stored agent is never changed.
+Every eval call is a normal draft call. It appears on the Calls page with caller `agent-eval-cli` and `draft: true`, and the stored agent is never changed.
 
 What a pass means depends on the model under test (`-providers`):
 

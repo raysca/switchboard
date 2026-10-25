@@ -27,8 +27,9 @@ func evalPath(p string) bool {
 // server's own environment so a test can set it without touching the process's) and whether a provider can judge.
 func (s *Server) evalPolicy() api.EvalPolicy {
 	return api.EvalPolicy{
-		LiveRequired:      s.evalLiveRequired,
-		JudgeLiveRequired: s.judgeLiveRequired,
+		LiveRequired:        s.evalLiveRequired,
+		JudgeLiveRequired:   s.judgeLiveRequired,
+		PersonaLiveRequired: func() bool { return !s.personaAllowed() },
 		JudgeProvider: func(provider string) error {
 			p, ok := s.catalog.Provider(provider)
 			if !ok {
@@ -70,3 +71,6 @@ func (s *Server) judgeLiveRequired(provider string) bool {
 	free := provider == "echo" || (provider == "offline" && s.offlineFree())
 	return !free && !s.evalLive()
 }
+
+// personaAllowed: a persona caller asks the offline provider's model, so it follows the same rule as that provider.
+func (s *Server) personaAllowed() bool { return s.offlineFree() || s.evalLive() }

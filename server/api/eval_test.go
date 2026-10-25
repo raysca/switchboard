@@ -27,19 +27,20 @@ const (
 // evalRig is a real sqlite store, the real agent service and the real eval handler. live stands for GOVOICE_LIVE=1
 // on the serving process.
 type evalRig struct {
-	t          *testing.T
-	store      *storage.Store
-	svc        *agent.Service
-	h          http.Handler
-	live       atomic.Bool
-	down       atomic.Bool // every provider service is unavailable: no agent is ready
-	paid, free agent.Agent
+	t             *testing.T
+	store         *storage.Store
+	svc           *agent.Service
+	h             http.Handler
+	live          atomic.Bool
+	remoteOffline atomic.Bool // providers.offline.llm_endpoint is not on this host
+	down          atomic.Bool // every provider service is unavailable: no agent is ready
+	paid, free    agent.Agent
 }
 
 type rigAvail struct{ r *evalRig }
 
-func (a rigAvail) Check(string, string) agent.Unavailable {
-	if a.r.down.Load() {
+func (a rigAvail) Check(provider, _ string) agent.Unavailable {
+	if a.r.down.Load() && provider != "echo" && provider != "offline" && provider != agent.SilenceProvider { // the free providers need no key
 		return agent.Unavailable{Reason: "no key", MissingEnv: []string{"KEY"}}
 	}
 	return agent.Unavailable{}
@@ -55,8 +56,9 @@ func newEvalRig(t *testing.T) *evalRig {
 	r := &evalRig{t: t, store: store}
 	r.svc = agent.NewService(store, rigAvail{r})
 	r.h = NewEvalHandler(r.svc, store, EvalPolicy{
-		LiveRequired:      func(c json.RawMessage) bool { return eval.NeedsLive(c, true) && !r.live.Load() },
-		JudgeLiveRequired: func(p string) bool { return p != "offline" && p != "echo" && !r.live.Load() },
+		LiveRequired:        func(c json.RawMessage) bool { return eval.NeedsLive(c, true) && !r.live.Load() },
+		JudgeLiveRequired:   func(p string) bool { return p != "offline" && p != "echo" && !r.live.Load() },
+		PersonaLiveRequired: func() bool { return r.remoteOffline.Load() && !r.live.Load() },
 		JudgeProvider: func(p string) error {
 			if p == "offline" || p == "echo" || p == "openai" {
 				return nil
@@ -562,12 +564,12 @@ func TestEvalRunDraftHasNoVersion(t *testing.T) {
 	if got := decodeData[[]EvalRunDTO](t, r.do(http.MethodGet, r.path(r.free, "/runs?include_drafts=true"), "")); len(got) != 1 || got[0].ID != run.ID {
 		t.Fatalf("draft not listed on request: %+v", got)
 	}
-	// Without mcp_tools the draft stores none (the agent's attached tools apply).
+	// Without mcp_tools the draft stores the base version's selection (here none): an empty column would read as no tools.
 	w = r.do(http.MethodPost, r.path(r.free, "/runs"), `{"draft":{"config":`+freeConfig+`}}`)
 	expect(t, w, http.StatusAccepted, "")
 	row, _ = r.store.Eval().GetRun(context.Background(), r.free.ID, decodeData[EvalRunDTO](t, w).ID)
-	if len(row.DraftToolsJSON) != 0 {
-		t.Fatalf("draft tools %q", row.DraftToolsJSON)
+	if len(row.DraftToolsJSON) == 0 {
+		t.Fatal("draft tools column is empty")
 	}
 	// A draft the service rejects is a 400, one for an unknown agent a 404.
 	expect(t, r.do(http.MethodPost, r.path(r.free, "/runs"), `{"draft":{"config":{"start":"a","steps":[{"id":"a","name":"A","tools":["srv/x"],"config":`+freeConfig+`}],"handoffs":[]}}}`), http.StatusBadRequest, "")
@@ -634,7 +636,32 @@ func TestEvalRunAgentNotReady(t *testing.T) {
 	if !strings.Contains(w.Body.String(), `"state"`) {
 		t.Fatalf("no readiness details: %s", w.Body)
 	}
-	expect(t, r.do(http.MethodPost, r.path(r.free, "/runs"), `{"draft":{"config":`+freeConfig+`}}`), http.StatusNotFound, "")
+	expect(t, r.do(http.MethodPost, r.path(r.free, "/runs"), `{"draft":{"config":`+freeConfig+`}}`), http.StatusConflict, "agent_not_ready")
+}
+
+// A draft run follows the version rule: offline and echo need no ready providers, keep does.
+func TestEvalDraftRunReadinessByMode(t *testing.T) {
+	r := newEvalRig(t)
+	r.addCases(r.paid, "a")
+	r.live.Store(true)
+	r.down.Store(true)
+	draft := `"draft":{"config":` + paidConfig + `}`
+	expect(t, r.do(http.MethodPost, r.path(r.paid, "/runs"), `{"providers":"keep",`+draft+`}`), http.StatusBadRequest, "agent_not_attached")
+	for _, m := range []string{"offline", "echo"} {
+		expect(t, r.do(http.MethodPost, r.path(r.paid, "/runs"), `{"providers":"`+m+`",`+draft+`}`), http.StatusAccepted, "")
+	}
+}
+
+// A persona case reaches the offline provider's model, so it follows that provider's paid rule.
+func TestEvalRunPersonaLiveGate(t *testing.T) {
+	r := newEvalRig(t)
+	persona := "name: p\ncaller:\n  persona: {who: a buyer, goal: buy}\n"
+	expect(t, r.do(http.MethodPost, r.path(r.free, "/cases"), jsonBody(map[string]string{"yaml": persona})), http.StatusCreated, "")
+	expect(t, r.do(http.MethodPost, r.path(r.free, "/runs"), `{"providers":"echo"}`), http.StatusAccepted, "")
+	r.remoteOffline.Store(true)
+	expect(t, r.do(http.MethodPost, r.path(r.free, "/runs"), `{"providers":"echo"}`), http.StatusForbidden, "eval_live_required")
+	r.live.Store(true)
+	expect(t, r.do(http.MethodPost, r.path(r.free, "/runs"), `{"providers":"echo"}`), http.StatusAccepted, "")
 }
 
 func TestEvalRunQueueFull(t *testing.T) {
@@ -650,10 +677,14 @@ func TestEvalRunQueueFull(t *testing.T) {
 	if len(runs) != 1 {
 		t.Fatalf("%d runs, want the first only", len(runs))
 	}
-	// 200 cases x 2 repeats cannot fit even an empty queue.
+	// 200 cases x 2 repeats can never fit: not a queue to wait for, a suite to shrink.
 	expect(t, r.do(http.MethodPut, r.path(r.paid, "/suite"), `{"runs":2,"min_pass":1,"pass_threshold":1}`), http.StatusOK, "")
 	r.addCases(r.paid, names...)
-	expect(t, r.do(http.MethodPost, r.path(r.paid, "/runs"), `{"providers":"echo"}`), http.StatusTooManyRequests, "eval_queue_full")
+	w := r.do(http.MethodPost, r.path(r.paid, "/runs"), `{"providers":"echo"}`)
+	expect(t, w, http.StatusConflict, "suite_too_large")
+	if !strings.Contains(w.Body.String(), "exceeds 200") {
+		t.Fatalf("message: %s", w.Body)
+	}
 }
 
 func TestEvalRunTriggeredBy(t *testing.T) {
@@ -740,6 +771,13 @@ func TestEvalRunListAndDetail(t *testing.T) {
 	if len(list) != 1 || list[0].ID != run.ID || list[0].Version == nil || *list[0].Version != 1 {
 		t.Fatalf("offset: %+v", list)
 	}
+	// A judge that errored is not a pass.
+	run3 := decodeData[EvalRunDTO](t, r.do(http.MethodPost, r.path(r.free, "/runs"), `{"case_id":"`+cs[1].ID+`"}`))
+	r.finishJob([]storage.EvalResult{{Scorer: "correctness", Outcome: "error", Reason: "judge down", SessionID: "s3"}}, "")
+	detail = decodeData[EvalRunDetailDTO](t, r.do(http.MethodGet, r.path(r.free, "/runs/"+run3.ID), ""))
+	if detail.CaseRuns[0].Status != "done" || detail.CaseRuns[0].Passed {
+		t.Fatalf("errored case-run %+v", detail.CaseRuns[0])
+	}
 	expect(t, r.do(http.MethodGet, r.path(r.free, "/runs/nope"), ""), http.StatusNotFound, "not_found")
 }
 
@@ -775,4 +813,37 @@ func TestEvalMethodsAndPaths(t *testing.T) {
 	}
 	expect(t, r.do(http.MethodGet, "/api/v1/agents/"+r.free.ID+"/evaluation", ""), http.StatusNotFound, "not_found")
 	expect(t, r.do(http.MethodGet, "/api/v1/agents/"+r.free.ID, ""), http.StatusNotFound, "not_found")
+}
+
+// A draft without mcp_tools runs with the agent's attached tools, not with none.
+func TestEvalDraftWithoutToolsKeepsAttachedTools(t *testing.T) {
+	r := newEvalRig(t)
+	ctx := context.Background()
+	m := storage.MCPServer{ID: storage.NewID(), Name: "crm", Endpoint: "https://mcp.example/rpc", Transport: "streamable-http", Enabled: true, ValidationState: "healthy"}
+	if err := r.store.MCP().CreateServer(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	d, err := r.store.MCP().AddDiscovery(ctx, m.ID, []storage.MCPTool{{RemoteName: "echo", SchemaJSON: []byte(`{"type":"object"}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := m.ID + "/echo"
+	cfg := `{"start":"a","steps":[{"id":"a","name":"A","tools":["` + key + `"],"config":` + freeConfig + `}],"handoffs":[]}`
+	tools := []agent.ToolSelection{{ServerID: m.ID, RemoteName: "echo", SchemaHash: d.Tools[0].SchemaHash}}
+	a, err := r.svc.Create(ctx, agent.CreateRequest{Name: "Tooled", Config: json.RawMessage(cfg), MCPTools: tools})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.addCases(a, "c")
+	// The draft references the attached tool and names no selection: accepted, and the run carries the attached one.
+	w := r.do(http.MethodPost, r.path(a, "/runs"), `{"providers":"echo","draft":{"config":`+cfg+`}}`)
+	expect(t, w, http.StatusAccepted, "")
+	row, err := r.store.Eval().GetRun(ctx, a.ID, decodeData[EvalRunDTO](t, w).ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []agent.ToolSelection
+	if err := json.Unmarshal(row.DraftToolsJSON, &got); err != nil || len(got) != 1 || got[0].RemoteName != "echo" || got[0].ServerID != m.ID {
+		t.Fatalf("draft tools %q (%v), want the attached echo", row.DraftToolsJSON, err)
+	}
 }

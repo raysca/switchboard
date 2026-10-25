@@ -65,18 +65,21 @@ POST /api/v1/agents/{id}/eval/runs
 | `version` | A published version number. Absent or `0`: the agent's current version. |
 | `draft` | `{ "config", "mcp_tools?" }`: test an unpublished config, validated as a publish is. Not together with `version`. A draft run has no version, is stored with the draft's `config_hash`, and is left out of History, the dashboard and alerts. |
 | `case_id` | Run one case (`scope: "case"`). Absent: every case (`scope: "suite"`). |
-| `providers` | `offline` (default), `echo` or `keep`. `offline` and `echo` swap the agent's language model for the free one; `keep` calls the agent's own models. Speech is always replaced by the text-only provider. |
+| `providers` | `offline` (default), `echo` or `keep`. `offline` and `echo` swap the agent's language model for the free one (the offline model is free only while `providers.offline.llm_endpoint` is on this host; a remote endpoint counts as paid); `keep` calls the agent's own models. Speech is always replaced by the text-only provider. |
 
 The run uses the suite's `runs` and `min_pass`. One job is queued per case and repeat; the cases are copied into the jobs, so editing a case later does not change a queued run. The response is `202`, `data`: the run `{ "id", "agent_id", "version?", "agent_version_id?", "draft", "config_hash", "scope", "case_id?", "providers", "runs", "min_pass", "status", "triggered_by", "passed_cases?", "total_cases?", "created_at", "started_at?", "ended_at?" }`. `status` is `pending`, `running` or `done`; `passed_cases` and `total_cases` are set when it is done. `triggered_by` is `console` when the request carries `X-Switchboard-UI: 1`, otherwise `api`.
 
 | Status and code | Meaning |
 |---|---|
 | 400 `invalid_request` | `version` and `draft` both set, an unknown `providers`, or a draft the agent service refuses (`agent_not_attached` for a tool the agent does not have). |
-| 403 `eval_live_required` | `providers: keep` would reach a paid model and the server was not started with `GOVOICE_LIVE=1`. Use `offline` or `echo`, or set it. A run whose models are all keyless (echo, offline) never needs it. |
+| 403 `eval_live_required` | The run would reach a paid model and the server was not started with `GOVOICE_LIVE=1`: `providers: keep` on a paid agent, or `offline` when `providers.offline.llm_endpoint` is not on this host. A case with a persona caller asks the offline model too and follows the same rule. A run whose models are all keyless (echo, loopback offline) never needs it. |
 | 404 `not_found` | No such agent, version or case. |
 | 409 `no_cases` | The agent has no cases to run. |
-| 409 `agent_not_ready` | The agent is disabled, archived or not ready to take calls; `error.details` is its readiness. |
-| 429 `eval_queue_full` | An agent has at most 200 pending or running eval jobs. Wait for the queue to drain. |
+| 409 `suite_too_large` | Cases x runs exceeds 200, the most one agent can have queued; it can never fit, so remove cases or lower the suite's `runs`. |
+| 409 `agent_not_ready` | The agent is disabled, archived, has no published version, or (for `providers: keep`) is not ready to take calls; `error.details` is its readiness. |
+| 429 `eval_queue_full` | The agent's pending or running eval jobs plus this run would exceed 200. Wait for the queue to drain. |
+
+**No idempotency.** `POST /runs` takes no idempotency key: a retried request creates a second run and repeats the real side effects of the agent's tools.
 
 A run is worked by the servers sharing the database, at most `evaluation.max_concurrent_calls` calls at a time on each. A job that loses its server is taken by another after its lease expires, and runs again, so a case-run may call the agent's tools twice.
 

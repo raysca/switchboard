@@ -102,6 +102,10 @@ func TestJudgeGateFreeModes(t *testing.T) {
 	if !s.judgeLiveRequired("offline") || !s.evalLiveRequired(agentConfigJSONWith(t, "offline")) {
 		t.Fatal("a non-loopback offline endpoint must count as paid")
 	}
+	s.cfg.Providers.Offline.LLMEndpoint = "http://10.0.0.5:11434/v1/responses" // a private IP is not this host
+	if !s.judgeLiveRequired("offline") || !s.evalLiveRequired(agentConfigJSONWith(t, "offline")) {
+		t.Fatal("a non-loopback IP offline endpoint must count as paid")
+	}
 	s.cfg.Providers.Offline.LLMEndpoint = "http://[::1]:11434/v1/responses"
 	if s.judgeLiveRequired("offline") || s.evalLiveRequired(agentConfigJSONWith(t, "offline")) {
 		t.Fatal("a loopback offline endpoint must be free")
