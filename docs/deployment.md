@@ -340,6 +340,8 @@ The `limits` block in `config/production.yaml` sets the ceilings: `max_sessions`
 
 Several replicas need Postgres and sticky token issuance plus `/ws` (section 13), and the same `limits.max_call_duration` on every replica. Live-call control and draft test calls are held in the memory of one instance. SQLite and the Cloud Run demo are single-instance by design.
 
+Agent evaluation ([agent evals](operations/agent-evals.md)) keeps no state in an instance, so any number of servers sharing Postgres work one queue; SQLite is single-instance. Each suite call runs on the instance that claims it, against that instance's internal listener (`server/eval_listener.go`): bound only while the worker runs, `127.0.0.1` only, `/ws` only, `agent-eval` tokens only, with no Origin or TLS rules. Nothing about the public listener (TLS, proxy, allowlist) needs to allow eval calls. Eval calls are real sessions, so they count in `limits.max_sessions`, `max_sessions_per_principal` (principal `agent-eval`), `max_sessions_per_ip` (all from 127.0.0.1) and `max_sessions_per_agent`. `evaluation.max_concurrent_calls` (default 2, 0 to 16, 0 = this instance never runs evals) cannot exceed the principal or per-IP limit; startup refuses it otherwise. Runs and results are deleted after `retention.eval_retention_days` (default 180). More in [operations](operations.md#eval-worker-on-several-servers).
+
 <!-- src: docs/storage.md; docs/operations.md:39,44,49,112; deploy/gcp/switchboard.service.yaml:17 -->
 
 ## 15. Monitoring and alerts

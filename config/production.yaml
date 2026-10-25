@@ -93,6 +93,7 @@ retention:
   interval: 1h
   content_retention_days: 7
   metadata_retention_days: 30
+  eval_retention_days: 180   # agent evaluation runs and results (finished eval jobs follow metadata_retention_days); >= 1
   batch_size: 500
 
 # Agent evaluation worker: eval calls run at once on this instance (0 to 16, at most limits.max_sessions_per_principal; 0 turns the worker off here).

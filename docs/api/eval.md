@@ -53,7 +53,7 @@ PUT /api/v1/agents/{id}/eval/suite
 
 `GET /scorers` answers `[{ "name", "judged", "default_threshold", "threshold?", "judge?" }]`: `judged` says whether the scorer is model-graded; `threshold` and `judge` appear when this agent overrides them. `PUT /scorers/{name}` takes `{ "threshold?": n, "judge?": {...} | null }` and replaces the setting, so a field left out goes back to the default. An unknown name is `404`; a `judge` on a deterministic scorer is `400 invalid_request`; a judge provider that cannot complete text is `400 invalid_judge`.
 
-**Paid judges need `GOVOICE_LIVE=1`.** Saving a suite or scorer judge on any provider other than `offline` or `echo` answers `403 eval_live_required` unless the server process was started with `GOVOICE_LIVE=1`. The worker checks again when it scores, so a judge saved on another instance cannot spend credit either.
+**Paid judges need `GOVOICE_LIVE=1`.** Saving a suite or scorer judge on any provider other than `echo` and `offline` (with a loopback `providers.offline.llm_endpoint`) answers `403 eval_live_required` unless the server process was started with `GOVOICE_LIVE=1`. The worker checks again when it scores, so a judge saved on another instance cannot spend credit either.
 
 ## Runs
 

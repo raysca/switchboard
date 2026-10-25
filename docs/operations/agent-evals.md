@@ -26,10 +26,11 @@ Assertions are structural (step path, tool names and statuses, end reason, turn 
 
 ## Case format
 
-One or more cases per file (YAML documents separated by `---`), `*.yaml` or `*.yml`, in a directory (default `tools/eval/agents/cases`). Unknown keys are refused. An omitted `expect` key is not checked.
+One or more cases per file (several YAML documents separated by `---`; the console's export writes this shape), `*.yaml` or `*.yml`, in a directory (default `tools/eval/agents/cases`). Unknown keys are refused. An omitted `expect` key is not checked.
 
 ```yaml
 name: dealership-buyer-reaches-sales      # unique across the directory
+expected_answer: "Sales quotes hatchback and SUV prices"   # optional, at most 2000 characters; evidence for the correctness judge, never a pass or fail check by itself
 agent: Dealership desk                     # agent name (exact) or id
 caller:                                    # exactly one of script | persona
   script:                                  # 1 to 20 lines, 1 to 500 characters each
@@ -42,6 +43,7 @@ caller:                                    # exactly one of script | persona
 expect:
   path: [front, sales]                     # exact step path, step ids or names
   tools_called: [transfer_to_sales]        # each must appear; "name" means succeeded, or "name:failed", "name:cancelled"
+  tools_ordered: false                     # true: the tools_called entries must also appear in this order (others may sit between them)
   tools_not_called: [end_call]
   say: ["(?i)hatchback|suv"]               # each regexp must match the agent's replies, joined with a newline (the stored, redacted text)
   never_say: ["(?i)as an ai"]              # none may match
@@ -61,6 +63,52 @@ A **script** types its lines in order, one per turn, then hangs up (`caller_hung
 A **persona** is played by a model. Each turn the model gets the persona, the goal and the transcript so far (the latest 24 lines, 400 characters each), and answers with one short sentence (cut at 300 characters). The call ends when the model replies with a lone `DONE`, or after `max_turns` typed lines. A persona that reaches `max_turns` without `DONE` is not a failure by itself: only the assertions decide, and a case with only `say` passes. The caller model never sees the agent's configuration, has no tools, and makes one bounded completion per turn. It does read the agent's words, so treat an agent that tries to instruct the caller as a possible prompt injection, as you would any model reading untrusted text.
 
 `-caller-llm offline` (default) uses Ollama `govoice-test` at 127.0.0.1:11434 (`-caller-url`, `-caller-model` change it). The Modelfile sets temperature 0 and seed 42, so the persona is as repeatable as a local model gets. `-caller-llm xai` uses xAI with `XAI_API_KEY` from the environment, only against the xAI endpoint (`-caller-url` is refused with it), and is paid.
+
+## Suites in the console and the API
+
+The same engine, `server/eval`, runs a stored suite on the server and scores it with the same scorers as the CLI. Cases are saved per agent (at most 200) and run from the console or the [Eval API](../api/eval.md); the CLI is unchanged and keeps files and the `agent-eval-cli` caller. Server-run calls dial as principal `agent-eval`, show on the Calls page as draft calls, and never change the stored agent.
+
+In the console:
+
+- **Observability > Evaluation** is the fleet page: every agent's latest whole-suite result, its trend, and which agents are below their pass threshold.
+- An agent's editor has a **Test suite** link to that agent's evaluation page, with two tabs: **Test suite** (cases, repeats, required passes, pass threshold, scorers and judges, and Run) and **History** (finished suite runs with per-scorer totals).
+- Fleet and History count only finished, non-draft runs of the whole suite. A draft run or a one-case run never counts.
+
+Live runs and real tools: the server calls the agent's real tools on every case-run, and a case-run lost with its server runs again, so a tool may be called twice. Point evals at agents whose tools hit test systems. A run takes no idempotency key.
+
+A run is refused with `403 eval_live_required` unless the server was started with `GOVOICE_LIVE=1` (exactly `1`) when it would reach a paid model: `providers: keep` on a paid agent; `offline` when `providers.offline.llm_endpoint` is not loopback (a remote endpoint counts as paid); a persona caller, which asks the offline model and follows the same rule. All-keyless runs (echo, loopback offline) never need it. A run needs at most 200 case-runs (cases x repeats): beyond that `409 suite_too_large`.
+
+## Scorers
+
+Every case-run is scored by five built-in scorers.
+
+| Scorer | Kind | Default threshold | Checks |
+|---|---|---|---|
+| `expectations` | deterministic | 1 | The always-on checks (no RTVI error, no failed handoff, no dropped client events) plus `path`, `say`, `never_say`, `end_reason`, `max_turns`, `median_reply_ms_max`. |
+| `tool_call_accuracy` | deterministic | 1 | `tools_called`, `tools_not_called` and, with `tools_ordered: true`, the order of `tools_called`. |
+| `correctness` | judged | 0.7 | Whether the agent's answers are right; `expected_answer` is extra evidence. |
+| `answer_relevancy` | judged | 0.7 | Whether the answers address what the caller asked. |
+| `toxicity` | judged | 0.9 | The judge rates how bad the agent's words are; the stored score is 1 minus that. |
+
+A deterministic score is the fraction of its checks that held. A result is `pass` at or above the scorer's threshold (per-agent override in the console or `PUT /eval/scorers/{name}`), else `fail`. A scorer that errors (an unreachable judge, a reply it cannot parse) is `error`.
+
+A scorer is `skipped` when there is nothing to grade: `tool_call_accuracy` with no tool expectations (`no tool expectations`), a judged scorer with no judge (`no judge configured`), or a judged scorer when the call has no stored turns (`no stored history`). A skipped scorer is never a pass or a fail and does not count against the case-run. A case-run passes only when no scorer failed or errored; a case passes when `min_pass` of its `runs` case-runs pass.
+
+## Judges
+
+A judge is a text model that grades one rubric and must answer with one JSON score. It reads the call as data. Per scorer the judge is the scorer's own setting, else the agent's suite default, else none (the scorer is skipped). Set them in the console or the API; the CLI takes one judge for everything, `-judge offline` (Ollama `govoice-test`), and `-judge none` skips the three judged scorers.
+
+A judge is never replaced by a paid one: if a judge cannot be built, or is paid and the process lacks `GOVOICE_LIVE=1`, every ask fails and the scorer is recorded as `error`. Paid means any provider except `echo` and `offline` on a loopback endpoint. Saving a paid judge answers `403 eval_live_required` without the flag, and the worker checks again when it scores. A judge `reason` is cut at 300 characters and can quote call content; it is kept for `retention.eval_retention_days`.
+
+## Multi-server
+
+Eval state lives only in the database, so several servers sharing Postgres work one queue; SQLite is single-instance. See [deployment](../deployment.md#14-scaling-and-limits) and [operations](../operations.md#eval-worker-on-several-servers). In short:
+
+- Each server runs at most `evaluation.max_concurrent_calls` calls at once (default 2; 0 turns its worker off). It claims a job, dials its own loopback eval listener as principal `agent-eval`, and scores the stored rows.
+- A claim holds a 2 minute lease, extended every 30 s. A job whose server is lost is taken by another once the lease expires; a restart mid-job costs that job one of its 3 attempts. A failed attempt retries after 30 s, doubling to at most 10 minutes.
+- Keep server clocks within a minute: leases compare time supplied by the workers.
+- Eval calls are real sessions and count against the session limits and metrics (`voice_eval_*` metrics, [observability](../observability.md)).
+- Runs and results are deleted after `retention.eval_retention_days` (default 180).
 
 ## Running it
 
@@ -180,4 +228,4 @@ The runs were identical from batch to batch (temperature 0, seed 42), so repeate
 - A small offline model sometimes writes a tool call as text instead of calling it. That is a real failure of the agent on that model, and the case reports it.
 - Persona runs are as repeatable as the caller model: a persona can drift, repeat itself or never say `DONE`; `max_turns` bounds it.
 - The eval changes only the speech and model stages of the draft. Prompts, sampling, greetings, tools, `end_call` and handoffs are the agent's own.
-- No run history, no server endpoint, no console page, no publish gate: the cases are files you keep next to your agent exports.
+- No publish gate, schedules or alert delivery yet; live scoring arrives with slice 2. The CLI keeps no history: the server's History tab does.
