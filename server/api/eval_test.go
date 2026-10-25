@@ -710,6 +710,7 @@ func (r *evalRig) finishJob(results []storage.EvalResult, category string) stora
 		for i := range results {
 			results[i].SubjectKind, results[i].SubjectID, results[i].AgentID = "case_run", job.Subject, job.AgentID
 			results[i].VersionKey, results[i].AgentVersionID, results[i].ConfigHash = job.AgentVersionID, job.AgentVersionID, "h"
+			r.ensureSession(job.AgentID, results[i].SessionID)
 		}
 		if _, err := r.store.Eval().Complete(ctx, job, time.Now(), results); err != nil {
 			r.t.Fatal(err)
@@ -720,6 +721,30 @@ func (r *evalRig) finishJob(results []storage.EvalResult, category string) stora
 		r.t.Fatal(err)
 	}
 	return job
+}
+
+// call ids of the results the tests store
+var testSess1, testS1, testS2, testS3 = storage.NewID(), storage.NewID(), storage.NewID(), storage.NewID()
+
+// ensureSession stores an ended call with id, as the worker's case runs have: Complete drops the reason of a result
+// whose call is gone.
+func (r *evalRig) ensureSession(agentID, id string) {
+	r.t.Helper()
+	ctx := context.Background()
+	if id == "" {
+		return
+	}
+	var n int
+	if err := r.store.DB().QueryRowContext(ctx, "SELECT count(*) FROM sessions WHERE id=?", id).Scan(&n); err != nil || n > 0 {
+		return
+	}
+	var version, hash string
+	if err := r.store.DB().QueryRowContext(ctx, "SELECT id, config_hash FROM agent_versions WHERE agent_id=? LIMIT 1", agentID).Scan(&version, &hash); err != nil {
+		r.t.Fatalf("a version of %s: %v", agentID, err)
+	}
+	if err := r.store.Sessions().Create(ctx, storage.SessionRecord{ID: id, AgentID: agentID, AgentVersionID: version, ConfigHash: hash, Status: "ended", StartedAt: time.Now().UTC()}); err != nil {
+		r.t.Fatal(err)
+	}
 }
 
 func TestEvalRunListAndDetail(t *testing.T) {
@@ -733,8 +758,8 @@ func TestEvalRunListAndDetail(t *testing.T) {
 	}
 
 	passed := r.finishJob([]storage.EvalResult{
-		{Scorer: "expectations", Outcome: "pass", Score: 1, Reason: "ok", SessionID: "sess-1"},
-		{Scorer: "correctness", Outcome: "skipped", Reason: "no judge configured", SessionID: "sess-1"},
+		{Scorer: "expectations", Outcome: "pass", Score: 1, Reason: "ok", SessionID: testSess1},
+		{Scorer: "correctness", Outcome: "skipped", Reason: "no judge configured", SessionID: testSess1},
 	}, "")
 	dead := r.finishJob(nil, "dial")
 	detail = decodeData[EvalRunDetailDTO](t, r.do(http.MethodGet, r.path(r.free, "/runs/"+run.ID), ""))
@@ -746,7 +771,7 @@ func TestEvalRunListAndDetail(t *testing.T) {
 		byCase[c.CaseID] = c
 	}
 	p, d := byCase[strings.SplitN(passed.Subject, "#", 2)[0]], byCase[strings.SplitN(dead.Subject, "#", 2)[0]]
-	if p.CaseName == "" || p.Status != "done" || !p.Passed || p.SessionID != "sess-1" || p.Repeat != 0 || len(p.Scores) != 2 || p.Scores[0].Scorer != "correctness" || p.Scores[0].Outcome != "skipped" {
+	if p.CaseName == "" || p.Status != "done" || !p.Passed || p.SessionID != testSess1 || p.Repeat != 0 || len(p.Scores) != 2 || p.Scores[0].Scorer != "correctness" || p.Scores[0].Outcome != "skipped" {
 		t.Fatalf("passed case-run %+v", p)
 	}
 	if d.Status != "dead" || d.Passed || d.ErrorCategory != "dial" || d.SessionID != "" || len(d.Scores) != 0 || d.CaseName == "" {
@@ -756,7 +781,7 @@ func TestEvalRunListAndDetail(t *testing.T) {
 	// A failing score makes the case-run fail; reasons are bounded on the way out.
 	long := strings.Repeat("r", 3000)
 	run2 := decodeData[EvalRunDTO](t, r.do(http.MethodPost, r.path(r.free, "/runs"), `{"case_id":"`+cs[0].ID+`"}`))
-	r.finishJob([]storage.EvalResult{{Scorer: "expectations", Outcome: "fail", Score: 0, Reason: long, SessionID: "s2", JudgeModel: "offline/m"}}, "")
+	r.finishJob([]storage.EvalResult{{Scorer: "expectations", Outcome: "fail", Score: 0, Reason: long, SessionID: testS2, JudgeModel: "offline/m"}}, "")
 	detail = decodeData[EvalRunDetailDTO](t, r.do(http.MethodGet, r.path(r.free, "/runs/"+run2.ID), ""))
 	c := detail.CaseRuns[0]
 	if c.Passed || len(c.Scores) != 1 || c.Scores[0].JudgeModel != "offline/m" || len([]rune(c.Scores[0].Reason)) > 1000 || !strings.HasSuffix(c.Scores[0].Reason, "...") {
@@ -773,7 +798,7 @@ func TestEvalRunListAndDetail(t *testing.T) {
 	}
 	// A judge that errored is not a pass.
 	run3 := decodeData[EvalRunDTO](t, r.do(http.MethodPost, r.path(r.free, "/runs"), `{"case_id":"`+cs[1].ID+`"}`))
-	r.finishJob([]storage.EvalResult{{Scorer: "correctness", Outcome: "error", Reason: "judge down", SessionID: "s3"}}, "")
+	r.finishJob([]storage.EvalResult{{Scorer: "correctness", Outcome: "error", Reason: "judge down", SessionID: testS3}}, "")
 	detail = decodeData[EvalRunDetailDTO](t, r.do(http.MethodGet, r.path(r.free, "/runs/"+run3.ID), ""))
 	if detail.CaseRuns[0].Status != "done" || detail.CaseRuns[0].Passed {
 		t.Fatalf("errored case-run %+v", detail.CaseRuns[0])
@@ -853,8 +878,8 @@ func TestEvalFleetEnvelope(t *testing.T) {
 	r.addCases(r.free, "alpha", "beta")
 	expect(t, r.do(http.MethodPut, r.path(r.free, "/suite"), `{"runs":1,"min_pass":1,"pass_threshold":0.8}`), http.StatusOK, "")
 	run := decodeData[EvalRunDTO](t, r.do(http.MethodPost, r.path(r.free, "/runs"), `{}`))
-	r.finishJob([]storage.EvalResult{{Scorer: "expectations", Outcome: "pass", Score: 1, Reason: "ok", SessionID: "s1"}}, "")
-	r.finishJob([]storage.EvalResult{{Scorer: "expectations", Outcome: "fail", Score: 0, Reason: "no", SessionID: "s2"}}, "")
+	r.finishJob([]storage.EvalResult{{Scorer: "expectations", Outcome: "pass", Score: 1, Reason: "ok", SessionID: testS1}}, "")
+	r.finishJob([]storage.EvalResult{{Scorer: "expectations", Outcome: "fail", Score: 0, Reason: "no", SessionID: testS2}}, "")
 
 	fleet := decodeData[EvalFleetDTO](t, r.do(http.MethodGet, "/api/v1/eval/fleet", ""))
 	if fleet.Total != 2 || fleet.BelowThreshold != 1 || len(fleet.Agents) != 2 {
@@ -900,7 +925,7 @@ func TestEvalHistoryEnvelope(t *testing.T) {
 	r := newEvalRig(t)
 	r.addCases(r.free, "alpha")
 	run := decodeData[EvalRunDTO](t, r.do(http.MethodPost, r.path(r.free, "/runs"), `{}`))
-	r.finishJob([]storage.EvalResult{{Scorer: "expectations", Outcome: "pass", Score: 1, Reason: "ok", SessionID: "s1"}}, "")
+	r.finishJob([]storage.EvalResult{{Scorer: "expectations", Outcome: "pass", Score: 1, Reason: "ok", SessionID: testS1}}, "")
 	h := decodeData[[]EvalHistoryDTO](t, r.do(http.MethodGet, r.path(r.free, "/history"), ""))
 	if len(h) != 1 || h[0].RunID != run.ID || h[0].Version != 1 || h[0].Passed != 1 || h[0].Total != 1 || h[0].PassRate == nil || *h[0].PassRate != 1 ||
 		len(h[0].Scorers) != 1 || h[0].Scorers[0].Scorer != "expectations" || h[0].Scorers[0].Mean != 1 || h[0].Scorers[0].Pass != 1 {
