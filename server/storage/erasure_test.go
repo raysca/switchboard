@@ -415,3 +415,31 @@ func TestPurgeContentLeavesACallHeldAfterItWasSelected(t *testing.T) {
 		}
 	})
 }
+
+// An eval result's reason can quote its call; erasing the call blanks it and keeps the score, and another call's result
+// is untouched. Fails if deleteSession stops clearing eval_results.
+func TestEraseSessionBlanksTheReasonOfItsEvalResults(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		resetEval(t, s)
+		ctx := context.Background()
+		id := seedCall(t, s, "caller-"+NewID(), time.Hour)
+		keep := seedCall(t, s, "caller-"+NewID(), time.Hour)
+		erased, _ := finishedRun(t, s, time.Now())
+		kept, _ := finishedRun(t, s, time.Now())
+		for run, session := range map[string]string{erased.ID: id, kept.ID: keep} {
+			if _, err := s.DB().ExecContext(ctx, s.bind(`UPDATE eval_results SET session_id=?, reason='never_say: matched "secret words"' WHERE run_id=?`), session, run); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := s.Retention().EraseSession(ctx, id, "r"); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.Eval().RunResults(ctx, erased.ID)
+		if err != nil || len(got) != 1 || got[0].Reason != "" || got[0].Outcome != "pass" {
+			t.Fatalf("erased call's result = %+v %v", got, err)
+		}
+		if got, _ := s.Eval().RunResults(ctx, kept.ID); len(got) != 1 || !strings.Contains(got[0].Reason, "secret words") {
+			t.Fatalf("another call's result changed: %+v", got)
+		}
+	})
+}

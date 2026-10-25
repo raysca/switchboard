@@ -11,3 +11,5 @@ CREATE INDEX idx_eval_runs_agent_created ON eval_runs(agent_id,created_at);
 CREATE INDEX idx_eval_runs_purge ON eval_runs(status,ended_at);
 CREATE INDEX idx_eval_jobs_purge ON eval_jobs(status,updated_at);
 CREATE INDEX idx_eval_results_created ON eval_results(created_at);
+-- erasing a call blanks the reasons of its eval results
+CREATE INDEX idx_eval_results_session ON eval_results(session_id);

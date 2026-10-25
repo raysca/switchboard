@@ -97,6 +97,11 @@ func (r RetentionRepository) deleteSession(ctx context.Context, tx *sql.Tx, id s
 	if _, err = exec("DELETE FROM session_mcp_tools WHERE session_id=?", id); err != nil {
 		return stats, false, err
 	}
+	// An eval result keeps its score and outcome (the run's record), but its reason can quote the call (a never_say
+	// match, a judge's words), so the erasure blanks it. No foreign key links the result to the call.
+	if _, err = exec("UPDATE eval_results SET reason='' WHERE session_id=?", id); err != nil {
+		return stats, false, err
+	}
 	n, err := exec("DELETE FROM sessions WHERE id=? AND status='ended' AND "+notHeld, id)
 	if err != nil {
 		return stats, false, err

@@ -181,7 +181,7 @@ flag is audited.
 
 **Erase one call.** `DELETE /api/v1/sessions/{id}` removes an ended call that is not on hold: the call row, its turns
 (transcript and assistant text), tool calls, spans, events, the tool pins captured for it, and its recording on this
-server. The response counts what was removed by class (`turns`, `tool_calls`, `spans`, `events`, `recordings_removed`).
+server. An eval result scored on the call keeps its score and outcome but loses its `reason`, which can quote the call. The response counts what was removed by class (`turns`, `tool_calls`, `spans`, `events`, `recordings_removed`).
 A call on hold is refused with 409 `session_held`, a call that has not ended with 409 `session_active`, an unknown id
 with 404. The rows go first, in one transaction with the audit entry, and the recording files after it; if a file cannot
 be removed the answer is 500 `recordings_not_removed` (the rows are already gone), and sending the same `DELETE` again
@@ -201,7 +201,8 @@ holds no transcript text, recording path or reason. The history is shown in the 
 above; it is not yet purged by the retention policy.
 
 **What an erasure leaves.** Agent versions, tool definitions and MCP discoveries (they belong to the agent, not the
-call); the audit entry; metrics, which are labelled by agent and provider only; anything outside the database: backups
+call); eval results scored on the call (score, outcome and the call id, without the reason), which age out under
+`eval_retention_days` and are not protected by a hold on the call; the audit entry; metrics, which are labelled by agent and provider only; anything outside the database: backups
 and snapshots, log files, an external trace backend, provider-side retention; and recordings that are not this call's:
 
 - Recordings made before holds and erasure existed are named `<agent id>-<number>-<unix time>`, not by call. They cannot
