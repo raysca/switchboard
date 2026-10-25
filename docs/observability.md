@@ -80,6 +80,9 @@ To prevent memory exhaustion in Prometheus and TSDB instances:
 | `voice_retention_turns_purged_total` / `voice_retention_sessions_deleted_total` | Counter | What the job blanked and deleted |
 | `voice_retention_interval_seconds` | Gauge | How often the job runs (`retention.interval`) |
 | `voice_retention_last_success_age_seconds` | Gauge | Seconds since the last completed run (the uptime before the first); `GovoiceRetentionStalled` fires above three intervals |
+| `voice_eval_jobs_total{result}` | Counter | Eval jobs the worker ended: `done`, `retry` (parked for a backoff), `dead` (attempts used up or not retryable), `lease_lost` (another worker took the job; nothing was written) |
+| `voice_eval_calls_active` | Gauge | Eval calls in flight on this instance (at most `evaluation.max_concurrent_calls`) |
+| `voice_eval_runs_finished_total` | Counter | Eval runs whose last job this instance ended |
 
 Every closed connection counts exactly one disconnect by cause (normal, client, server, timeout), so the causes sum to the connections closed; a frame the server rejects (1007/1008/1009), an admission or setup refusal (1013/1011), a drain and any call the server ends itself (end of call, fatal error, idle hang-up, slow client, ready timeout) are `server`; the client's `disconnect-bot` is `normal`; a client that stops answering pings is `client`. `timeout` is a read timeout. Messages larger than 21 KB (the largest valid frame is a 16 KB RTVI message) are refused with 1009.
 

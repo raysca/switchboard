@@ -1080,6 +1080,7 @@ func (s *Server) Start() error {
 		s.autoInstallDemo()
 	}
 	s.ready.Store(true)
+	s.startEvalWorker() // after publicAddr: eval calls dial this instance's own listener
 	s.logger.Info("server started",
 		slog.String("public_addr", s.cfg.PublicListenAddr),
 		slog.String("admin_addr", s.cfg.AdminListenAddr),
@@ -1102,6 +1103,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Unlock()
 	s.ready.Store(false)
 	s.metrics.Draining.Store(1)
+	s.stopEvalWorker() // first: an eval call must not hold the drain, nor a job run on a closing store
 	if s.pruneStop != nil {
 		select {
 		case <-s.pruneStop:

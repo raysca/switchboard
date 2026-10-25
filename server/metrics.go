@@ -134,6 +134,11 @@ type Metrics struct {
 	RetentionTurnsPurgedTotal, RetentionSessionsDeleted atomic.Uint64
 	retentionLastOK                                     atomic.Pointer[time.Time] // monotonic reading kept: ages are durations
 
+	// Eval worker: jobs by outcome (evalJobResults order), eval calls in flight, runs it finished.
+	evalJobs         [4]atomic.Uint64
+	evalCallsActive  atomic.Int64
+	EvalRunsFinished atomic.Uint64
+
 	filters filterMetrics
 	summary summaryMetrics
 	handoff handoffMetrics
@@ -355,6 +360,13 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "# HELP voice_mcp_sync_total Background MCP server syncs by result.\n# TYPE voice_mcp_sync_total counter\n")
 	fmt.Fprintf(w, "voice_mcp_sync_total{result=\"ok\"} %d\n", m.MCPSyncOKTotal.Load())
 	fmt.Fprintf(w, "voice_mcp_sync_total{result=\"failed\"} %d\n", m.MCPSyncFailedTotal.Load())
+
+	fmt.Fprintf(w, "# HELP voice_eval_jobs_total Eval jobs the worker ended, by result (done, retry, dead, lease_lost).\n# TYPE voice_eval_jobs_total counter\n")
+	for i, r := range evalJobResults {
+		fmt.Fprintf(w, "voice_eval_jobs_total{result=%q} %d\n", r, m.evalJobs[i].Load())
+	}
+	fmt.Fprintf(w, "# HELP voice_eval_calls_active Eval calls in flight on this instance.\n# TYPE voice_eval_calls_active gauge\nvoice_eval_calls_active %d\n", m.evalCallsActive.Load())
+	fmt.Fprintf(w, "# HELP voice_eval_runs_finished_total Eval runs this instance finished (its job was the run's last).\n# TYPE voice_eval_runs_finished_total counter\nvoice_eval_runs_finished_total %d\n", m.EvalRunsFinished.Load())
 
 	enabled := 0
 	if m.RetentionEnabled.Load() {

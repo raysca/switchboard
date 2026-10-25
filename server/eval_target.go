@@ -15,6 +15,9 @@ import (
 	"govoice/server/eval"
 )
 
+// errVoiceToken marks a failure to issue the draft token: the worker records it as category token.
+var errVoiceToken = errors.New("voice token")
+
 // localTarget runs eval calls against this server itself: the draft token is issued in process (no
 // HTTP hop, no management key), the call dials this instance's own public listener, and the stored
 // rows are read straight from the store.
@@ -30,7 +33,7 @@ func (t localTarget) DraftToken(ctx context.Context, a eval.Agent) (string, erro
 	resp, _, err := t.s.issueVoiceToken(ctx, api.VoiceTokenRequest{
 		Principal: eval.Principal, AgentID: a.ID, Draft: &api.DraftRequest{Config: a.Draft, MCPTools: &tools}})
 	if err != nil {
-		return "", fmt.Errorf("voice token: %w", err)
+		return "", fmt.Errorf("%w: %w", errVoiceToken, err)
 	}
 	return resp.Token, nil
 }

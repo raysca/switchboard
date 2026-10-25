@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"govoice/core/record"
@@ -28,9 +29,10 @@ type management struct {
 	traces    *trace.Adapter
 	retention *retention.Job
 	mcpSync   *mcp.Syncer
-	recStop   context.CancelFunc // ends the recording janitor
-	mcp       *mcp.Service       // its pooled connections close with the management plane
-	secrets   secrets.Store      // encrypted secrets; disabled without SWITCHBOARD_SECRETS_KEY
+	recStop   context.CancelFunc         // ends the recording janitor
+	mcp       *mcp.Service               // its pooled connections close with the management plane
+	secrets   secrets.Store              // encrypted secrets; disabled without SWITCHBOARD_SECRETS_KEY
+	eval      atomic.Pointer[evalWorker] // the eval job worker, set by Start; nil when evaluation.max_concurrent_calls is 0
 }
 
 // EnableManagement opens storage and installs the agent, provider, MCP and
@@ -224,6 +226,7 @@ func (m *management) close() {
 	if m == nil {
 		return
 	}
+	m.eval.Load().stop() // before the store closes; nil-safe, and a no-op after Shutdown stopped it
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	m.stopSync(ctx) // before the store closes
 	cancel()

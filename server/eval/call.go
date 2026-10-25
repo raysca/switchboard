@@ -42,6 +42,15 @@ type Agent struct {
 	Tools     []agent.ToolSelection
 }
 
+// CaseJob is the payload of a queued run_case job: the case as it was when the run was enqueued (a later
+// edit does not change a queued run), its hash and which repeat this is. The run row names the version.
+type CaseJob struct {
+	CaseID   string `json:"case_id"`
+	CaseHash string `json:"case_hash"`
+	Case     Case   `json:"case"`
+	Repeat   int    `json:"repeat"`
+}
+
 // Target is where an eval call runs: it issues the draft token, names the public listener to dial
 // and reads back what the server stored for the call. The CLI reaches a server over HTTP; the server
 // itself reaches its own stores.
