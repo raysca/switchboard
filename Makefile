@@ -215,7 +215,10 @@ mcp-test: ## dev|Run the MCP test servers on 127.0.0.1:18765 (/ok /open /fail/* 
 dental-mcp: ## dev|Run the Smile Dental demo MCP server on :18767 (token: dev-dental-token)
 	DENTAL_MCP_TOKEN=$${DENTAL_MCP_TOKEN:-dev-dental-token} PORT=18767 go run ./cmd/dental-mcp
 
-.PHONY: mcp-test dental-mcp admin-link
+atlas-mcp: ## dev|Run the Atlas Travel demo MCP server on :18768 (token: dev-atlas-token)
+	ATLAS_MCP_TOKEN=$${ATLAS_MCP_TOKEN:-dev-atlas-token} PORT=18768 go run ./cmd/atlas-mcp
+
+.PHONY: mcp-test dental-mcp atlas-mcp admin-link
 
 dev: ## dev|Run the server and admin UI with generated secrets and a seeded Dev Assistant
 	@./scripts/dev.sh up

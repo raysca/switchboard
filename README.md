@@ -43,7 +43,7 @@ make example-cli TEXT="Hello"  # or a CLI call (omit TEXT for a voice clip)
 
 | If you want to | Read |
 |---|---|
-| Try it | [Quick start](docs/quickstart.md), [Smile Dental demo](docs/demo/dentistry.md), [example client](examples/rtvi_client/README.md), [offline speech stack](offline/README.md) |
+| Try it | [Quick start](docs/quickstart.md), [Smile Dental demo](docs/demo/dentistry.md), [Atlas Travel Concierge demo](docs/demo/atlas.md), [example client](examples/rtvi_client/README.md), [offline speech stack](offline/README.md) |
 | Deploy it | [Deployment guide](docs/deployment.md), [Cloud Run rehearsal](deploy/rehearsal/README.md) |
 | Run it | [Operations](docs/operations.md), [Agent evals](docs/operations/agent-evals.md), [Observability](docs/observability.md), [Storage](docs/storage.md), [Privacy and retention](docs/privacy.md) |
 | Integrate with it | [Management API v1](docs/api/v1.md), [Eval API](docs/api/eval.md), [MCP API](docs/api/mcp.md), [HTTP tools API](docs/api/http-tools.md), [Providers](docs/providers.md), [Audio filters](docs/audio-filters.md), [Output pacing](docs/output-pacing-and-flush.md) |

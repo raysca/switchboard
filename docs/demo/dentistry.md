@@ -1,5 +1,7 @@
 # Smile Dental front-desk demo
 
+The larger, limit-testing example is the [Atlas Travel Concierge](atlas.md): 8 steps, 32 handoffs, MCP and HTTP tools.
+
 "Smile Dental" is a three-step voice agent that shows handoffs, shared context, tool use and call termination. A caller reaches the front desk, is handed off to a new-patient or returning-patient step, and the call ends when the agent says goodbye.
 
 | Step | LLM | TTS | MCP tools | Job |

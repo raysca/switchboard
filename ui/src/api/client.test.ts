@@ -540,15 +540,51 @@ describe("demo", () => {
   it("reads the demo status and installs the dental demo", async () => {
     const fetcher = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { dental: { available: true, installed: false } } }), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: { dental: { available: true, installed: false }, atlas: { available: true, installed: true, agent_id: "atlas-1" } },
+          }),
+          { status: 200 },
+        ),
+      )
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ data: { mcp_server_id: "m", mcp_created: true, tools: 7, agent_id: "f", agent_created: true } }), { status: 200 }),
       );
     const client = createApiClient(() => ({ key: "test-key", generation: 1 }), fetcher);
-    expect((await client.getDemo()).dental.available).toBe(true);
+    const status = await client.getDemo();
+    expect(status.dental.available).toBe(true);
+    expect(status.atlas).toEqual({ available: true, installed: true, agent_id: "atlas-1" });
     expect((await client.installDentalDemo()).agent_id).toBe("f");
     expect(fetcher.mock.calls[1][0]).toBe("/api/v1/demo/dental");
     expect((fetcher.mock.calls[1][1] as RequestInit).method).toBe("POST");
+  });
+
+  it("treats the atlas status as optional for a server that predates it", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { dental: { available: false, installed: false } } }), { status: 200 }),
+      );
+    const client = createApiClient(() => ({ key: "test-key", generation: 1 }), fetcher);
+    expect((await client.getDemo()).atlas).toBeUndefined();
+  });
+
+  it("installs the atlas demo with POST /demo/atlas", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ data: { mcp_server_id: "atlas", mcp_created: true, tools: 18, http_tools: 2, agent_id: "a1", agent_created: true } }),
+          { status: 200 },
+        ),
+      );
+    const client = createApiClient(() => ({ key: "test-key", generation: 1 }), fetcher);
+    const result = await client.installAtlasDemo();
+    expect(result.http_tools).toBe(2);
+    expect(result.agent_id).toBe("a1");
+    expect(fetcher.mock.calls[0][0]).toBe("/api/v1/demo/atlas");
+    expect((fetcher.mock.calls[0][1] as RequestInit).method).toBe("POST");
   });
 });
 

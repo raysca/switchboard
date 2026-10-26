@@ -38,11 +38,13 @@ type Agents interface {
 }
 
 type Result struct {
-	MCPServerID  string `json:"mcp_server_id"`
-	MCPCreated   bool   `json:"mcp_created"`
-	Tools        int    `json:"tools"`
-	AgentID      string `json:"agent_id"`
-	AgentCreated bool   `json:"agent_created"`
+	MCPServerID      string `json:"mcp_server_id"`
+	MCPCreated       bool   `json:"mcp_created"`
+	Tools            int    `json:"tools"`
+	HTTPTools        int    `json:"http_tools,omitempty"`
+	HTTPToolsCreated int    `json:"http_tools_created,omitempty"`
+	AgentID          string `json:"agent_id"`
+	AgentCreated     bool   `json:"agent_created"`
 }
 
 // InstallDental adds the MCP server (endpoint is its /mcp URL) and the agent unless they exist.
@@ -125,6 +127,39 @@ func InstallDental(ctx context.Context, servers Servers, agents Agents, endpoint
 
 // FindAgent returns the live dental agent, or the zero Agent when it is not installed.
 func FindAgent(ctx context.Context, agents Agents) (agent.Agent, error) {
+	return FindAgentNamed(ctx, agents, AgentName)
+}
+
+// FindAgentsNamed returns the live agents with these names in one pass over the
+// store, keyed by name; missing names are absent. The demo status uses it so a
+// dashboard load does not scan the store once per demo.
+func FindAgentsNamed(ctx context.Context, agents Agents, names ...string) (map[string]agent.Agent, error) {
+	const page = 100 // the store's maximum page size
+	want := make(map[string]bool, len(names))
+	for _, name := range names {
+		want[name] = true
+	}
+	found := make(map[string]agent.Agent, len(names))
+	for offset := 0; len(found) < len(want); offset += page {
+		batch, err := agents.List(ctx, page, offset)
+		if err != nil {
+			return nil, fmt.Errorf("list agents: %w", err)
+		}
+		for _, f := range batch {
+			if want[f.Name] && !f.Archived {
+				found[f.Name] = f
+			}
+		}
+		if len(batch) < page {
+			break
+		}
+	}
+	return found, nil
+}
+
+// FindAgentNamed returns the live agent with this name, or the zero Agent when
+// it is not installed. Every demo install checks its own name.
+func FindAgentNamed(ctx context.Context, agents Agents, name string) (agent.Agent, error) {
 	const page = 100 // the store's maximum page size
 	for offset := 0; ; offset += page {
 		batch, err := agents.List(ctx, page, offset)
@@ -132,7 +167,7 @@ func FindAgent(ctx context.Context, agents Agents) (agent.Agent, error) {
 			return agent.Agent{}, fmt.Errorf("list agents: %w", err)
 		}
 		for _, f := range batch {
-			if f.Name == AgentName && !f.Archived {
+			if f.Name == name && !f.Archived {
 				return f, nil
 			}
 		}

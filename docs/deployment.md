@@ -146,13 +146,14 @@ The variables an operator sets for the shipped server and scripts. Provider secr
 | `DEEPGRAM_API_KEY`, `CARTESIA_API_KEY`, `ELEVENLABS_API_KEY` | per provider | server | STT and TTS providers |
 | `MCP_TOKEN_<NAME>` | per MCP server | server | Bearer token named by an MCP server's `auth_env`; the name must match `MCP_TOKEN_[A-Z0-9_]{1,48}`. Tool and MCP secrets can instead live in `secrets.dir` or the encrypted store (enabled by `SWITCHBOARD_SECRETS_KEY`), which need no redeploy; see [security/credentials.md](security/credentials.md#tool-and-mcp-secrets) |
 | variables named in `otel.headers_env` | with OTel | server | Header values for the OTLP exporter; an empty one stops startup |
-| `DENTAL_MCP_URL` | demo only | server | Needed by `demo.auto_install: dental` |
+| `DENTAL_MCP_URL` | demo only | server | Needed by `demo.auto_install: dental` and the Dashboard's dentistry demo |
+| `ATLAS_DEMO_URL` | demo only | server | Needed by `demo.auto_install: atlas` and the Dashboard's Atlas demo; the MCP endpoint is `/mcp`, the HTTP tools are `/api/...` |
 | `POSTGRES_PASSWORD` | Compose only | compose file | URL-safe (for example `openssl rand -hex 24`) |
 | `DENTAL_MCP_TOKEN`, `PORT` | `dental-mcp` image | `cmd/dental-mcp` | Token is required; `PORT` defaults to 8081 |
 | `PROJECT_ID`, `GITHUB_REPO`, `GOOGLE_SA_KEY_FILE`, `REGION`, `AR_REPO`, `SQL_INSTANCE`, `BILLING_ACCOUNT`, `BUDGET_USD`, `DRY_RUN` (and `XAI_API_KEY`, `ELEVENLABS_API_KEY`, `GOOGLE_API_KEY`; optionally `OPENAI_API_KEY`, `DEEPGRAM_API_KEY`, `CARTESIA_API_KEY`, `NVIDIA_API_KEY`) | one-time Cloud Run bootstrap only | `deploy/gcp/bootstrap.sh` | See [section 10](#10-path-c-google-cloud-run-the-demo-deployment) |
 | `SMOKE_IMAGE`, `SMOKE_LOCAL` | smoke scripts only | `deploy/smoke.sh`, `deploy/smoke-cloudrun.sh` | See [section 17](#17-smoke-tests-troubleshooting-and-checklist) |
 
-<!-- src: server/config_validate.go:290-300; server/config.go:81; server/server.go:185-198; server/management.go:38-47,197; vad/silero.go:40-44,62-82,120,131-140; smartturn/model.go:25; deploy/Dockerfile:107-111; deploy/govoice.service:19-21; server/catalog/data/*.yaml; docs/providers.md:11-26; docs/security/mcp.md:9; server/otelexport/otelexport.go:88-100; server/demo_api.go:35,176; deploy/docker-compose.yaml:36-37,67; cmd/dental-mcp/main.go:2,19-23; deploy/gcp/bootstrap.sh:6-10,23; deploy/smoke.sh:15; deploy/smoke-cloudrun.sh:4 -->
+<!-- src: server/config_validate.go:290-300; server/config.go:81; server/server.go:185-198; server/management.go:38-47,197; vad/silero.go:40-44,62-82,120,131-140; smartturn/model.go:25; deploy/Dockerfile:107-111; deploy/govoice.service:19-21; server/catalog/data/*.yaml; docs/providers.md:11-26; docs/security/mcp.md:9; server/otelexport/otelexport.go:88-100; server/demo_api.go:47,50,235; deploy/docker-compose.yaml:36-37,67; cmd/dental-mcp/main.go:2,19-23; deploy/gcp/bootstrap.sh:6-10,23; deploy/smoke.sh:15; deploy/smoke-cloudrun.sh:4 -->
 
 ## 6. Secrets
 

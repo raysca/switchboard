@@ -118,11 +118,11 @@ type Server struct {
 	nextCallID    atomic.Uint64
 	textTurns     atomic.Uint64
 	pruneStop     chan struct{}
-	demoSF        singleflight.Group // collapses overlapping demo installs
-	stopDemo      context.CancelFunc // cancels the startup demo install; guarded by mu
-	stopFlight    context.CancelFunc // cancels the running demo install flight; guarded by mu
-	demoWG        sync.WaitGroup     // the startup demo install goroutine
-	recSink       *record.LocalSink  // nil unless recording.enabled
+	demoSF        singleflight.Group            // collapses overlapping installs of one demo
+	stopDemo      context.CancelFunc            // cancels the startup demo install; guarded by mu
+	stopFlights   map[string]context.CancelFunc // cancels each running install by demo name; guarded by mu
+	demoWG        sync.WaitGroup                // every running demo install goroutine
+	recSink       *record.LocalSink             // nil unless recording.enabled
 }
 
 type activeCall struct {
@@ -1094,7 +1094,7 @@ func (s *Server) Start() error {
 	s.pruneStop = make(chan struct{})
 	go s.pruneTimelines()
 
-	if s.cfg.Demo.AutoInstall == "dental" {
+	if s.cfg.Demo.AutoInstall != "" {
 		s.autoInstallDemo()
 	}
 	s.ready.Store(true)

@@ -232,10 +232,10 @@ func TestInstallDentalIsSerialised(t *testing.T) {
 
 // A failed agent lookup is an error, never "not installed" (which would offer a duplicate).
 func TestDemoStatusAgentLookupError(t *testing.T) {
-	if _, err := demoStatus(context.Background(), &racyAgents{err: errors.New("db down")}, "https://d/mcp"); err == nil {
+	if _, err := demoStatus(context.Background(), &racyAgents{err: errors.New("db down")}, "https://d/mcp", "", ""); err == nil {
 		t.Fatal("lookup error must surface")
 	}
-	st, err := demoStatus(context.Background(), &racyAgents{list: []agent.Agent{{ID: "f1", Name: demo.AgentName}}}, "https://d/mcp")
+	st, err := demoStatus(context.Background(), &racyAgents{list: []agent.Agent{{ID: "f1", Name: demo.AgentName}}}, "https://d/mcp", "", "")
 	if err != nil || !st.Dental.Installed || st.Dental.AgentID != "f1" || !st.Dental.Available {
 		t.Fatalf("%+v %v", st, err)
 	}

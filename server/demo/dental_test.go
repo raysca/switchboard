@@ -61,7 +61,7 @@ func (f *fakeAgents) Archive(_ context.Context, id string) error {
 func (f *fakeAgents) List(context.Context, int, int) ([]agent.Agent, error) { return f.list, nil }
 func (f *fakeAgents) Create(_ context.Context, r agent.CreateRequest) (agent.Agent, error) {
 	f.creates = append(f.creates, r)
-	fl := agent.Agent{ID: "agent1", Name: r.Name}
+	fl := agent.Agent{ID: "agent1", Name: r.Name, Version: &agent.Version{ID: "v1", Number: 1, Config: append(json.RawMessage(nil), r.Config...), MCPTools: append([]agent.ToolSelection(nil), r.MCPTools...)}}
 	f.list = append(f.list, fl)
 	return fl, nil
 }

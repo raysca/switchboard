@@ -458,6 +458,6 @@ type CueConfig struct {
 
 // DemoConfig turns on demo installs at start-up (the admin UI button works without it).
 type DemoConfig struct {
-	// AutoInstall installs a demo when the server starts: "" (off) or "dental".
+	// AutoInstall installs a demo when the server starts: "" (off), "dental" or "atlas".
 	AutoInstall string `yaml:"auto_install"`
 }

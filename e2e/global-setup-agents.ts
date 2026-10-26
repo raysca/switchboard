@@ -15,7 +15,7 @@ import { stopStack } from "./global-teardown";
 // xaispeech) reading XAI_API_KEY from its environment: real STT/LLM/TTS calls.
 // Ports differ from the paid suite's, so both can run on one machine.
 const LIVE = process.env.E2E_PROVIDER === "xai";
-const PORTS = { public: 18581, admin: 19591, ui: 15174, mcp: 18595, mcpHole: 18596, dental: 18597 };
+const PORTS = { public: 18581, admin: 19591, ui: 15174, mcp: 18595, mcpHole: 18596, dental: 18597, atlas: 18598 };
 const repo = path.resolve(__dirname, "..");
 const logDir = path.join(__dirname, "test-results-agents", "logs");
 
@@ -63,6 +63,11 @@ export default async function globalSetup() {
   execFileSync("go", ["build", "-o", "bin/dental-mcp", "./cmd/dental-mcp"], {
     cwd: repo,
     stdio: ["ignore", fs.openSync(path.join(logDir, "build-dental-mcp.log"), "w"), "inherit"],
+  });
+
+  execFileSync("go", ["build", "-o", "bin/atlas-mcp", "./cmd/atlas-mcp"], {
+    cwd: repo,
+    stdio: ["ignore", fs.openSync(path.join(logDir, "build-atlas-mcp.log"), "w"), "inherit"],
   });
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "govoice-e2e-graph-"));
@@ -127,12 +132,17 @@ export default async function globalSetup() {
       SWITCHBOARD_SECRETS_KEY: "e2e:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
       DENTAL_MCP_URL: `http://127.0.0.1:${PORTS.dental}/mcp`,
       MCP_TOKEN_DENTAL: "e2e-dental-token",
+      // The Atlas demo needs BOTH of these for GET /api/v1/demo to report available.
+      ATLAS_DEMO_URL: `http://127.0.0.1:${PORTS.atlas}`,
+      MCP_TOKEN_ATLAS: "e2e-atlas-token",
       ...providerEnv,
     });
     save();
     stack.pids.mcptest = start(logDir, "mcptest", path.join(repo, "bin/mcptest"), ["-addr", `127.0.0.1:${PORTS.mcp}`, "-blackhole-addr", `127.0.0.1:${PORTS.mcpHole}`, "-token", "e2e-mcp-token"], repo, {});
     save();
     stack.pids.dental = start(logDir, "dental-mcp", path.join(repo, "bin/dental-mcp"), [], repo, { PORT: String(PORTS.dental), DENTAL_MCP_TOKEN: "e2e-dental-token" });
+    save();
+    stack.pids.atlas = start(logDir, "atlas-mcp", path.join(repo, "bin/atlas-mcp"), [], repo, { PORT: String(PORTS.atlas), ATLAS_MCP_TOKEN: "e2e-atlas-token" });
     save();
     stack.pids.ui = start(logDir, "ui", process.execPath, [path.join(repo, "ui/node_modules/vite/bin/vite.js"), "--config", path.join(__dirname, "vite.e2e.config.mjs")], path.join(repo, "ui"), {
       E2E_UI_PORT: String(PORTS.ui),
@@ -144,6 +154,7 @@ export default async function globalSetup() {
     await waitFor(logDir, "server /ready", async () => (await fetch(`${stack.adminUrl}/ready`)).status === 200);
     await waitFor(logDir, "admin UI", async () => (await fetch(stack.uiUrl)).ok);
     await waitFor(logDir, "dental-mcp", async () => (await fetch(`http://127.0.0.1:${PORTS.dental}/health`)).ok);
+    await waitFor(logDir, "atlas-mcp", async () => (await fetch(`http://127.0.0.1:${PORTS.atlas}/health`)).ok);
     await waitFor(logDir, "mcptest", async () => (await fetch(`${stack.mcpUrl}/_record`)).ok);
   } catch (err) {
     stopStack(agentsStackFile);
