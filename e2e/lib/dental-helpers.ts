@@ -9,7 +9,7 @@ type Stored = {
   current_version: { config: { start: string; steps: any[]; handoffs: any[] }; mcp_tools: any[] };
 };
 
-// The installed dental agent uses xai/elevenlabs stages, which cannot take an echo call. This creates
+// The seeded dental agent uses xai/elevenlabs stages, which cannot take an echo call. This creates
 // "Dental (echo)": the same steps, handoffs, end_call flags, step tools and MCP selections, with
 // every stage on the echo provider.
 export async function createEchoDentalVariant(stack: Stack, installedId: string) {

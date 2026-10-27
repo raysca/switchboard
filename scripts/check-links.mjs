@@ -12,7 +12,7 @@ const git = (...a) => { try { return execFileSync('git', a, { encoding: 'utf8' }
 const files = git('ls-files', '-z', '--', ...(specs.length ? specs : ['*.md', ':!docs/history', ':!docs/superpowers']),
   ':!pipecat-impl', ':!third_party', ':!**/node_modules/**').split('\0').filter(f => f.endsWith('.md'));
 if (!files.length) { console.log('check-links: no tracked markdown files matched'); process.exit(1); }
-const top = /^(AGENTS\.md|README\.md|Makefile|go\.work|\.github|assets|cmd|config|core|deploy|docs|e2e|examples|offline|proto|providers|reports|scripts|server|smartturn|third_party|tools|transport|ui|vad)(\/|$)/;
+const top = /^(AGENTS\.md|README\.md|Makefile|go\.work|\.github|assets|cmd|config|core|deploy|demos|docs|e2e|examples|offline|proto|providers|reports|scripts|server|smartturn|third_party|tools|transport|ui|vad)(\/|$)/;
 // Not repo files: runtime outputs (deploy/sbom.json: written by make release-security), operator-created files, Go identifiers, MCP method names, globs.
 const allow = new Set(['e2e/.stack.json', 'deploy/govoice.env', 'deploy/sbom.json', 'server/mcp.Handler', 'tools/list', 'examples/...']);
 let bad = 0;

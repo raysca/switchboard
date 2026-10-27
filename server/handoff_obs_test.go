@@ -3,8 +3,6 @@ package server
 import (
 	"bytes"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -110,8 +108,8 @@ func TestHandoffEventsAfterManagementClosesDoNotRace(t *testing.T) {
 	<-done
 }
 
-// Readers that take the management plane (call setup, the demo endpoint) race closeManagement unless the
-// field is atomic.
+// Readers that take the management plane (call setup, handoff observation) race closeManagement
+// unless the field is atomic.
 func TestManagementFieldReadersRaceCloseManagement(t *testing.T) {
 	s := apiTestServer(t)
 	t.Setenv("GOVOICE_DATABASE_DSN", filepath.Join(t.TempDir(), "mgmt.db"))
@@ -125,7 +123,6 @@ func TestManagementFieldReadersRaceCloseManagement(t *testing.T) {
 		for i := 0; i < 200; i++ {
 			s.onHandoff(NewSessionTimeline(1, 10, time.Minute), "")
 			s.onEndCall("")
-			s.handleDemo(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/demo", nil), "r")
 		}
 	}()
 	s.closeManagement()

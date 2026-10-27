@@ -32,9 +32,6 @@
  "Secrets": {
   "Dir": ""
  },
- "Demo": {
-  "AutoInstall": ""
- },
  "Storage": {
   "Dialect": "sqlite",
   "DSNEnv": ""

@@ -72,24 +72,6 @@ export const serverConfigSchema = z.object({
 export type ServerConfigDTO = z.infer<typeof serverConfigSchema>;
 const serverConfigEnvelope = z.object({ data: serverConfigSchema });
 
-const demoEntrySchema = z.object({ available: z.boolean(), installed: z.boolean(), agent_id: z.string().optional() });
-const demoStatusSchema = z.object({
-  dental: demoEntrySchema,
-  // Optional so a server that predates the Atlas demo (or an older mocked response) still parses.
-  atlas: demoEntrySchema.optional(),
-});
-type DemoStatus = z.infer<typeof demoStatusSchema>;
-const demoInstallSchema = z.object({
-  mcp_server_id: z.string(),
-  mcp_created: z.boolean(),
-  tools: z.number(),
-  agent_id: z.string(),
-  agent_created: z.boolean(),
-});
-type DemoInstall = z.infer<typeof demoInstallSchema>;
-const atlasDemoInstallSchema = demoInstallSchema.extend({ http_tools: z.number() });
-type AtlasDemoInstall = z.infer<typeof atlasDemoInstallSchema>;
-
 const operationsStatusEnvelope = z.object({
   data: operationsStatusSchema,
 });
@@ -1018,13 +1000,6 @@ export function createApiClient(
           operationsStatusEnvelope,
         )
       ).data,
-
-    // Demo content
-    getDemo: async () => (await request("/demo", z.object({ data: demoStatusSchema }))).data,
-    installDentalDemo: async () =>
-      (await request("/demo/dental", z.object({ data: demoInstallSchema }), { method: "POST" })).data,
-    installAtlasDemo: async () =>
-      (await request("/demo/atlas", z.object({ data: atlasDemoInstallSchema }), { method: "POST" })).data,
   };
 }
 

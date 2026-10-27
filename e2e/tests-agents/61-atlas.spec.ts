@@ -1,37 +1,43 @@
 import { test, expect, LIVE } from "../lib/agents-stack";
 import type { Stack } from "../lib/agents-stack";
+import { agentsStackFile, readStack } from "../lib/stack";
 import { step } from "../lib/evidence";
-import { api, connectAdmin, openAgent, openAgentTest, startCall } from "../lib/agents-helpers";
+import { api, connectAdmin, openAgent, openAgentTest, openAgentsList, startCall } from "../lib/agents-helpers";
 import {
   ATLAS_AGENT,
   type AtlasAgent,
   ATLAS_ECHO_AGENT,
   createEchoAtlasVariant,
   expectActiveStep,
-  loadAtlasDemo,
   storedAtlasAgent,
   toolTurn,
   turn,
 } from "../lib/atlas-helpers";
+import { seedDemo } from "../lib/seed";
 
-// What this verifies: the Atlas demo installs from the Dashboard, the stored agent is at the
-// platform limits (8 steps, 32 handoffs, 20 tool pins, one async tool), the designer draws the
-// whole graph, and a fake-provider call on an echo variant walks Concierge -> Flights -> Stays ->
-// Payments -> Human handoff with MCP and HTTP tools and hangs up on end_call. The Calls page then
-// shows the path, the step-labelled transcript and how the call ended. Fake only: the installed
-// agent names google, xai and elevenlabs stages, which run on placeholder keys (F2).
+// What this verifies: the standalone seed CLI (bin/seed, from demos/seed) publishes the Atlas demo
+// on a clean server; the seeded agent is at the platform limits (8 steps, 32 handoffs, 20 tool pins,
+// one async tool); the designer draws the whole graph; and a fake-provider call on an echo variant
+// walks Concierge -> Flights -> Stays -> Payments -> Human handoff with MCP and HTTP tools and hangs
+// up on end_call. The Calls page then shows the path, the step-labelled transcript and how the call
+// ended. Fake only: the seeded agent names google, xai and elevenlabs stages, which run on
+// placeholder keys (F2).
 //
-// The Atlas fixture is the real cmd/atlas-mcp server the global setup starts; the call's tool
-// replies come from it, so the demo data is the same as a person would see.
+// The Atlas fixture is the real demos/atlas/cmd/atlas-mcp server the global setup starts; the
+// call's tool replies come from it, so the demo data is the same as a person would see. Seeding
+// happens here, not in global setup: 05-first-run needs an empty store and 50-screens archives
+// every agent before this spec runs.
 test.describe.configure({ mode: "serial" });
 test.skip(LIVE, "the Atlas demo uses the fake stack's placeholder provider keys");
 
 const STEP_NAMES = ["Concierge", "Flights", "Stays", "Ground transport", "Payments", "Loyalty", "Disruptions", "Human handoff"];
 
-test("load the demo from the Dashboard: eight steps, thirty-two handoffs and twenty tool pins", async ({ page, stack }) => {
-  await loadAtlasDemo(page, stack);
-  await step(page, "atlas demo loaded");
+test.beforeAll(() => {
+  if (LIVE) return; // the tests are skipped: the seeded stages need the fake stack's placeholder keys
+  seedDemo(readStack(agentsStackFile), "atlas");
+});
 
+test("the CLI seed publishes the demo: eight steps, thirty-two handoffs and twenty tool pins", async ({ page, stack }) => {
   const agent = await storedAtlasAgent(stack);
   const { config, mcp_tools } = agent.current_version;
   expect(agent.name).toBe(ATLAS_AGENT);
@@ -62,7 +68,12 @@ test("load the demo from the Dashboard: eight steps, thirty-two handoffs and twe
   }
   expect([...seen].sort()).toEqual(config.steps.map((s) => s.id).sort());
 
-  // The installed stages name real providers. A fake stack cannot build them, so the call test
+  await connectAdmin(page, stack);
+  await openAgentsList(page);
+  await expect(page.getByRole("link", { name: ATLAS_AGENT, exact: true })).toBeVisible();
+  await step(page, "atlas demo seeded");
+
+  // The seeded stages name real providers. A fake stack cannot build them, so the call test
   // drives this variant instead: same steps, handoffs, end_call flags, step tools and tool pins.
   const variant = await createEchoAtlasVariant(stack, agent.id);
   // Read the variant back from the store: the helper's own object is not evidence.

@@ -108,7 +108,17 @@ is skipped.
 
 The specs run in file order on one stack (one worker): later files use what earlier ones left
 behind. Shared helpers are in `lib/agents-helpers.ts` (admin API, navigation, the editor, the Test
-call panel) and `lib/mcp-helpers.ts` (the MCP test servers).
+call panel), `lib/mcp-helpers.ts` (the MCP test servers) and `lib/seed.ts` (the demo seed CLI).
+
+Global setup also builds and starts the two demo MCP fixtures (`demos/dental/cmd/dental-mcp` on
+18597, `demos/atlas/cmd/atlas-mcp` on 18598) and the standalone seed client (`bin/seed`, from
+`demos/seed`), but it seeds nothing: `05-first-run` needs an empty store and `50-screens` archives
+every agent. Each demo spec therefore seeds its own demo in `beforeAll` with the CLI
+(`bin/seed --server <admin> --key-env GOVOICE_MANAGEMENT_API_KEY --demo dental|atlas
+--mcp <logical>=<base url> --yes`), which wipes and recreates it. The management key and the demo
+token (`DENTAL_MCP_TOKEN`, `ATLAS_MCP_TOKEN`) travel in the process environment, never on the
+command line; `bin/seed` writes the token into the server's encrypted secret store, so the server
+carries no demo environment or demo config.
 
 | Spec | What it covers |
 |---|---|
@@ -117,8 +127,8 @@ call panel) and `lib/mcp-helpers.ts` (the MCP test servers).
 | `30-mcp.spec.ts` | The MCP tools page (empty state, the connect dialog, servers and a changed schema with the API faked), then the local test MCP servers (`cmd/mcptest`): healthy, failing and unreachable servers show their state, an agent calls an MCP tool during a test call, each failure kind is answered and the call goes on, a slow tool answers under the timeout and is abandoned over it. Fake only. Barge-in during a slow tool is a Go test (`server/mcp_call_e2e_test.go`): the fake STT produces no words, so a browser cannot start a user turn |
 | `40-layout.spec.ts` | Dashboard, providers, MCP tools, calls, agents, the editor and a call detail do not scroll sideways at 390 px |
 | `50-screens.spec.ts` | Walks the canvas boards 3 to 12 with a numbered screenshot of each, on a stack that already has agents |
-| `60-dental.spec.ts` | Load demo from the Dashboard, a new-patient call and a returning-patient call with the real dentistry MCP server (`cmd/dental-mcp`): handoffs, MCP tool calls, the call ended by the agent; the Calls page shows the path, how it ended ("By the agent (...)") and the step-labelled transcript, and the tool-call spans are counted through the traces API (the page does not list individual tool calls). The fake LLM sends no transfer note, so the note is covered by Go unit tests, not here. Fake only |
-| `61-atlas.spec.ts` | Load the Atlas Travel demo from the Dashboard: the stored agent at the platform limits (8 steps, 32 handoffs, 18 MCP tools, 2 HTTP tools, one async tool), then a fake call through Concierge → Flights → Stays → Payments → Human handoff on the real `cmd/atlas-mcp` fixture: MCP and HTTP tool calls, `end_call`; the Calls page shows the path, the step-labelled transcript and "By the agent (...)". Screenshots of the loaded demo, the canvas and the call. Fake only |
+| `60-dental.spec.ts` | Seed the dentistry demo with `bin/seed --demo dental` (the real `demos/dental/cmd/dental-mcp` fixture): the seeded agent has three steps, two handoffs and seven tool pins and draws on the canvas; then a new-patient call and a returning-patient call with handoffs, MCP tool calls and the call ended by the agent. The Calls page shows the path, how it ended ("By the agent (...)") and the step-labelled transcript, and the tool-call spans are counted through the traces API (the page does not list individual tool calls). The fake LLM sends no transfer note, so the note is covered by Go unit tests, not here. Screenshots of the seeded agents page, the canvas and the call details. Fake only |
+| `61-atlas.spec.ts` | Seed the Atlas Travel demo with `bin/seed --demo atlas` (the real `demos/atlas/cmd/atlas-mcp` fixture): the seeded agent at the platform limits (8 steps, 32 handoffs, 18 MCP tools, 2 HTTP tools, one async tool), then a fake call through Concierge → Flights → Stays → Payments → Human handoff: MCP and HTTP tool calls, `end_call`; the Calls page shows the path, the step-labelled transcript and "By the agent (...)". Screenshots of the seeded agents page, the canvas and the call. Fake only |
 
 The server-side twin of the fake suite is `server/agent_e2e_test.go` (`make test-e2e-go`): it also decodes the audio frames on the WebSocket, so the cue is checked as bytes on the wire (it plays in the gap, is paced at 20 ms, stops when sales speaks or the handoff fails, and a quick handoff or an unknown sound plays nothing). CI
 runs the fake suite as the `graph-e2e` job (the name is a required status check, so it keeps its old name).

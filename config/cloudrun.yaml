@@ -1,11 +1,12 @@
 # Cloud Run: ONE service, ONE public port (8080). The management API and the admin UI are served
 # on it behind the management key (public_admin). One instance (live calls are in memory); agents and
 # call history are in Cloud SQL (Postgres) through the unix socket Cloud Run mounts, so they survive
-# deploys and restarts. The dentistry demo is (re)installed by demo.auto_install on every start.
+# deploys and restarts. The server is clean-room: it installs no demo. Demos are optional and seeded
+# by the separate demo pipeline (.github/workflows/deploy-demo.yml) against the management API.
 profile: production
 
 public_listen_addr: "0.0.0.0:8080"
-admin_listen_addr: "127.0.0.1:9090"   # unused by the demo; required by the config checks
+admin_listen_addr: "127.0.0.1:9090"   # unused by the single-port deployment; required by the config checks
 probe_listen_addr: ""
 
 public_admin:
@@ -94,8 +95,3 @@ warmup:
   on_start: false
 
 idle: {user_timeout: 30s, max_prompts: 2}
-
-# The dentistry demo installs itself on every start (needs DENTAL_MCP_URL and MCP_TOKEN_DENTAL).
-# Delete this block to make it a button in the admin UI only.
-demo:
-  auto_install: "dental"

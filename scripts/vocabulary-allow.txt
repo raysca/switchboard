@@ -19,7 +19,6 @@ tools/compat/parity/gen_goldens.py	F	flow downstream	# generator of the golden a
 docs/benchmarks/container-soak-churn-chaos.md	F	traffic flows	# generic English
 server/api/**	R	route not found	# HTTP 404 message
 server/api_routes.go	R	api_routes	# HTTP routing table (file name)
-server/api_routes.go	R	routes sit under	# HTTP paths
 server/api_routes.go	R	liveCallRoute	# HTTP path matcher
 server/api_routes.go	R	route not found	# HTTP 404 message
 server/probe_routes.go	R	probe_routes	# HTTP probe endpoints (file name)
@@ -52,7 +51,6 @@ server/api_provider_boundary_test.go	R	*	# HTTP management-boundary test (file i
 server/api_session_boundary_test.go	R	*	# HTTP management-boundary test (file is HTTP-only for R)
 server/api_boundary_test.go	R	AuthRoute	# HTTP route-separation test name
 server/api_mcp_boundary_test.go	R	not routed	# HTTP request routing
-server/api_routes_table_test.go	R	DemoRoutes	# HTTP routing table test
 server/live_calls_api.go	R	liveCallRoute	# HTTP path matcher
 server/live_calls_api_test.go	R	LiveCallRoutes	# HTTP routes of the live-call API
 server/live_calls_api_test.go	R	stored-session routes	# HTTP routes

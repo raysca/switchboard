@@ -98,9 +98,6 @@ func validateProfileAndStorage(cfg *Config) error {
 		// The voice token travels in the /ws URL query (proxy and access logs): keep its life short.
 		return fmt.Errorf("token.max_lifetime must be at most %v", maxVoiceTokenLifetime)
 	}
-	if a := cfg.Demo.AutoInstall; a != "" && a != "dental" && a != "atlas" {
-		return errors.New(`demo.auto_install must be empty, "dental" or "atlas"`)
-	}
 	switch cfg.Storage.Dialect {
 	case "", "sqlite", "postgres": // empty is reported below as required
 	default:

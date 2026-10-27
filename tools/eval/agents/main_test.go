@@ -87,8 +87,8 @@ func TestPrepareReportsAllMissingAgents(t *testing.T) {
 // The example cases that ship with the tool (make eval-agents) must load.
 func TestExampleCasesLoad(t *testing.T) {
 	for dir, want := range map[string][]string{
-		"cases":        {"dealership-buyer-reaches-sales", "dev-assistant-answers"},
-		"cases-dental": {"dental-new-patient-books"},
+		"cases":                      {"dealership-buyer-reaches-sales", "dev-assistant-answers"},
+		"../../../demos/dental/eval": {"dental-new-patient-books"},
 	} {
 		cs, err := eval.LoadCases(dir, nil)
 		if err != nil {

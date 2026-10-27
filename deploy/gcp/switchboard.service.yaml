@@ -1,10 +1,11 @@
 # Switchboard on Cloud Run: ONE instance (live calls are in memory), CPU always allocated (a call
 # is a long-lived request that needs CPU between requests), 60-minute request timeout (a call is a
-# WebSocket request; the server caps a call at 20 minutes itself). This is the SQLite demo: agents
-# and call history live in /tmp inside the container and are wiped on every deploy and cold start;
-# the dentistry demo reinstalls itself on every boot. Sizing: max_sessions
-# (config/cloudrun-sqlite.yaml) is below containerConcurrency on purpose, so admin and probe
-# requests never wait behind calls.
+# WebSocket request; the server caps a call at 20 minutes itself). This is the SQLite deployment
+# profile: agents and call history live in /tmp inside the container and are wiped on every deploy
+# and cold start, so a clean deployment starts with an empty store. Demos are optional and seeded
+# afterwards by the separate demo pipeline (.github/workflows/deploy-demo.yml); the server never
+# installs one. Sizing: max_sessions (config/cloudrun-sqlite.yaml) is below containerConcurrency on
+# purpose, so admin and probe requests never wait behind calls.
 # Rendered with envsubst by .github/workflows/deploy.yml; ${...} placeholders are checked by
 # server/gcp_manifest_test.go. The last env entry is the optional provider keys, built by deploy.yml.
 apiVersion: serving.knative.dev/v1
@@ -45,22 +46,23 @@ spec:
             timeoutSeconds: 2
             failureThreshold: 20
           env:
-            - {name: DENTAL_MCP_URL, value: "${DENTAL_MCP_URL}"}
             - {name: GOOGLE_APPLICATION_CREDENTIALS, value: /secrets/google/key.json}
-            # SQLite demo: the database is a file in the container's writable tmpfs, not a secret.
+            # SQLite deployment: the database is a file in the container's writable tmpfs, not a secret.
             - {name: GOVOICE_DATABASE_DSN, value: "/tmp/switchboard.db"}
             - name: TOKEN_SECRET
               valueFrom: {secretKeyRef: {name: TOKEN_SECRET, key: latest}}
             - name: GOVOICE_MANAGEMENT_API_KEY   # the variable the server reads
               valueFrom: {secretKeyRef: {name: SWITCHBOARD_MANAGEMENT_API_KEY, key: latest}}
+            # The encrypted secret store: seed writes each demo MCP token here, so the clean-room
+            # server carries no demo token in its environment.
+            - name: SWITCHBOARD_SECRETS_KEY
+              valueFrom: {secretKeyRef: {name: SWITCHBOARD_SECRETS_KEY, key: latest}}
             - name: XAI_API_KEY
               valueFrom: {secretKeyRef: {name: xai-api-key, key: latest}}
             - name: ELEVENLABS_API_KEY
               valueFrom: {secretKeyRef: {name: elevenlabs-api-key, key: latest}}
             - name: GOOGLE_API_KEY
               valueFrom: {secretKeyRef: {name: google-api-key, key: latest}}
-            - name: MCP_TOKEN_DENTAL
-              valueFrom: {secretKeyRef: {name: DENTAL_MCP_TOKEN, key: latest}}
             ${PROVIDER_ENV}
           volumeMounts:
             - {name: google-key, mountPath: /secrets/google}

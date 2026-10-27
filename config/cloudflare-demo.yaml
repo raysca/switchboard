@@ -1,5 +1,9 @@
 # Cloudflare Containers demo: one Worker-fronted container, one SQLite store, short test calls.
 # The Worker is the only ingress and overwrites forwarding headers from Cloudflare request metadata.
+# The server is clean-room: it installs no demo. A Cloudflare deployment that must run demos needs an
+# external Postgres DSN and a persistent SWITCHBOARD_SECRETS_KEY in the Worker env, and the demo
+# pipeline seeds it afterwards (demos/<name>/deploy/cloudflare, .github/workflows/deploy-demo.yml).
+# With the shipped /tmp SQLite store a seeded demo is lost on container restart.
 profile: production
 
 public_listen_addr: "0.0.0.0:8080"

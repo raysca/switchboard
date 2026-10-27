@@ -76,9 +76,6 @@ type Config struct {
 		Dir string `yaml:"dir"`
 	} `yaml:"secrets"`
 
-	// Demo installs at start-up (the admin UI button works without it).
-	Demo DemoConfig `yaml:"demo"`
-
 	// Durable management plane (agents, MCP, session
 	// history). Disabled when Storage.Dialect is empty; retention: see Retention.
 	Storage struct {
@@ -454,10 +451,4 @@ type CueConfig struct {
 	File   string   `yaml:"file"`
 	GainDB *float64 `yaml:"gain_db"`
 	Loop   *bool    `yaml:"loop"` // default true
-}
-
-// DemoConfig turns on demo installs at start-up (the admin UI button works without it).
-type DemoConfig struct {
-	// AutoInstall installs a demo when the server starts: "" (off), "dental" or "atlas".
-	AutoInstall string `yaml:"auto_install"`
 }

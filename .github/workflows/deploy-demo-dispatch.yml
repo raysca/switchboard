@@ -1,0 +1,61 @@
+# Manual entry point for the optional demo deployment. The logic lives in the reusable
+# .github/workflows/deploy-demo.yml; this workflow only exposes the inputs and passes the
+# environment secrets through.
+name: deploy-demo-dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      demo:
+        description: "Demo to deploy"
+        required: true
+        type: choice
+        options: [dental, atlas]
+      target:
+        description: "Deployment target"
+        required: true
+        type: choice
+        options: [cloudrun, cloudflare]
+      environment:
+        description: "GitHub environment holding the per-demo token secret and the management key"
+        required: true
+        type: string
+      server_admin_url:
+        description: "Base URL of the clean-room server to seed"
+        required: true
+        type: string
+      management_key_secret:
+        description: "Management key source name (Secret Manager secret on Cloud Run, environment secret on Cloudflare)"
+        required: true
+        type: string
+        default: SWITCHBOARD_MANAGEMENT_API_KEY
+      mcp_base_url:
+        description: "Cloudflare only: public base URL of the demo Worker"
+        required: false
+        type: string
+        default: ""
+      auto_seed:
+        description: "Seed the demo after deploying it"
+        required: false
+        type: boolean
+        default: true
+      image_tag:
+        description: "Image tag for the demo MCP image (defaults to the commit SHA)"
+        required: false
+        type: string
+        default: ""
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  deploy:
+    uses: ./.github/workflows/deploy-demo.yml
+    secrets: inherit
+    with:
+      demo: ${{ inputs.demo }}
+      target: ${{ inputs.target }}
+      environment: ${{ inputs.environment }}
+      server_admin_url: ${{ inputs.server_admin_url }}
+      management_key_secret: ${{ inputs.management_key_secret }}
+      mcp_base_url: ${{ inputs.mcp_base_url }}
+      auto_seed: ${{ inputs.auto_seed }}
+      image_tag: ${{ inputs.image_tag }}

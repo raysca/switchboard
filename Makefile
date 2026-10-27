@@ -80,9 +80,9 @@ parity-regen: ## free|Regenerate the paired Pipecat goldens (needs pipecat-impl 
 	@test -x pipecat-impl/.venv/bin/python || { echo "pipecat-impl/.venv missing: cd pipecat-impl && uv sync"; exit 1; }
 	cd pipecat-impl && .venv/bin/python ../tools/compat/parity/gen_goldens.py
 
-verify: test ## build|test + gofmt + manifest/fixture checks: run before a PR
+verify: test demo-boundary ## build|test + gofmt + manifest/fixture checks: run before a PR
 	@echo "=== Checking code formatting ==="
-	@unformatted=$$(gofmt -l core/ transport/ tools/ proto/ providers/ vad/ smartturn/ cmd/ server/ examples/ offline/); \
+	@unformatted=$$(gofmt -l core/ transport/ tools/ proto/ providers/ vad/ smartturn/ cmd/ server/ examples/ offline/ demos/); \
 	if [ -n "$$unformatted" ]; then \
 		echo "Files need formatting:"; \
 		echo "$$unformatted"; \
@@ -105,6 +105,11 @@ verify: test ## build|test + gofmt + manifest/fixture checks: run before a PR
 
 deadcode: ## build|Unreachable functions not in scripts/deadcode-allow.txt (advisory in CI)
 	@scripts/deadcode.sh
+
+demo-boundary: ## build|Fail when the server module depends on demos/
+	@deps="$$(go list -deps ./server/...)" || exit 1; \
+	if printf '%s\n' "$$deps" | grep -qE '^govoice/demos(/|$$)'; then \
+		echo "server/ must not import demos/"; exit 1; fi
 
 release-security: ## build|Release hardening: pinned images, govulncheck, SBOM, image scan (docker)
 	@echo "=== Immutable base image digests ==="
@@ -138,7 +143,7 @@ proto-gen: ## build|Regenerate the protobuf frame code
 	@mkdir -p core/transport/v1/framespb
 	protoc --proto_path=proto --go_out=core/transport/v1/framespb --go_opt=Mframes.proto=govoice/core/transport/v1/framespb --go_opt=paths=source_relative frames.proto
 
-.PHONY: build test verify deadcode release-security proto-gen deploy-cloudflare
+.PHONY: build test verify deadcode demo-boundary release-security proto-gen deploy-cloudflare
 
 # Postgres storage tests (skipped by `make test`; run by the `postgres` job in .github/workflows/ci.yml,
 # which provides a service container and sets TEST_POSTGRES_DSN). Uses TEST_POSTGRES_DSN if set,
@@ -182,7 +187,7 @@ eval-agents-echo: ## free|Agent eval harness self-test on the echo provider, wit
 
 # Agent evals against a running server (make dev): export the management key first (the target never reads
 # or prints it): set -a; . .govoice-dev/dev.env; set +a. Cases: tools/eval/agents/cases, docs/operations/agent-evals.md.
-# The Smile Dental case is apart: make eval-agents CASES=tools/eval/agents/cases-dental (needs the dental demo and make dental-mcp).
+# The Smile Dental case is apart: make eval-agents CASES=demos/dental/eval (needs a seeded dental demo and make dental-mcp).
 # MCP tools run for real: an eval call executes the agent's selected tools with whatever arguments the model sends.
 # Point evals at agents whose tools hit test systems; GOVOICE_LIVE gates model cost only, not what tools do.
 EVAL_ADMIN ?= http://127.0.0.1:9090
@@ -213,12 +218,19 @@ mcp-test: ## dev|Run the MCP test servers on 127.0.0.1:18765 (/ok /open /fail/* 
 	go run ./cmd/mcptest -addr 127.0.0.1:18765 -blackhole-addr 127.0.0.1:18766
 
 dental-mcp: ## dev|Run the Smile Dental demo MCP server on :18767 (token: dev-dental-token)
-	DENTAL_MCP_TOKEN=$${DENTAL_MCP_TOKEN:-dev-dental-token} PORT=18767 go run ./cmd/dental-mcp
+	DENTAL_MCP_TOKEN=$${DENTAL_MCP_TOKEN:-dev-dental-token} PORT=18767 go run ./demos/dental/cmd/dental-mcp
 
 atlas-mcp: ## dev|Run the Atlas Travel demo MCP server on :18768 (token: dev-atlas-token)
-	ATLAS_MCP_TOKEN=$${ATLAS_MCP_TOKEN:-dev-atlas-token} PORT=18768 go run ./cmd/atlas-mcp
+	ATLAS_MCP_TOKEN=$${ATLAS_MCP_TOKEN:-dev-atlas-token} PORT=18768 go run ./demos/atlas/cmd/atlas-mcp
 
-.PHONY: mcp-test dental-mcp atlas-mcp admin-link
+seed: ## dev|Seed a demo into the dev stack: make seed DEMO=atlas
+	@set -a; . ./.govoice-dev/dev.env 2>/dev/null || true; set +a; \
+	DENTAL_MCP_TOKEN=$${DENTAL_MCP_TOKEN:-dev-dental-token} ATLAS_MCP_TOKEN=$${ATLAS_MCP_TOKEN:-dev-atlas-token} \
+	go run ./demos/seed --server "$${GOVOICE_ADMIN_URL:-http://127.0.0.1:$${ADMIN_PORT:-9090}}" --demo "$(DEMO)" \
+	  --mcp scheduling=http://127.0.0.1:18767 --mcp inventory=http://127.0.0.1:18768 \
+	  --http-base http://127.0.0.1:18768 --yes
+
+.PHONY: mcp-test dental-mcp atlas-mcp seed admin-link
 
 dev: ## dev|Run the server and admin UI with generated secrets and a seeded Dev Assistant
 	@./scripts/dev.sh up

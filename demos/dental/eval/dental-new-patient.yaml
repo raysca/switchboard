@@ -1,0 +1,16 @@
+# Not in the default `make eval-agents` run (its own directory). Run: make eval-agents CASES=demos/dental/eval
+# Needs the Smile Dental demo seeded (`make seed DEMO=dental`) and its MCP server (`make dental-mcp`).
+# Five tool calls. Measured on the offline model (llama3.2:3b, 2026-10-24): 0 of 15 runs pass, because it writes the
+# tool calls as text. Expect it to fail on -providers offline; see docs/operations/agent-evals.md.
+name: dental-new-patient-books
+agent: Smile Dental front desk
+caller:
+  persona:
+    who: "Jane Doe, who has never been to Smile Dental, phone 555 0100"
+    goal: "register and book a cleaning any weekday next week, accept the first slot offered"
+    max_turns: 10
+expect:
+  path: [front, new]
+  tools_called: [transfer_to_new_patient, register_patient, find_slots, book_appointment, end_call]
+  tools_not_called: [transfer_to_returning_patient]
+  end_reason: ended_by_agent

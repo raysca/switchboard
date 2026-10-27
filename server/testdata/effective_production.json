@@ -34,9 +34,6 @@
  "Secrets": {
   "Dir": ""
  },
- "Demo": {
-  "AutoInstall": ""
- },
  "Storage": {
   "Dialect": "postgres",
   "DSNEnv": ""

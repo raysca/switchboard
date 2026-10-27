@@ -118,11 +118,7 @@ type Server struct {
 	nextCallID    atomic.Uint64
 	textTurns     atomic.Uint64
 	pruneStop     chan struct{}
-	demoSF        singleflight.Group            // collapses overlapping installs of one demo
-	stopDemo      context.CancelFunc            // cancels the startup demo install; guarded by mu
-	stopFlights   map[string]context.CancelFunc // cancels each running install by demo name; guarded by mu
-	demoWG        sync.WaitGroup                // every running demo install goroutine
-	recSink       *record.LocalSink             // nil unless recording.enabled
+	recSink       *record.LocalSink // nil unless recording.enabled
 }
 
 type activeCall struct {
@@ -1094,9 +1090,6 @@ func (s *Server) Start() error {
 	s.pruneStop = make(chan struct{})
 	go s.pruneTimelines()
 
-	if s.cfg.Demo.AutoInstall != "" {
-		s.autoInstallDemo()
-	}
 	s.ready.Store(true)
 	if err := s.startEvalWorker(); err != nil {
 		return err
@@ -1119,7 +1112,6 @@ func (s *Server) Logger() *slog.Logger { return s.logger }
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
 	s.shuttingDown.Store(true)
-	s.stopDemoLocked()
 	s.mu.Unlock()
 	s.ready.Store(false)
 	s.metrics.Draining.Store(1)
@@ -1243,13 +1235,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	if s.probeServer != nil {
 		_ = s.probeServer.Close()
-	}
-	// The install must not run against a closed store. A short grace on a context that survives an
-	// already-expired shutdown ctx: the install was cancelled above and ends promptly.
-	graceCtx, graceCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-	defer graceCancel()
-	if !s.waitDemo(graceCtx) {
-		s.logger.Warn("demo install still running at shutdown")
 	}
 	s.closeManagement()
 	if s.otel != nil { // after calls drained so their final spans are flushed

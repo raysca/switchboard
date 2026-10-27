@@ -116,9 +116,9 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			api.WriteError(w, http.StatusInternalServerError, "internal_error", "agent could not be loaded", requestID)
 		}
 	default:
-		// The live-call routes sit under /api/v1/sessions, so they and demo are matched before the prefix table.
+		// The demo install endpoints moved to demos/seed; keep a fixed 410 for one release.
 		if r.URL.Path == "/api/v1/demo" || strings.HasPrefix(r.URL.Path, "/api/v1/demo/") {
-			s.handleDemo(w, r, requestID)
+			api.WriteError(w, http.StatusGone, "demo_moved", "demo installs moved to demos/seed; see demos/README.md", requestID)
 			return
 		}
 		if id, action, ok := liveCallRoute(r.URL.Path); ok {

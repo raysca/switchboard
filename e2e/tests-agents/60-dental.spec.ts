@@ -1,36 +1,70 @@
 import { test, expect, LIVE } from "../lib/agents-stack";
 import type { Stack } from "../lib/agents-stack";
+import { agentsStackFile, readStack } from "../lib/stack";
 import { step } from "../lib/evidence";
-import { api, botReplies, connectAdmin, openAgentTest, startCall, stepCard } from "../lib/agents-helpers";
+import { api, botReplies, connectAdmin, openAgent, openAgentTest, openAgentsList, startCall, stepCard } from "../lib/agents-helpers";
 import { createEchoDentalVariant, toolTurn, turn } from "../lib/dental-helpers";
+import { seedDemo } from "../lib/seed";
 
-// What this verifies: the demo installs from the Dashboard; a call is handed off between steps (front
-// desk -> New patient / Returning patient), the new step takes the next turn, its MCP tools run
-// against the real dental server, end_call hangs the call up, and the Calls page shows the path,
-// the step-labelled transcript and how it ended. NOT verified here: that the transfer note (the
-// caller's name) reaches the new step's greeting. The fake LLM sends no note; that plumbing is
-// covered by Go unit tests and is to be verified in the live rehearsal.
+// What this verifies: the standalone seed CLI (bin/seed, from demos/seed) publishes the demo on a
+// clean server; a call is handed off between steps (front desk -> New patient / Returning patient),
+// the new step takes the next turn, its MCP tools run against the real dental server, end_call hangs
+// the call up, and the Calls page shows the path, the step-labelled transcript and how it ended.
+// NOT verified here: that the transfer note (the caller's name) reaches the new step's greeting.
+// The fake LLM sends no note; that plumbing is covered by Go unit tests and is to be verified in
+// the live rehearsal.
 //
-// The dentistry demo, end to end: Load demo from the Dashboard (the real dental MCP server from
-// cmd/dental-mcp, started by the global setup), then two fake-provider calls on a variant of the
-// installed agent. Fake only: the installed agent's xai/elevenlabs stages cannot take a fake call.
+// The dentistry demo, end to end: seeded in beforeAll (the real dental MCP server from
+// demos/dental/cmd/dental-mcp, started by the global setup), then two fake-provider calls on a
+// variant of the seeded agent. Fake only: the seeded agent's xai/elevenlabs stages cannot take a
+// fake call. Seeding here, not in global setup, keeps 05-first-run's empty store and 50-screens'
+// archive-every-agent assumption intact.
 test.describe.configure({ mode: "serial" });
 test.skip(LIVE, "the dentistry demo runs against the fake stack only");
 
-test("load the demo from the Dashboard: three steps, two handoffs", async ({ page, stack }) => {
-  await connectAdmin(page, stack);
-  await expect(page.getByRole("heading", { name: "Dentistry demo" })).toBeVisible();
-  await page.getByRole("button", { name: "Load demo" }).click();
-  await expect(page.getByRole("link", { name: "Smile Dental front desk" })).toBeVisible();
-  await step(page, "dentistry demo loaded");
+const AGENT = "Smile Dental front desk";
 
+type StoredDental = {
+  id: string;
+  name: string;
+  current_version: {
+    config: { start: string; steps: { name: string; end_call?: boolean }[]; handoffs: unknown[] };
+    mcp_tools: unknown[];
+  };
+};
+
+test.beforeAll(() => {
+  if (LIVE) return; // the tests are skipped: the seeded stages need the fake stack's placeholder keys
+  seedDemo(readStack(agentsStackFile), "dental");
+});
+
+test("the CLI seed publishes the demo: three steps, two handoffs and seven tool pins", async ({ page, stack }) => {
   const agents = await api<{ data: { id: string; name: string }[] }>(stack, "/agents");
-  const installed = agents.data.find((f) => f.name === "Smile Dental front desk")!;
-  const { config, mcp_tools } = await createEchoDentalVariant(stack, installed.id);
+  const live = agents.data.filter((a) => a.name === AGENT);
+  expect(live, `bin/seed leaves exactly one live ${AGENT} agent`).toHaveLength(1);
+  const { data: stored } = await api<{ data: StoredDental }>(stack, `/agents/${live[0].id}`);
+  const { config, mcp_tools } = stored.current_version;
+  expect(stored.name).toBe(AGENT);
   expect(config.steps).toHaveLength(3);
   expect(config.handoffs).toHaveLength(2);
-  expect(config.steps.every((s: any) => s.end_call)).toBe(true);
+  expect(config.steps.every((s) => s.end_call)).toBe(true);
   expect(mcp_tools).toHaveLength(7);
+
+  // The seeded agent is in the list and its three steps and two handoffs draw on the canvas;
+  // the demo card that used to install it from the Dashboard is gone.
+  await connectAdmin(page, stack);
+  await openAgentsList(page);
+  await expect(page.getByRole("link", { name: AGENT, exact: true })).toBeVisible();
+  await step(page, "dentistry demo seeded");
+
+  await openAgent(page, AGENT);
+  const canvas = page.getByTestId("agent-canvas");
+  await expect(canvas).toBeVisible();
+  await expect(canvas.locator(".react-flow__node")).toHaveCount(3);
+  await expect(canvas.locator(".react-flow__edge")).toHaveCount(2);
+  await step(page, "dentistry demo canvas");
+
+  await createEchoDentalVariant(stack, live[0].id);
 });
 
 test("a new patient call: handed off between steps, MCP tools called, hung up by end_call", async ({ page, stack }) => {

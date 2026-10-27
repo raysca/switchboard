@@ -107,17 +107,36 @@ jobs:
       - run: make deadcode
 
   # Builds the production image and probes it from outside the container with no provider key:
-  # /ready, /metrics, loopback-only admin, xAI speech compiled in, clean SIGTERM exit.
+  # /ready, /metrics, loopback-only admin, xAI speech compiled in, clean SIGTERM exit. The server
+  # image is clean-room: it ships no demo MCP server. The same job builds the optional demo assets
+  # (demos/ extraction): the seed client and each demo MCP image, with no provider key and no cloud
+  # credentials, proving they build, refuse to run without their bearer token, and answer /health.
   image-smoke:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - run: deploy/smoke.sh
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: The seed client builds
+        run: go build -o /tmp/seed ./demos/seed
       - name: dental-mcp image builds, refuses to run without a token, answers /health
         run: |
-          docker build -q -f deploy/Dockerfile.dental-mcp -t dental-mcp:ci .
+          docker build -q -f demos/dental/deploy/cloudrun/Dockerfile.mcp -t dental-mcp:ci .
           ! docker run --rm dental-mcp:ci 2>/dev/null
           docker run -d --name dmcp -p 18767:8081 -e DENTAL_MCP_TOKEN=ci-token-ci-token-ci dental-mcp:ci
           for i in $(seq 1 20); do curl -fsS http://127.0.0.1:18767/health && break || sleep 1; done
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:18767/mcp)" = 401
+          docker rm -f dmcp
+      - name: atlas-mcp image builds, binds every interface, refuses without a token
+        run: |
+          docker build -q -f demos/atlas/deploy/cloudrun/Dockerfile.mcp -t atlas-mcp:ci .
+          ! docker run --rm atlas-mcp:ci 2>/dev/null
+          docker run -d --name amcp -p 18768:8081 -e ATLAS_MCP_TOKEN=ci-token-ci-token-ci atlas-mcp:ci
+          for i in $(seq 1 20); do curl -fsS http://127.0.0.1:18768/health && break || sleep 1; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:18768/mcp)" = 401
+          # the /api fixture tools are public by design and shared with the HTTP tools
+          test "$(curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:18768/api/weather?city=london')" = 200
+          docker rm -f amcp

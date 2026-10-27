@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 out=$(go run golang.org/x/tools/cmd/deadcode@v0.52.0 -tags xaispeech -test=false \
-  ./cmd/... ./examples/... ./tools/... ./offline/cmd/...)
+  ./cmd/... ./examples/... ./tools/... ./offline/cmd/... ./demos/...)
 # "path/file.go:12:6: unreachable func: Name" -> "path/file.go Name" (line moves are not new findings)
 norm=$(printf '%s\n' "$out" | sed -nE 's/^([^:]+):[0-9]+:[0-9]+: unreachable func: (.+)$/\1 \2/p' | sort -u)
 allow=$(sed -E -e '/^[[:space:]]*(#|$)/d' -e 's/[[:space:]]+#.*$//' scripts/deadcode-allow.txt)

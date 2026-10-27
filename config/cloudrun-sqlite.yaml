@@ -1,12 +1,14 @@
-# Cloud Run demo on SQLite: ONE service, ONE public port (8080), ONE instance. The management API
-# and the admin UI are served on it behind the management key (public_admin). Agents and call
-# history live in a SQLite file in the container's writable /tmp, which is wiped on every deploy,
-# restart and cold start — acceptable for a throwaway demo with no Cloud SQL bill. The dentistry
-# demo is (re)installed by demo.auto_install on every start, which is what repopulates the store.
+# Cloud Run on SQLite: ONE service, ONE public port (8080), ONE instance. The management API and the
+# admin UI are served on it behind the management key (public_admin). Agents and call history live in
+# a SQLite file in the container's writable /tmp, which is wiped on every deploy, restart and cold
+# start — acceptable for a throwaway deployment with no Cloud SQL bill. The server is clean-room and
+# starts with an EMPTY store: it installs no demo. Demos are optional and are seeded afterwards by the
+# separate demo pipeline (.github/workflows/deploy-demo.yml); a deployment whose demos must survive a
+# restart needs Postgres (config/cloudrun.yaml), not this profile.
 profile: production
 
 public_listen_addr: "0.0.0.0:8080"
-admin_listen_addr: "127.0.0.1:9090"   # unused by the demo; required by the config checks
+admin_listen_addr: "127.0.0.1:9090"   # unused by the single-port deployment; required by the config checks
 probe_listen_addr: ""
 
 public_admin:
@@ -96,8 +98,3 @@ warmup:
   on_start: false
 
 idle: {user_timeout: 30s, max_prompts: 2}
-
-# The dentistry demo installs itself on every start (needs DENTAL_MCP_URL and MCP_TOKEN_DENTAL).
-# Delete this block to make it a button in the admin UI only.
-demo:
-  auto_install: "dental"

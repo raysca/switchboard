@@ -9,7 +9,7 @@ import (
 )
 
 // Characterization of the management prefix routing: which handler serves a path,
-// the 503 a missing handler gives, and that live-call and demo paths win over /sessions.
+// the 503 a missing handler gives, and that live-call paths win over /sessions.
 func TestManagementPrefixRouting(t *testing.T) {
 	type install func(*Server, http.Handler)
 	prefixes := []struct {
@@ -61,7 +61,23 @@ func TestManagementPrefixRouting(t *testing.T) {
 	}
 }
 
-func TestManagementLiveCallAndDemoRoutesWinOverSessions(t *testing.T) {
+func TestDemoInstallEndpointIsGone(t *testing.T) {
+	s := apiTestServer(t)
+	enableTestManagement(t, s)
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		w := apiRequest(s, method, "/api/v1/demo", testMgmtKey, "")
+		if w.Code != http.StatusGone {
+			t.Fatalf("%s /api/v1/demo: %d %s", method, w.Code, w.Body)
+		}
+		var e api.ErrorResponse
+		_ = json.Unmarshal(w.Body.Bytes(), &e)
+		if e.Error.Code != "demo_moved" {
+			t.Fatalf("demo code %q", e.Error.Code)
+		}
+	}
+}
+
+func TestManagementLiveCallPathsWinOverSessions(t *testing.T) {
 	s := apiTestServer(t)
 	s.setSessionManagementAPI(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) }))
 	for _, action := range []string{"run", "context"} {
@@ -73,13 +89,5 @@ func TestManagementLiveCallAndDemoRoutesWinOverSessions(t *testing.T) {
 	if w := apiRequest(s, http.MethodGet, "/api/v1/sessions/x", testMgmtKey, ""); w.Code != http.StatusTeapot {
 		t.Fatalf("plain session path: %d", w.Code)
 	}
-	w := apiRequest(s, http.MethodGet, "/api/v1/demo", testMgmtKey, "")
-	if w.Code != http.StatusServiceUnavailable || w.Header().Get("X-Request-ID") == "" {
-		t.Fatalf("demo: %d %s", w.Code, w.Body)
-	}
-	var e api.ErrorResponse
-	_ = json.Unmarshal(w.Body.Bytes(), &e)
-	if e.Error.Code != "management_unavailable" {
-		t.Fatalf("demo code %q", e.Error.Code)
-	}
+
 }

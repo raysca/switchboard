@@ -9,13 +9,18 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Every secret name the deployed services and the bootstrap script must agree on.
-var gcpSecretNames = []string{"TOKEN_SECRET", "SWITCHBOARD_MANAGEMENT_API_KEY", "SWITCHBOARD_DATABASE_DSN", "xai-api-key", "elevenlabs-api-key", "google-api-key", "GOOGLE_SA_KEY", "DENTAL_MCP_TOKEN"}
+// Every secret name the clean-room server's manifest and the bootstrap script must agree on. Demo
+// tokens are NOT here: the server carries no demo secret; the bootstrap creates them for the demo
+// deployment and the demo Cloud Run manifests mount them.
+var gcpSecretNames = []string{"TOKEN_SECRET", "SWITCHBOARD_MANAGEMENT_API_KEY", "SWITCHBOARD_DATABASE_DSN", "SWITCHBOARD_SECRETS_KEY", "xai-api-key", "elevenlabs-api-key", "google-api-key", "GOOGLE_SA_KEY"}
+
+// The per-demo bearer tokens the bootstrap creates as deployment secrets and the demo pipeline reads.
+var gcpDemoTokenSecrets = []string{"DENTAL_MCP_TOKEN", "ATLAS_MCP_TOKEN"}
 
 // The placeholders the workflow's envsubst fills in; any other ${VAR} in a manifest is a typo.
 var gcpSample = map[string]string{
 	"REGION": "us-central1", "PROJECT_ID": "demo-proj", "IMAGE": "us-central1-docker.pkg.dev/demo-proj/switchboard/switchboard:abc123",
-	"MIN_INSTANCES": "1", "PROVIDER_ENV": "", "DENTAL_MCP_URL": "https://dental-mcp-abc.a.run.app/mcp",
+	"MIN_INSTANCES": "1", "PROVIDER_ENV": "",
 }
 
 type manifest struct {
@@ -74,14 +79,20 @@ func renderManifest(t *testing.T, path string) manifest {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(raw)
+	return parseManifest(t, path, string(raw), gcpSample)
+}
+
+// parseManifest expands ${VAR} placeholders from sample (any unknown placeholder fails) and decodes
+// the result with the Cloud Run service shape above.
+func parseManifest(t *testing.T, path, text string, sample map[string]string) manifest {
+	t.Helper()
 	for _, m := range regexp.MustCompile(`\$\{([A-Z_]+)\}`).FindAllStringSubmatch(text, -1) {
-		if _, ok := gcpSample[m[1]]; !ok {
+		if _, ok := sample[m[1]]; !ok {
 			t.Fatalf("%s uses unknown placeholder ${%s}", path, m[1])
 		}
 	}
 	var m manifest
-	if err := yaml.Unmarshal([]byte(os.Expand(text, func(k string) string { return gcpSample[k] })), &m); err != nil {
+	if err := yaml.Unmarshal([]byte(os.Expand(text, func(k string) string { return sample[k] })), &m); err != nil {
 		t.Fatalf("%s: %v", path, err)
 	}
 	return m
@@ -116,7 +127,7 @@ func TestVoiceServiceManifest(t *testing.T) {
 		}
 	}
 	if _, ok := a["run.googleapis.com/cloudsql-instances"]; ok {
-		t.Error("the SQLite demo mounts no Cloud SQL instance")
+		t.Error("the SQLite profile mounts no Cloud SQL instance")
 	}
 	if spec.TimeoutSeconds != 3600 || spec.ContainerConcurrency != 20 || c.Resources.Limits["cpu"] != "2" || c.Resources.Limits["memory"] != "2Gi" {
 		t.Errorf("sizing: timeout=%d concurrency=%d limits=%v", spec.TimeoutSeconds, spec.ContainerConcurrency, c.Resources.Limits)
@@ -132,8 +143,8 @@ func TestVoiceServiceManifest(t *testing.T) {
 	}
 	want := map[string]string{
 		"TOKEN_SECRET": "TOKEN_SECRET", "GOVOICE_MANAGEMENT_API_KEY": "SWITCHBOARD_MANAGEMENT_API_KEY",
-		"XAI_API_KEY": "xai-api-key", "ELEVENLABS_API_KEY": "elevenlabs-api-key", "GOOGLE_API_KEY": "google-api-key",
-		"MCP_TOKEN_DENTAL": "DENTAL_MCP_TOKEN",
+		"SWITCHBOARD_SECRETS_KEY": "SWITCHBOARD_SECRETS_KEY",
+		"XAI_API_KEY":             "xai-api-key", "ELEVENLABS_API_KEY": "elevenlabs-api-key", "GOOGLE_API_KEY": "google-api-key",
 	}
 	got := secretEnv(t, m)
 	for env, secret := range want {
@@ -153,32 +164,20 @@ func TestVoiceServiceManifest(t *testing.T) {
 		t.Errorf("GOOGLE_APPLICATION_CREDENTIALS = %q", env["GOOGLE_APPLICATION_CREDENTIALS"])
 	}
 	if env["GOVOICE_DATABASE_DSN"] != "/tmp/switchboard.db" {
-		t.Errorf("the SQLite demo database is a tmpfs file, not a secret: GOVOICE_DATABASE_DSN = %q", env["GOVOICE_DATABASE_DSN"])
+		t.Errorf("the SQLite database is a tmpfs file, not a secret: GOVOICE_DATABASE_DSN = %q", env["GOVOICE_DATABASE_DSN"])
 	}
 	if len(spec.Volumes) != 1 || spec.Volumes[0].Secret.SecretName != "GOOGLE_SA_KEY" || c.VolumeMounts[0].MountPath != "/secrets/google" {
 		t.Errorf("the Google key must be a mounted secret file: %+v %+v", spec.Volumes, c.VolumeMounts)
 	}
-	if env["DENTAL_MCP_URL"] != "https://dental-mcp-abc.a.run.app/mcp" {
-		t.Errorf("env = %v", env)
+	// Clean-room: the server manifest carries no demo URL, demo token or demo service account.
+	raw, err := os.ReadFile("../deploy/gcp/switchboard.service.yaml")
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestDentalMCPServiceManifest(t *testing.T) {
-	m := renderManifest(t, "../deploy/gcp/dental-mcp.service.yaml")
-	a, spec := m.Spec.Template.Metadata.Annotations, m.Spec.Template.Spec
-	c := spec.Containers[0]
-	if a["autoscaling.knative.dev/minScale"] != "0" || a["autoscaling.knative.dev/maxScale"] != "1" {
-		t.Errorf("scaling: %v (in-memory data: at most one instance, scale to zero)", a)
-	}
-	if got := secretEnv(t, m); got["DENTAL_MCP_TOKEN"] != "DENTAL_MCP_TOKEN" || len(got) != 1 {
-		t.Errorf("secrets = %v", got)
-	}
-	if c.Ports[0].ContainerPort != 8081 || c.StartupProbe.HTTPGet.Path != "/health" || c.StartupProbe.HTTPGet.Port != 8081 {
-		t.Errorf("port/probe: %+v %+v", c.Ports, c.StartupProbe)
-	}
-	// The public MCP service must not run as the account that can read every provider key.
-	if spec.ServiceAccountName != "dental-mcp-runtime@demo-proj.iam.gserviceaccount.com" {
-		t.Errorf("service account = %q", spec.ServiceAccountName)
+	for _, banned := range []string{"DENTAL_MCP_URL", "ATLAS_DEMO_URL", "MCP_TOKEN_", "DENTAL_MCP_TOKEN", "dental-mcp-runtime", "demo.auto_install"} {
+		if strings.Contains(string(raw), banned) {
+			t.Errorf("the server manifest must not carry demo asset %q", banned)
+		}
 	}
 }
 
@@ -187,9 +186,27 @@ func TestManifestSecretsAreTheOnesTheBootstrapCreates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read bootstrap.sh: %v", err)
 	}
-	for _, name := range gcpSecretNames {
+	for _, name := range append(append([]string{}, gcpSecretNames...), gcpDemoTokenSecrets...) {
 		if !strings.Contains(string(boot), name) {
 			t.Errorf("bootstrap.sh does not create secret %s", name)
+		}
+	}
+	// The encrypted secret store needs the keyring format, not a bare random token.
+	if !strings.Contains(string(boot), "put_secret SWITCHBOARD_SECRETS_KEY keyring") {
+		t.Error("bootstrap.sh must create SWITCHBOARD_SECRETS_KEY in the keyring format (id:base64key)")
+	}
+}
+
+// The demo deployment assets moved out of deploy/: the server deployment must not reference them.
+func TestServerDeploymentShipsNoDemoAssets(t *testing.T) {
+	for _, gone := range []string{"../deploy/Dockerfile.dental-mcp", "../deploy/gcp/dental-mcp.service.yaml"} {
+		if _, err := os.Stat(gone); err == nil {
+			t.Errorf("%s must move under demos/<name>/deploy", gone)
+		}
+	}
+	for _, path := range []string{"../demos/dental/deploy/cloudrun/Dockerfile.mcp", "../demos/atlas/deploy/cloudrun/Dockerfile.mcp"} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("missing demo asset %s: %v", path, err)
 		}
 	}
 }
@@ -224,7 +241,7 @@ func TestProviderEnvInjectionKeepsTheManifestValid(t *testing.T) {
 				t.Errorf("withKeys=%v: env %s = %q", withKeys, n, got[n])
 			}
 		}
-		if got["TOKEN_SECRET"] != "TOKEN_SECRET" || got["MCP_TOKEN_DENTAL"] != "DENTAL_MCP_TOKEN" {
+		if got["TOKEN_SECRET"] != "TOKEN_SECRET" || got["SWITCHBOARD_SECRETS_KEY"] != "SWITCHBOARD_SECRETS_KEY" {
 			t.Errorf("withKeys=%v: the fixed secrets were lost: %v", withKeys, got)
 		}
 	}

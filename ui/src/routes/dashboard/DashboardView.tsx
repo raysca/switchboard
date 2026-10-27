@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
 import type { ApiClient, ApiError } from "../../api/client";
-import { DemoCard } from "./DemoCard";
 import { ReplyChart } from "./ReplyChart";
 import {
   DataTable,
@@ -313,7 +312,6 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
               </li>
             </ul>
           </section>
-          <DemoCard client={client} />
         </div>
       </div>
     </>

@@ -1,0 +1,31 @@
+# The Atlas Travel Concierge demo MCP server (demos/atlas/cmd/atlas-mcp): one static binary, fake
+# fixture data, no secrets baked in. It serves the MCP tools on /mcp and the two HTTP fixture tools
+# under /api. The bearer token (ATLAS_MCP_TOKEN) is supplied at run time only.
+FROM golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS builder
+WORKDIR /src
+COPY go.work go.work.sum go.mod go.sum ./
+COPY core/go.mod core/go.sum* ./core/
+COPY providers/cartesia/go.mod providers/cartesia/go.sum* ./providers/cartesia/
+COPY providers/deepgram/go.mod providers/deepgram/go.sum* ./providers/deepgram/
+COPY providers/echo/go.mod providers/echo/go.sum* ./providers/echo/
+COPY providers/elevenlabs/go.mod providers/elevenlabs/go.sum* ./providers/elevenlabs/
+COPY providers/google/go.mod providers/google/go.sum* ./providers/google/
+COPY providers/nvidia/go.mod providers/nvidia/go.sum* ./providers/nvidia/
+COPY providers/openai/go.mod providers/openai/go.sum* ./providers/openai/
+COPY providers/xai/go.mod providers/xai/go.sum* ./providers/xai/
+COPY offline/go.mod offline/go.sum* ./offline/
+COPY server/go.mod server/go.sum ./server/
+RUN go work sync
+COPY . .
+ENV CGO_ENABLED=0
+RUN go build -trimpath -ldflags="-s -w" -o /out/atlas-mcp ./demos/atlas/cmd/atlas-mcp
+
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+COPY --from=builder /out/atlas-mcp /atlas-mcp
+USER 65532:65532
+EXPOSE 8081
+# The binary binds loopback by default (the /api fixtures are deliberately open). A container must
+# listen on every interface, so the address is 0.0.0.0:$PORT with PORT=8081.
+ENV PORT=8081 \
+    ATLAS_MCP_ADDR=0.0.0.0:8081
+ENTRYPOINT ["/atlas-mcp"]

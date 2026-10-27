@@ -2,7 +2,7 @@
 
 Cases for the agents `make dev` seeds. `make eval-agents` runs them on the offline model (Ollama); `make eval-agents-live` on each agent's own model (paid). Format and flags: `docs/operations/agent-evals.md`.
 
-The dental case lives in `../cases-dental`, apart, because it needs the Smile Dental demo installed and `make dental-mcp` running, and a 3B model fails it (0 of 15): `make eval-agents CASES=tools/eval/agents/cases-dental`.
+The dental case lives with the demo, in `demos/dental/eval`, apart from these, because it needs the Smile Dental demo seeded and `make dental-mcp` running, and a 3B model fails it (0 of 15): `make eval-agents CASES=demos/dental/eval`.
 
 - `say` and `never_say` scan the agent's lines joined with `\n`, so a pattern can anchor on a line break.
 - `max_turns` is the stored turn count: it includes the greeting a step speaks after a handoff.

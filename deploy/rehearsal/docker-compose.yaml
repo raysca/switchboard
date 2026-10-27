@@ -1,6 +1,7 @@
-# Rehearse the Cloud Run deployment on your machine with REAL providers (spends a little credit).
-# 1. cp .env.example .env and fill it in    2. cp your Google service-account JSON to ./google.json (chmod 644)
-# 3. docker compose -f deploy/rehearsal/docker-compose.yaml up --build    4. open http://localhost:8080
+# Rehearse the clean-room Cloud Run deployment on your machine with REAL providers (spends a little
+# credit). 1. cp .env.example .env and fill it in    2. cp your Google service-account JSON to
+# ./google.json (chmod 644)    3. docker compose -f deploy/rehearsal/docker-compose.yaml up --build
+# 4. open http://localhost:8080 — the store starts empty; demos are seeded separately (see README.md).
 # For a no-cost plumbing check use placeholder values in .env: the server only needs the variables to exist.
 services:
   govoice:
@@ -10,8 +11,9 @@ services:
     environment:
       GOVOICE_DATABASE_DSN: postgres://switchboard:rehearsal@postgres:5432/switchboard?sslmode=disable
       GOOGLE_APPLICATION_CREDENTIALS: /secrets/google.json
-      DENTAL_MCP_URL: http://127.0.0.1:8081/mcp
-      MCP_TOKEN_DENTAL: ${DENTAL_MCP_TOKEN}
+      # The encrypted secret store: seed writes the demo MCP token here, so the server carries no
+      # demo token in its environment. Required for the optional demo seed step (see README.md).
+      SWITCHBOARD_SECRETS_KEY: "${SWITCHBOARD_SECRETS_KEY:?set SWITCHBOARD_SECRETS_KEY in .env (k1: plus 32 base64 bytes)}"
     volumes:
       - ./server.yaml:/etc/rehearsal/server.yaml:ro
       - ./google.json:/secrets/google.json:ro
@@ -25,13 +27,6 @@ services:
     environment: {POSTGRES_USER: switchboard, POSTGRES_PASSWORD: rehearsal, POSTGRES_DB: switchboard}
     tmpfs: [/var/lib/postgresql/data]
     healthcheck: {test: ["CMD-SHELL", "pg_isready -U switchboard"], interval: 2s, timeout: 3s, retries: 30}
-  dental-mcp:
-    build: {context: ../.., dockerfile: deploy/Dockerfile.dental-mcp}
-    network_mode: "service:govoice"          # 127.0.0.1:8081 for the server, as the loopback MCP policy requires
-    environment:
-      DENTAL_MCP_TOKEN: ${DENTAL_MCP_TOKEN}
-    read_only: true
-    cap_drop: [ALL]
   proxy:
     image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
     ports: ["127.0.0.1:8080:8080"]

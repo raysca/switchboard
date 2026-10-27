@@ -1,0 +1,38 @@
+# Smile Dental demo MCP server on Cloud Run. Deployed by demos/dental/deploy/cloudrun/deploy.sh or
+# by .github/workflows/deploy-demo.yml; it is not part of the server deployment. In-memory fixture
+# data, so at most one instance and scale to zero. Public: the server reaches it over HTTPS with
+# the demo bearer token, which lives in the DENTAL_MCP_TOKEN secret (never in this file).
+# Placeholders (${...}) are filled by deploy.sh; server/deploy_contract_test.go checks them.
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: dental-mcp
+  labels:
+    cloud.googleapis.com/location: ${REGION}
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "1"
+    spec:
+      serviceAccountName: ${DEMO_RUNTIME_SA}
+      containerConcurrency: 40
+      timeoutSeconds: 300
+      containers:
+        - image: ${IMAGE}
+          ports:
+            - containerPort: 8081
+          resources:
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8081
+            periodSeconds: 2
+            failureThreshold: 10
+          env:
+            - name: DENTAL_MCP_TOKEN
+              valueFrom: {secretKeyRef: {name: DENTAL_MCP_TOKEN, key: latest}}

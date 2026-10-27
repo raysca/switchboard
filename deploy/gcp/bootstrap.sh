@@ -16,6 +16,12 @@
 # history survive deploys. The instance, database and user are created once; the password is generated here.
 # If you ever recreate the instance or its user, delete the SWITCHBOARD_DATABASE_DSN secret first (gcloud secrets delete),
 # or this script keeps the old password and the service cannot connect.
+#
+# The server is deployed clean-room: no demo is installed at start. Demos are optional and deployed by
+# .github/workflows/deploy-demo.yml. That pipeline reads the per-demo token secrets created here
+# (DENTAL_MCP_TOKEN, ATLAS_MCP_TOKEN) and the management key, so the deployer account is granted read
+# access to those three secrets. SWITCHBOARD_SECRETS_KEY enables the server's encrypted secret store,
+# which seed uses to store the demo MCP token; it is created once and mounted by the switchboard manifest.
 set -euo pipefail
 
 need() { [[ -n "${!1:-}" ]] || { echo "bootstrap: $1 is required" >&2; exit 2; }; }
@@ -35,8 +41,10 @@ AR_REPO="${AR_REPO:-switchboard}"
 SQL_INSTANCE="${SQL_INSTANCE:-switchboard-db}"
 SQL_CONNECTION="${PROJECT_ID}:${REGION}:${SQL_INSTANCE}"
 RUNTIME_SA="switchboard-runtime@${PROJECT_ID}.iam.gserviceaccount.com"
-MCP_SA="dental-mcp-runtime@${PROJECT_ID}.iam.gserviceaccount.com"   # the public MCP service: one secret only
 DEPLOYER_SA="switchboard-deployer@${PROJECT_ID}.iam.gserviceaccount.com"
+# The public demo MCP services run on a dedicated demo runtime account; it may read exactly the two
+# demo token secrets.
+DEMO_TOKEN_SECRETS="DENTAL_MCP_TOKEN ATLAS_MCP_TOKEN"
 DRY="${DRY_RUN:-}"
 
 # run prints the command and executes it unless DRY_RUN is set. Secrets never appear in arguments.
@@ -46,6 +54,7 @@ exists() { [[ -z "$DRY" ]] && "$@" >/dev/null 2>&1; }
 
 echo "== project ${PROJECT_ID}, region ${REGION}, repo ${GITHUB_REPO} =="
 if [[ -n "$DRY" ]]; then PROJECT_NUMBER="000000000000"; else PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"; fi
+DEMO_RUNTIME_SA="demo-mcp-runtime@${PROJECT_ID}.iam.gserviceaccount.com"
 
 echo "== APIs =="
 run gcloud services enable run.googleapis.com artifactregistry.googleapis.com secretmanager.googleapis.com \
@@ -57,7 +66,7 @@ exists gcloud artifacts repositories describe "$AR_REPO" --location "$REGION" --
   run gcloud artifacts repositories create "$AR_REPO" --repository-format=docker --location "$REGION" --project "$PROJECT_ID"
 
 echo "== service accounts =="
-for sa in switchboard-runtime dental-mcp-runtime switchboard-deployer; do
+for sa in switchboard-runtime switchboard-deployer demo-mcp-runtime; do
   exists gcloud iam service-accounts describe "${sa}@${PROJECT_ID}.iam.gserviceaccount.com" --project "$PROJECT_ID" ||
     run gcloud iam service-accounts create "$sa" --display-name "$sa" --project "$PROJECT_ID"
 done
@@ -70,9 +79,10 @@ exists gcloud sql databases describe switchboard --instance "$SQL_INSTANCE" --pr
   run gcloud sql databases create switchboard --instance "$SQL_INSTANCE" --project "$PROJECT_ID"
 
 echo "== secrets (created once; never rotated here) =="
-# put_secret NAME SOURCE: SOURCE is "env:VAR", "file:PATH", "random" or "dsn" (a fresh database password,
-# set on the Cloud SQL user, written as the connection URL). The value goes in on stdin or from a file;
+# put_secret NAME SOURCE: SOURCE is "env:VAR", "file:PATH", "random", "keyring" or "dsn" (a fresh database
+# password, set on the Cloud SQL user, written as the connection URL). The value goes in on stdin or from a file;
 # only the database password is a command argument (gcloud sql users has no stdin form), on this machine only.
+# "random" is a 32-byte hex token; "keyring" is the server's secrets-store format "id:base64key".
 # A secret that exists WITH an enabled version is left alone; one left without a version by an interrupted run gets one.
 put_secret() {
   local name="$1" src="$2" var
@@ -90,6 +100,7 @@ put_secret() {
     env:*)  var="${src#env:}"; printf %s "${!var}" | gcloud secrets versions add "$name" --data-file=- --project "$PROJECT_ID" >/dev/null ;;
     file:*) gcloud secrets versions add "$name" --data-file="${src#file:}" --project "$PROJECT_ID" >/dev/null ;;
     random) openssl rand -hex 32 | tr -d '\n' | gcloud secrets versions add "$name" --data-file=- --project "$PROJECT_ID" >/dev/null ;;
+    keyring) printf 'k1:%s' "$(openssl rand -base64 32 | tr -d '\n')" | gcloud secrets versions add "$name" --data-file=- --project "$PROJECT_ID" >/dev/null ;;
     dsn)
       local pw; pw="$(openssl rand -hex 24)"   # url-safe: the DSN is a URL
       if [[ -n "$(gcloud sql users list --instance "$SQL_INSTANCE" --filter='name=switchboard' --format='value(name)' --project "$PROJECT_ID")" ]]; then
@@ -109,7 +120,8 @@ put_secret GOOGLE_SA_KEY "file:${GOOGLE_SA_KEY_FILE}"
 put_secret TOKEN_SECRET random
 put_secret SWITCHBOARD_MANAGEMENT_API_KEY random   # mounted as GOVOICE_MANAGEMENT_API_KEY, the variable the server reads
 put_secret SWITCHBOARD_DATABASE_DSN dsn            # mounted as GOVOICE_DATABASE_DSN
-put_secret DENTAL_MCP_TOKEN random
+put_secret SWITCHBOARD_SECRETS_KEY keyring         # enables the server's encrypted secret store (seed writes demo tokens there)
+for s in $DEMO_TOKEN_SECRETS; do put_secret "$s" random; done   # per-demo bearer tokens for the demo MCP services, never generated by the workflow
 # More providers: optional. A key that is set (or whose secret already exists) is mounted into the service.
 PROVIDER_SECRETS=""
 # has_version: the secret exists with an enabled version (a secret without one would fail the deploy).
@@ -120,13 +132,18 @@ for v in OPENAI_API_KEY DEEPGRAM_API_KEY CARTESIA_API_KEY NVIDIA_API_KEY; do
 done
 
 echo "== who may read what =="
-for s in xai-api-key elevenlabs-api-key google-api-key GOOGLE_SA_KEY TOKEN_SECRET SWITCHBOARD_MANAGEMENT_API_KEY SWITCHBOARD_DATABASE_DSN DENTAL_MCP_TOKEN $PROVIDER_SECRETS; do
+for s in xai-api-key elevenlabs-api-key google-api-key GOOGLE_SA_KEY TOKEN_SECRET SWITCHBOARD_MANAGEMENT_API_KEY SWITCHBOARD_DATABASE_DSN SWITCHBOARD_SECRETS_KEY $PROVIDER_SECRETS; do
   run gcloud secrets add-iam-policy-binding "$s" --member="serviceAccount:${RUNTIME_SA}" --role=roles/secretmanager.secretAccessor --project "$PROJECT_ID" --condition=None
 done
-# The public MCP service runs as its own account and reads only its bearer token.
-run gcloud secrets add-iam-policy-binding DENTAL_MCP_TOKEN --member="serviceAccount:${MCP_SA}" --role=roles/secretmanager.secretAccessor --project "$PROJECT_ID" --condition=None
-# The deployer reads only the management key (the smoke test logs in with it); never a provider key.
-run gcloud secrets add-iam-policy-binding SWITCHBOARD_MANAGEMENT_API_KEY --member="serviceAccount:${DEPLOYER_SA}" --role=roles/secretmanager.secretAccessor --project "$PROJECT_ID" --condition=None
+# The dedicated public demo MCP runtime reads only its demo token.
+for s in $DEMO_TOKEN_SECRETS; do
+  run gcloud secrets add-iam-policy-binding "$s" --member="serviceAccount:${DEMO_RUNTIME_SA}" --role=roles/secretmanager.secretAccessor --project "$PROJECT_ID" --condition=None
+done
+# The deployer reads the management key (the smoke test and the demo seed log in with it) and the
+# per-demo token secrets; never a provider key or the server's secrets key.
+for s in SWITCHBOARD_MANAGEMENT_API_KEY $DEMO_TOKEN_SECRETS; do
+  run gcloud secrets add-iam-policy-binding "$s" --member="serviceAccount:${DEPLOYER_SA}" --role=roles/secretmanager.secretAccessor --project "$PROJECT_ID" --condition=None
+done
 
 echo "== Cloud SQL access =="
 # The service connects through the Cloud Run Cloud SQL mount; the deployer needs the same role to attach it.
@@ -137,7 +154,7 @@ done
 echo "== deployer permissions =="
 run gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:${DEPLOYER_SA}" --role=roles/run.admin --condition=None
 run gcloud artifacts repositories add-iam-policy-binding "$AR_REPO" --location "$REGION" --member="serviceAccount:${DEPLOYER_SA}" --role=roles/artifactregistry.writer --project "$PROJECT_ID"
-for sa in "$RUNTIME_SA" "$MCP_SA"; do
+for sa in "$RUNTIME_SA" "$DEMO_RUNTIME_SA"; do
   run gcloud iam service-accounts add-iam-policy-binding "$sa" --member="serviceAccount:${DEPLOYER_SA}" --role=roles/iam.serviceAccountUser --project "$PROJECT_ID"
 done
 

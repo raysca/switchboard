@@ -1,17 +1,18 @@
 # Local rehearsal of the Cloud Run deployment (deploy/rehearsal/docker-compose.yaml).
 # This is config/cloudrun.yaml with exactly three differences, enforced by
 # server/deploy_contract_test.go (TestRehearsalConfigOnlyDiffersWhereItMust):
-#   profile: development      (so the dental MCP server may be reached over loopback http)
+#   profile: development      (a local MCP fixture kept beside the server needs loopback http)
 #   tls.trusted_proxies       (the compose network instead of Cloud Run's front end)
 #   mcp                       (allow_local_http + a short timeout)
 # Everything else must stay identical to the real thing.
 # Cloud Run: ONE service, ONE public port (8080). The management API and the admin UI are served
-# on it behind the management key (public_admin). One instance; agents and call history in Postgres (Cloud SQL in production, the compose postgres here)
-# disk: the demo is rebuilt by demo.auto_install on every start.
+# on it behind the management key (public_admin). One instance; agents and call history in Postgres
+# (Cloud SQL in production, the compose postgres here). Clean-room: the store starts empty and the
+# optional demo is seeded afterwards (deploy/rehearsal/README.md).
 profile: development
 
 public_listen_addr: "0.0.0.0:8080"
-admin_listen_addr: "127.0.0.1:9090"   # unused by the demo; required by the config checks
+admin_listen_addr: "127.0.0.1:9090"   # unused by the single-port deployment; required by the config checks
 probe_listen_addr: ""
 
 public_admin:
@@ -31,8 +32,8 @@ tls:
 origin_allow_same_host: true
 origin_allowlist: []
 
-# Development profile only: the dental MCP server shares the app's network namespace, so it is
-# loopback for the server (production requires public https for MCP servers).
+# Development profile only: a local MCP fixture running beside the server is loopback for it
+# (production requires public https for MCP servers).
 mcp:
   allow_local_http: true
   timeout: 5s
@@ -102,8 +103,3 @@ warmup:
   on_start: false
 
 idle: {user_timeout: 30s, max_prompts: 2}
-
-# The dentistry demo installs itself on every start (needs DENTAL_MCP_URL and MCP_TOKEN_DENTAL).
-# Delete this block to make it a button in the admin UI only.
-demo:
-  auto_install: "dental"

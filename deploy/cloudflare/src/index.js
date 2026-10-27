@@ -37,6 +37,19 @@ function forwardedRequest(request) {
 	return forwarded;
 }
 
+// The external Postgres profile (deploy/cloudflare/cloudflare-demo-postgres.yaml) is what a
+// Cloudflare deployment that runs demos uses: the shipped SQLite file is wiped on container restart,
+// so a seeded demo would disappear. Worker secret GOVOICE_DATABASE_DSN switches the profile; the
+// persistent SWITCHBOARD_SECRETS_KEY secret enables the encrypted store that seed writes to.
+const DEFAULT_DSN = "/tmp/switchboard.db";
+const SQLITE_CONFIG = "/etc/govoice/cloudflare-demo.yaml";
+const POSTGRES_CONFIG = "/etc/govoice/cloudflare-demo-postgres.yaml";
+
+function databaseConfig(env) {
+	const dsn = env.GOVOICE_DATABASE_DSN || DEFAULT_DSN;
+	return { dsn, config: /^postgres(ql)?:\/\//.test(dsn) ? POSTGRES_CONFIG : SQLITE_CONFIG };
+}
+
 export class SwitchboardContainer extends DurableObject {
 	starting;
 
@@ -57,6 +70,7 @@ export class SwitchboardContainer extends DurableObject {
 
 	async startAndWaitForHealth() {
 		const container = this.ctx.container;
+		const database = databaseConfig(this.env);
 		if (!container.running) {
 			container.start({
 				image: container.images.base,
@@ -67,10 +81,11 @@ export class SwitchboardContainer extends DurableObject {
 					"--",
 					"/opt/govoice/bin/server",
 					"-config",
-					"/etc/govoice/cloudflare-demo.yaml",
+					database.config,
 				],
 				env: {
-					GOVOICE_DATABASE_DSN: "/tmp/switchboard.db",
+					GOVOICE_DATABASE_DSN: database.dsn,
+					SWITCHBOARD_SECRETS_KEY: this.env.SWITCHBOARD_SECRETS_KEY ?? "",
 					TOKEN_SECRET: this.env.TOKEN_SECRET,
 					GOVOICE_MANAGEMENT_API_KEY: this.env.GOVOICE_MANAGEMENT_API_KEY,
 					GOOGLE_API_KEY: this.env.GOOGLE_API_KEY ?? "",

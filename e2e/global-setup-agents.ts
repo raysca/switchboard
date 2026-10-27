@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { agentsStackFile, type Stack } from "./lib/stack";
 import { portOpen, start, waitFor } from "./lib/stack-proc";
+import { DEMO_MCP, DEMO_TOKEN, DEMO_TOKEN_ENV } from "./lib/seed";
 import { stopStack } from "./global-teardown";
 
 // Starts the stack for the agent suite. By default with the simulated echo provider
@@ -15,7 +16,7 @@ import { stopStack } from "./global-teardown";
 // xaispeech) reading XAI_API_KEY from its environment: real STT/LLM/TTS calls.
 // Ports differ from the paid suite's, so both can run on one machine.
 const LIVE = process.env.E2E_PROVIDER === "xai";
-const PORTS = { public: 18581, admin: 19591, ui: 15174, mcp: 18595, mcpHole: 18596, dental: 18597, atlas: 18598 };
+const PORTS = { public: 18581, admin: 19591, ui: 15174, mcp: 18595, mcpHole: 18596, dental: DEMO_MCP.dental.port, atlas: DEMO_MCP.atlas.port };
 const repo = path.resolve(__dirname, "..");
 const logDir = path.join(__dirname, "test-results-agents", "logs");
 
@@ -60,14 +61,21 @@ export default async function globalSetup() {
     stdio: ["ignore", fs.openSync(path.join(logDir, "build-mcptest.log"), "w"), "inherit"],
   });
 
-  execFileSync("go", ["build", "-o", "bin/dental-mcp", "./cmd/dental-mcp"], {
+  // The demo fixtures the specs seed against, and the standalone seed client they call in
+  // beforeAll (demos/seed; nothing is seeded here, see lib/seed.ts).
+  execFileSync("go", ["build", "-o", "bin/dental-mcp", "./demos/dental/cmd/dental-mcp"], {
     cwd: repo,
     stdio: ["ignore", fs.openSync(path.join(logDir, "build-dental-mcp.log"), "w"), "inherit"],
   });
 
-  execFileSync("go", ["build", "-o", "bin/atlas-mcp", "./cmd/atlas-mcp"], {
+  execFileSync("go", ["build", "-o", "bin/atlas-mcp", "./demos/atlas/cmd/atlas-mcp"], {
     cwd: repo,
     stdio: ["ignore", fs.openSync(path.join(logDir, "build-atlas-mcp.log"), "w"), "inherit"],
+  });
+
+  execFileSync("go", ["build", "-o", "bin/seed", "./demos/seed"], {
+    cwd: repo,
+    stdio: ["ignore", fs.openSync(path.join(logDir, "build-seed.log"), "w"), "inherit"],
   });
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "govoice-e2e-graph-"));
@@ -108,8 +116,10 @@ export default async function globalSetup() {
     mcpUrl: `http://127.0.0.1:${PORTS.mcp}`,
   };
   // The server reads provider secrets from its environment only. Echo needs none for the suite's own
-  // provider. The dentistry demo's agent names google, xai and elevenlabs stages, so placeholder keys
-  // for those make it creatable; nothing builds them (dental-helpers rewrites every stage to echo).
+  // provider. The seeded demo agents name google, xai and elevenlabs stages, so placeholder keys
+  // for those make them creatable; nothing builds them (the demo specs create echo variants instead).
+  // The demo MCP servers and their tokens are not server config: each demo spec seeds its demo
+  // through bin/seed, which writes the token into the server's encrypted secret store.
   // Live: the xAI key and nothing else.
   let providerEnv: Record<string, string>;
   if (LIVE) providerEnv = { XAI_API_KEY: process.env.E2E_XAI_SECRET! };
@@ -130,19 +140,14 @@ export default async function globalSetup() {
       GOVOICE_MANAGEMENT_API_KEY: stack.managementKey,
       MCP_TOKEN_TEST: "e2e-mcp-token",
       SWITCHBOARD_SECRETS_KEY: "e2e:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-      DENTAL_MCP_URL: `http://127.0.0.1:${PORTS.dental}/mcp`,
-      MCP_TOKEN_DENTAL: "e2e-dental-token",
-      // The Atlas demo needs BOTH of these for GET /api/v1/demo to report available.
-      ATLAS_DEMO_URL: `http://127.0.0.1:${PORTS.atlas}`,
-      MCP_TOKEN_ATLAS: "e2e-atlas-token",
       ...providerEnv,
     });
     save();
     stack.pids.mcptest = start(logDir, "mcptest", path.join(repo, "bin/mcptest"), ["-addr", `127.0.0.1:${PORTS.mcp}`, "-blackhole-addr", `127.0.0.1:${PORTS.mcpHole}`, "-token", "e2e-mcp-token"], repo, {});
     save();
-    stack.pids.dental = start(logDir, "dental-mcp", path.join(repo, "bin/dental-mcp"), [], repo, { PORT: String(PORTS.dental), DENTAL_MCP_TOKEN: "e2e-dental-token" });
+    stack.pids.dental = start(logDir, "dental-mcp", path.join(repo, "bin/dental-mcp"), [], repo, { PORT: String(PORTS.dental), [DEMO_TOKEN_ENV.dental]: DEMO_TOKEN.dental });
     save();
-    stack.pids.atlas = start(logDir, "atlas-mcp", path.join(repo, "bin/atlas-mcp"), [], repo, { PORT: String(PORTS.atlas), ATLAS_MCP_TOKEN: "e2e-atlas-token" });
+    stack.pids.atlas = start(logDir, "atlas-mcp", path.join(repo, "bin/atlas-mcp"), [], repo, { PORT: String(PORTS.atlas), [DEMO_TOKEN_ENV.atlas]: DEMO_TOKEN.atlas });
     save();
     stack.pids.ui = start(logDir, "ui", process.execPath, [path.join(repo, "ui/node_modules/vite/bin/vite.js"), "--config", path.join(__dirname, "vite.e2e.config.mjs")], path.join(repo, "ui"), {
       E2E_UI_PORT: String(PORTS.ui),

@@ -1,11 +1,10 @@
 import type { Page } from "@playwright/test";
 import { expect, type Stack } from "./agents-stack";
-import { api, connectAdmin, stepCard } from "./agents-helpers";
+import { api, stepCard } from "./agents-helpers";
 
-// The Atlas demo on the free echo provider: the Dashboard install, the stored agent the
-// installer publishes, and the echo variant the call test drives (the installed stages name
-// providers the fake stack cannot build). The demo's own card is a labelled region and its
-// button is distinct, so every Atlas lookup is scoped to it and can never hit the dental card.
+// The Atlas demo on the free echo provider: the agent bin/seed publishes (from demos/atlas), and
+// the echo variant the call test drives (the seeded stages name providers the fake stack cannot
+// build). The demo is seeded in the spec's beforeAll through the standalone CLI, not the Dashboard.
 
 export const ATLAS_AGENT = "Atlas Travel Concierge";
 export const ATLAS_ECHO_AGENT = "Atlas (echo)";
@@ -35,31 +34,16 @@ export type AtlasAgent = {
   };
 };
 
-/** The Dashboard's Atlas card: a labelled region, so its controls are never ambiguous. */
-export const atlasDemoPanel = (page: Page) => page.getByRole("region", { name: "Atlas Travel demo" });
-
-/** Loads the demo from the Dashboard and waits for the installed agent link in the same card. */
-export async function loadAtlasDemo(page: Page, stack: Stack) {
-  await connectAdmin(page, stack);
-  const panel = atlasDemoPanel(page);
-  await expect(panel).toBeVisible();
-  await expect(panel).toHaveAttribute("data-demo", "atlas");
-  await panel.getByRole("button", { name: "Load Atlas demo", exact: true }).click();
-  // The install swaps the button for a link to the published agent; discovery plus the two HTTP
-  // tool creates can take a moment, so give it room.
-  await expect(panel.getByRole("link", { name: ATLAS_AGENT, exact: true })).toBeVisible({ timeout: 30_000 });
-}
-
-/** The stored agent the installer published, by name through the management API. */
+/** The stored agent bin/seed published, by name through the management API. */
 export async function storedAtlasAgent(stack: Stack): Promise<AtlasAgent> {
   const agents = await api<{ data: { id: string; name: string }[] }>(stack, "/agents");
   const installed = agents.data.find((a) => a.name === ATLAS_AGENT);
-  expect(installed, `the demo installs the ${ATLAS_AGENT} agent`).toBeTruthy();
+  expect(installed, `bin/seed publishes the ${ATLAS_AGENT} agent`).toBeTruthy();
   const { data } = await api<{ data: AtlasAgent }>(stack, `/agents/${installed!.id}`);
   return data;
 }
 
-// Every installed stage names google, xai or elevenlabs; the fake stack builds none of those.
+// Every seeded stage names google, xai or elevenlabs; the fake stack builds none of those.
 // "Atlas (echo)" keeps the steps, handoffs, end_call flags, per-step tools and the full tool
 // selection (including the two http: pins) and swaps only the stages for the echo provider. The
 // system prompt becomes the step name: the echo model prefixes each reply with it, so a transcript

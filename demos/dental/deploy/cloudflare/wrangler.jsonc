@@ -1,0 +1,30 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "dental-mcp-demo",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-23",
+  "observability": { "enabled": true },
+  "containers": [
+    {
+      "class_name": "DentalMCPContainer",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "base": {
+          "dockerfile": "Dockerfile.mcp",
+          "build_context": "../../../.."
+        }
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "MCP", "class_name": "DentalMCPContainer" }
+    ]
+  },
+  "exports": {
+    "DentalMCPContainer": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  }
+}
