@@ -16,7 +16,7 @@ Authorization: Bearer <management key>
 take calls. The call then connects to `{public}/ws?token=<token>`. Tokens are
 single-use, so every call fetches a new one.
 
-With `make dev` running, `make example-web` and `make example-cli [TEXT="..."]`
+With `./dev up` running, `./dev example-web` and `./dev example-cli [TEXT="..."]`
 in the repository root run both clients against the dev agent with nothing to
 type. To run them by hand:
 
@@ -74,7 +74,7 @@ relays the request to the management API so the browser needs no CORS access to
 it. The relay accepts only same-origin JSON requests.
 
 `server.js` can prefill the page and hold the key itself, so the browser never
-sees it (this is what `make example-web` does):
+sees it (this is what `./dev example-web` does):
 
 | Variable | Effect |
 |---|---|
@@ -104,7 +104,7 @@ audio is sent to or played from Switchboard.
 npm start                      # then open http://127.0.0.1:3000/text
 ```
 
-With `make dev` running, `make example-web` serves it, finds the seeded **Text assistant**
+With `./dev up` running, `./dev example-web` serves it, finds the seeded **Text assistant**
 agent through the server's own key and prefills it. By hand, give it the Admin URL,
 Management key and the ID of any agent whose speech-to-text and text-to-speech are `silence`.
 Each reply shows how long it took to start. The page keeps `index.html`'s small protobuf

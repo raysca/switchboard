@@ -30,18 +30,19 @@ by running it again.
 
 ```bash
 # terminal 1: the demo's MCP fixture
-make dental-mcp            # :18767, token dev-dental-token
-# or: make atlas-mcp       # :18768, token dev-atlas-token
+./dev demo-start dental    # :18767, token dev-dental-token
+# or: ./dev demo-start atlas       # :18768, token dev-atlas-token
 
 # terminal 2: the dev server (generates SWITCHBOARD_SECRETS_KEY and the management key)
-make dev
+./dev up
 
 # terminal 3: wipe and seed the demo
-make seed DEMO=dental      # or DEMO=atlas
+./dev demo-seed dental     # or: ./dev demo-seed atlas
 ```
 
-`make seed` reads `.govoice-dev/dev.env` (admin URL and management key) and the fixture tokens,
-then runs `go run ./demos/seed`. Without the dev stack:
+`./dev demo-seed` reads `.govoice-dev/dev.env` (remembered ports and management key) and the
+fixture tokens, targets the loopback dev server, then runs `go run ./demos/seed`. The equivalent Make targets remain for CI/legacy
+(`make dental-mcp`, `make dev`, `make seed DEMO=dental`). Without the dev stack:
 
 ```bash
 export GOVOICE_MANAGEMENT_API_KEY=...       # management key of the target server

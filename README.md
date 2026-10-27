@@ -20,16 +20,17 @@ Switchboard is a low-latency, resource-efficient voice agent runtime built in Go
 
 ## Five-Minute Start
 
-`make help` lists every target, grouped by cost: free (fake providers), read-only previews, and PAID live checks that refuse to run without `GOVOICE_LIVE=1`.
+`./dev` is the developer command surface (`just` underneath). It lists every task with a one-line description and groups help into runbooks.
 
 ```bash
+make init                      # fresh clone only: install the pinned just runner
 make ort                       # fresh clone only: fetch the pinned ONNX Runtime
-make dev                       # server + admin UI, ready to call
-make example-web               # in another terminal: browser client
-make example-cli TEXT="Hello"  # or a CLI call (omit TEXT for a voice clip)
+./dev up                       # server + admin UI, ready to call
+./dev example-web              # in another terminal: browser client
+./dev example-cli TEXT="Hello" # or a CLI call (omit TEXT for a voice clip)
 ```
 
-`make dev` builds everything, generates the management key and token secret, and keeps a local SQLite store in `.govoice-dev/` (git-ignored). Provider keys come from `examples/.env` (template: `examples/.env.example`). Without keys, the free targets in `make help` run on the `echo` fake provider. The admin UI is at `http://127.0.0.1:5173`. Seeded agents, ports and `make admin-link`: [quickstart section 8](docs/quickstart.md#8-local-development-with-make-dev); the full walkthrough (agents, tokens, the Pipecat client) is the rest of [docs/quickstart.md](docs/quickstart.md).
+`./dev up` builds everything, generates the management key and token secret, and keeps a local SQLite store in `.govoice-dev/` (git-ignored). Provider keys come from `examples/.env` (template: `examples/.env.example`). Without keys, the free tasks run on the `echo` fake provider. The admin UI is at `http://127.0.0.1:5173`. Seeded agents, ports and `./dev admin-link`: [quickstart section 8](docs/quickstart.md#8-local-development-with-dev); the full walkthrough (agents, tokens, the Pipecat client) is the rest of [docs/quickstart.md](docs/quickstart.md). `./dev help`, `./dev help deploy` and `./dev --list` explain the rest; [docs/development.md](docs/development.md) is the command reference.
 
 ---
 
@@ -51,7 +52,7 @@ make example-cli TEXT="Hello"  # or a CLI call (omit TEXT for a voice clip)
 | Check compatibility | [Pipecat compatibility](docs/pipecat-compatibility.md), [parity matrix](docs/pipecat-parity-matrix.md), [decisions](docs/decisions/pipecat-evals.md) |
 | Plan upcoming work | [Next implementation phases](docs/roadmap-next-phases.md) |
 | Measure it | [Benchmarks and perf gates](docs/benchmarks/README.md) |
-| Contribute | [AGENTS.md](AGENTS.md), [browser e2e suites](e2e/README.md), `make help` |
+| Contribute | [AGENTS.md](AGENTS.md), [developer commands](docs/development.md), [browser e2e suites](e2e/README.md), `./dev --list` |
 
 ---
 

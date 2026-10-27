@@ -16,6 +16,16 @@ export PATH := $(PATH):$(HOME)/go/bin:/opt/homebrew/bin
 help: ## build|Show this help
 	@scripts/make-help.sh $(firstword $(MAKEFILE_LIST))
 
+init: ## build|Install the pinned just task runner, then use ./dev for the developer commands
+	@./scripts/init.sh
+
+fmt: ## build|Format Go sources and typecheck the admin UI when its dependencies are installed
+	@gofmt -w .
+	@if [ -d ui/node_modules ]; then (cd ui && npm run typecheck); else echo "fmt: ui/node_modules missing; skipped the UI typecheck"; fi
+
+check-tasks: ## build|Validate the justfile, recipe descriptions and help runbooks (run make init first)
+	@./scripts/check-tasks.sh
+
 deploy-cloudflare: ## deploy|Deploy Switchboard to Cloudflare Workers/Containers
 	cd deploy/cloudflare && npx wrangler deploy --config wrangler.jsonc
 
@@ -143,7 +153,7 @@ proto-gen: ## build|Regenerate the protobuf frame code
 	@mkdir -p core/transport/v1/framespb
 	protoc --proto_path=proto --go_out=core/transport/v1/framespb --go_opt=Mframes.proto=govoice/core/transport/v1/framespb --go_opt=paths=source_relative frames.proto
 
-.PHONY: build test verify deadcode demo-boundary release-security proto-gen deploy-cloudflare
+.PHONY: build test verify deadcode demo-boundary release-security proto-gen deploy-cloudflare init fmt check-tasks
 
 # Postgres storage tests (skipped by `make test`; run by the `postgres` job in .github/workflows/ci.yml,
 # which provides a service container and sets TEST_POSTGRES_DSN). Uses TEST_POSTGRES_DSN if set,
@@ -224,7 +234,7 @@ atlas-mcp: ## dev|Run the Atlas Travel demo MCP server on :18768 (token: dev-atl
 	ATLAS_MCP_TOKEN=$${ATLAS_MCP_TOKEN:-dev-atlas-token} PORT=18768 go run ./demos/atlas/cmd/atlas-mcp
 
 seed: ## dev|Seed a demo into the dev stack: make seed DEMO=atlas
-	@set -a; . ./.govoice-dev/dev.env 2>/dev/null || true; set +a; \
+	@set -a; . "$${GOVOICE_DEV_DIR:-.govoice-dev}/dev.env" 2>/dev/null || true; set +a; \
 	DENTAL_MCP_TOKEN=$${DENTAL_MCP_TOKEN:-dev-dental-token} ATLAS_MCP_TOKEN=$${ATLAS_MCP_TOKEN:-dev-atlas-token} \
 	go run ./demos/seed --server "$${GOVOICE_ADMIN_URL:-http://127.0.0.1:$${ADMIN_PORT:-9090}}" --demo "$(DEMO)" \
 	  --mcp scheduling=http://127.0.0.1:18767 --mcp inventory=http://127.0.0.1:18768 \

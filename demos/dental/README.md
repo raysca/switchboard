@@ -34,28 +34,28 @@ stack below.
 
 Provider keys for Google, xAI and ElevenLabs go in `examples/.env` (see
 [providers.md](../../docs/providers.md)). The xAI TTS voice needs the `xaispeech` build tag,
-which `make build` and `make dev` use.
+which `make build` and `./dev up` use.
 
 Terminal 1, the MCP fixture (port 18767, token `dev-dental-token`):
 
 ```bash
-make dental-mcp
+./dev demo-start dental
 ```
 
 Terminal 2, the dev stack. It generates `SWITCHBOARD_SECRETS_KEY` and the management key, and
 does not need any demo environment variables:
 
 ```bash
-make dev
+./dev up
 ```
 
 Terminal 3, wipe and seed the demo:
 
 ```bash
-make seed DEMO=dental
+./dev demo-seed dental
 ```
 
-Open the Admin UI printed by `make dev`, sign in, open **Smile Dental front desk**, and use
+Open the Admin UI printed by `./dev up`, sign in, open **Smile Dental front desk**, and use
 **Test call** to talk to it. The demo no longer has a Dashboard install button; seeding is the
 same operation locally and in a deployment.
 

@@ -40,7 +40,7 @@ The compatibility cost is the SDK's protocol implementation and Go-version depen
 
 ## Testing MCP integration
 
-`cmd/mcptest` (package `server/mcp/mcptest`) serves MCP servers with known behaviour on loopback, used by the Go tests, the browser suite and `make dev`; `make mcp-test` runs it alone on `127.0.0.1:18765` with a black hole on `:18766`.
+`cmd/mcptest` (package `server/mcp/mcptest`) serves MCP servers with known behaviour on loopback, used by the Go tests, the browser suite and `./dev up`; `./dev mcp-test` runs it alone on `127.0.0.1:18765` with a black hole on `:18766`.
 
 | Path | Auth | Behaviour |
 |---|---|---|

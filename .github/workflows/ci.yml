@@ -4,10 +4,10 @@
 # smoke test starts the image without credentials. The Postgres store tests are off for now (SQLite is the
 # store we run and test); set the repository variable RUN_POSTGRES_TESTS=true to turn them back on.
 #
-# Required status checks to configure on main: test, image-smoke, graph-e2e (postgres only once enabled).
-# There is no macOS job: the server ships only as the Linux container image (deploy/Dockerfile), so CI
-# verifies on ubuntu and smokes the image. perf-gate.yml still runs on macos-14 for the benchmarks.
-# perf-gate.yml is advisory (see docs/benchmarks/README.md, "CI policy").
+# Required status checks to configure on main: test, tasks (ubuntu + macos), image-smoke, graph-e2e
+# (postgres only once enabled). The tasks matrix is the only macOS job: it verifies the pinned just front
+# door under the stock macOS Bash 3.2; the server itself ships only as the Linux container image.
+# perf-gate.yml runs on macos-14 too and is advisory (see docs/benchmarks/README.md, "CI policy").
 name: ci
 on:
   push:
@@ -40,6 +40,14 @@ jobs:
       - run: npm ci --prefix tools/compat   # released @pipecat-ai client packages for the compat tests
       - run: make ort
       - run: make verify
+      # The just task front door is part of the developer contract: install the pinned
+      # runner and validate every recipe description and help topic.
+      - uses: actions/cache@v4
+        with:
+          path: .tools
+          key: ${{ runner.os }}-${{ runner.arch }}-just-1.59.0
+      - run: make init
+      - run: make check-tasks
 
   # Agent graphs in a real browser against the fake providers (no keys, no cost): the designer, a live
   # call with a handoff, the live graph view, republish and a failed handoff. Gates merging the feature.
@@ -69,6 +77,25 @@ jobs:
             e2e/playwright-report-agents
             e2e/evidence
           retention-days: 7
+
+  # The developer front door on both supported host OSes: macOS uses the stock Bash 3.2,
+  # which caught a Bash-4-only expansion in doctor during review.
+  tasks:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: .tools
+          key: ${{ runner.os }}-${{ runner.arch }}-just-1.59.0
+      - run: make init
+      - run: ./dev --version | grep -qx 'just 1.59.0'
+      - run: make check-tasks
 
   # Storage and migration tests against the production database (skipped by `make test`).
   postgres:

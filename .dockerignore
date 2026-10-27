@@ -3,6 +3,7 @@
 pipecat-impl
 examples/rtvi_client
 tools
+.tools
 bin
 assets
 results

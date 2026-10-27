@@ -112,7 +112,7 @@ Eval state lives only in the database, so several servers sharing Postgres work 
 
 ## Running it
 
-Against a server you run yourself (`make dev`), with the offline model:
+Against a server you run yourself (`./dev up`), with the offline model:
 
 ```bash
 set -a; . .govoice-dev/dev.env; set +a    # exports GOVOICE_MANAGEMENT_API_KEY; the targets never read or print it
@@ -120,7 +120,7 @@ make eval-agents                           # tools/eval/agents/cases on -provide
 make eval-agents CASES=my/cases EVAL_ARGS="-runs 5 -min-pass 3 -max-turns 200"
 ```
 
-The make variables are `EVAL_ADMIN` (default `http://127.0.0.1:9090`), `EVAL_PUBLIC` (default `127.0.0.1:8080`), `CASES` and `EVAL_ARGS`. Ollama must be up with `govoice-test` (`make offline-up OFFLINE_PROFILE=host-llm`, `make offline-models`). The default cases (`dev-assistant-answers`, `dealership-buyer-reaches-sales`) need the seeded agents of `make dev`. The dental case lives with the demo, `demos/dental/eval`, so a default run never needs it: run `make eval-agents CASES=demos/dental/eval` after seeding the Smile Dental demo ([README](../../demos/dental/README.md)) and starting its MCP server (`make dental-mcp`). A run lists every case whose agent is missing in one error.
+The variables are `EVAL_ADMIN` (default `http://127.0.0.1:9090`), `EVAL_PUBLIC` (default `127.0.0.1:8080`), `CASES` and `EVAL_ARGS`. Ollama must be up with `govoice-test` (`OFFLINE_PROFILE=host-llm ./dev offline-up`, `./dev offline-models`). The default cases (`dev-assistant-answers`, `dealership-buyer-reaches-sales`) need the seeded agents of `./dev up`. The dental case lives with the demo, `demos/dental/eval`, so a default run never needs it: run `./dev eval-agents CASES=demos/dental/eval` after seeding the Smile Dental demo ([README](../../demos/dental/README.md)) and starting its MCP server (`./dev demo-start dental`). A run lists every case whose agent is missing in one error.
 
 The harness proves itself with no keys and no running server (about 40 s, builds and starts its own server on the echo provider, then must see every deliberately broken agent fail):
 

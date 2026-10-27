@@ -115,27 +115,27 @@ A server deploy is clean-room and installs no demo. Seed the demo after the serv
 
 Provider keys for Google, xAI and ElevenLabs go in `examples/.env` (see
 [providers.md](../../docs/providers.md)). The xAI TTS voice needs the `xaispeech` build tag,
-which `make build` and `make dev` use.
+which `make build` and `./dev up` use.
 
 Terminal 1, the fixture server (port 18768, token `dev-atlas-token`):
 
 ```bash
-make atlas-mcp
+./dev demo-start atlas
 ```
 
 Terminal 2, the dev stack (no demo environment variables):
 
 ```bash
-make dev
+./dev up
 ```
 
 Terminal 3, wipe and seed the demo:
 
 ```bash
-make seed DEMO=atlas
+./dev demo-seed atlas
 ```
 
-Open the Admin UI printed by `make dev`, open **Atlas Travel Concierge**, and use **Test
+Open the Admin UI printed by `./dev up`, open **Atlas Travel Concierge**, and use **Test
 call** to talk to it. The eight-step canvas and the 32 handoffs are visible in the editor.
 
 ## Acceptance script

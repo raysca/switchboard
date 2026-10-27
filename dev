@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# The Switchboard developer command. It is a thin wrapper around the pinned just runner:
+# use `./dev` with no arguments for help, `./dev --list` for every task, and
+# `./dev help <topic>` for a runbook. `make init` installs just.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+JUST="$ROOT/.tools/bin/just"
+
+if [[ ! -x "$JUST" ]]; then
+  cat >&2 <<'EOF'
+dev: just is not installed yet.
+Run: make init
+EOF
+  exit 2
+fi
+
+# `./dev <recipe> --help` is a common first guess. Send it to the matching runbook
+# instead of passing --help into a Make target or a shell script.
+if [[ $# -gt 0 ]]; then
+  case "$1" in
+    help)
+      topic="${2:-}"
+      case "$topic" in --help|-h) topic="" ;; esac
+      exec "$JUST" --justfile "$ROOT/justfile" --working-directory "$ROOT" help "$topic"
+      ;;
+    --help|-h)
+      exec "$JUST" --justfile "$ROOT/justfile" --working-directory "$ROOT" help
+      ;;
+  esac
+  for arg in "${@:2}"; do
+    if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
+      topic=""
+      case "$1" in
+        deploy*) topic="deploy" ;;
+        demo-boundary) topic="test" ;;
+        demo*|seed) topic="demo" ;;
+        test*|verify|fmt|check-tasks|deadcode) topic="test" ;;
+        eval*) topic="eval" ;;
+        live*|matrix*|provider*|bench*|loadtest*|perf*|tts-sim) topic="live" ;;
+        up*|down|status|doctor|admin-link|example*|offline*) topic="dev" ;;
+      esac
+      if [[ -n "$topic" ]]; then
+        exec "$JUST" --justfile "$ROOT/justfile" --working-directory "$ROOT" help "$topic"
+      fi
+      # A known recipe without a dedicated runbook gets the overview; an unknown
+      # recipe is allowed to fail with just's own error.
+      if "$JUST" --justfile "$ROOT/justfile" --working-directory "$ROOT" --show "$1" >/dev/null 2>&1; then
+        exec "$JUST" --justfile "$ROOT/justfile" --working-directory "$ROOT" help
+      fi
+      exec "$JUST" --justfile "$ROOT/justfile" --working-directory "$ROOT" "$@"
+    fi
+  done
+fi
+
+exec "$JUST" --justfile "$ROOT/justfile" --working-directory "$ROOT" "$@"

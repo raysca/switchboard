@@ -180,6 +180,6 @@ GOVOICE_LIVE=1 make live-check LIVE_ARGS="-stt-probe -stt-model latest_long"   #
 
 `-trace` prints the client event timeline and the server session timeline; `-keep-work` keeps the temp dir (server
 logs); `-pause 2200ms` changes the S4 gap. The tool refuses without `GOVOICE_LIVE=1`, hands the server child only
-the provider variables its profile needs, exactly like `make dev` (never printed or stored), and
+the provider variables its profile needs, exactly like `./dev up` (never printed or stored), and
 redacts keys/tokens in the server log lines it echoes. Recorded audio is cached only in a directory you give with
 `-clips` (default: a removed temp dir).

@@ -42,7 +42,7 @@ environment variable ──▶ credentials[].fields ──▶ credentials[] kind
 4. **`models`, `voices`, `languages`** are what the dropdowns offer for that service once it is available. They never gate anything.
 5. **What is returned:** `GET /api/v1/providers` lists, per provider, `env` (every variable in its `fields`), `detected` (some kind is usable) and per service `available`, `missing_env` and the entries. Agents never name a variable or a kind; they name a provider.
 
-Where to set the variables: `examples/.env` for `make dev` and the examples (see `examples/.env.example`, which lists them), the `EnvironmentFile` of `deploy/govoice.service` or the `env_file` of `deploy/docker-compose.yaml` in production. Nothing else reads a file of secrets.
+Where to set the variables: `examples/.env` for `./dev up` and the examples (see `examples/.env.example`, which lists them), the `EnvironmentFile` of `deploy/govoice.service` or the `env_file` of `deploy/docker-compose.yaml` in production. Nothing else reads a file of secrets.
 
 Keeping things in step: adding a variable means editing the provider's data file (the `fields` entry); `tools/livecheck/creds.go` keeps its own list for choosing live-test profiles and a drift test (`TestCredSpecsMatchCatalog`) fails if the two disagree, so update both, then this table.
 

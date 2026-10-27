@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Local development stack and examples. Run through make:
-#   make dev                                   server + admin UI, seeded with "Dev Assistant", a "Dealership desk" graph and test MCP servers
-#   make dev-fresh                             the same stack in .govoice-dev-fresh/, wiped on every start and not seeded: no agents, so /onboarding is the first-run wizard
-#   make example-web                           custom web client (needs `make dev` running)
-#   make example-cli [TEXT="..."]              CLI call to the dev agent (voice clip, or a text turn)
-#   make admin-link                            a magic link that signs the admin UI in (no pasting)
-#   make example-go NAME=google_pipeline       standalone Go example (reads examples/.env)
+# Local development stack and examples. Run through ./dev (or make for CI/legacy):
+#   ./dev up                                   server + admin UI, seeded with "Dev Assistant", a "Dealership desk" graph and test MCP servers
+#   ./dev up-fresh                             the same stack in .govoice-dev-fresh/, wiped on every start and not seeded: no agents, so /onboarding is the first-run wizard
+#   ./dev example-web                          custom web client (needs `./dev up` running)
+#   ./dev example-cli TEXT="..."               CLI call to the dev agent (voice clip, or a text turn)
+#   ./dev admin-link                           a magic link that signs the admin UI in (no pasting)
+#   ./dev example-go NAME=google_pipeline      standalone Go example (reads examples/.env)
 #
 # Provider keys come from examples/.env (see examples/.env.example): the development
 # server loads it itself at start (the environment wins; a relative
@@ -16,10 +16,10 @@
 # Ports: PUBLIC_PORT (8080), ADMIN_PORT (9090), UI_PORT (5173), CLIENT_PORT (3000).
 #   public = the voice WebSocket and /health; admin = management API, metrics and debug, kept off the
 #   public listener on purpose; UI = the vite dev server (it proxies /api and /ws); CLIENT = only
-#   `make example-web`. dev.env remembers the last public and admin ports.
-# A second `make dev` from the same checkout stops the first one (and its server and vite) before it
+#   `./dev example-web`. dev.env remembers the last public and admin ports.
+# A second `./dev up` from the same checkout stops the first one (and its server and vite) before it
 # starts. A default port held by anything else is skipped: the next free port is used and printed. A
-# port you name (PUBLIC_PORT=... make dev) is exact: if held, the error names the process. Nothing
+# port you name (PUBLIC_PORT=... ./dev up) is exact: if held, the error names the process. Nothing
 # outside this checkout's own stack is ever killed. If this script is killed without running its
 # trap, a small guard stops the server and vite within a second, so no stack is left orphaned.
 set -euo pipefail
@@ -46,7 +46,7 @@ pick_port() { # <label> <wanted> <explicit 1|0> [taken...]
       [[ "$p" == "$want" ]] || echo "dev: $label port $want is in use by $(port_holder "$want"); using $p" >&2
       echo "$p"; return 0
     fi
-    (( ! explicit )) || die "$label port $p is in use by $(port_holder "$p"); stop it or pick another (e.g. $(echo "$label" | tr a-z A-Z)_PORT=$((p + 10000)) make dev)"
+    (( ! explicit )) || die "$label port $p is in use by $(port_holder "$p"); stop it or pick another (e.g. $(echo "$label" | tr a-z A-Z)_PORT=$((p + 10000)) ./dev up)"
     p=$((p + 1))
     (( p - want <= 100 )) || die "no free $label port within 100 of $want"
   done
@@ -81,7 +81,7 @@ own_stack_pids() {
   return 0
 }
 
-# A second `make dev` replaces the first instead of failing on its ports. dev.sh traps TERM and
+# A second `./dev up` replaces the first instead of failing on its ports. dev.sh traps TERM and
 # stops its own server and vite; anything still alive after a few seconds is killed.
 stop_previous_stack() {
   local pids
@@ -136,8 +136,8 @@ export_urls() {
 }
 
 server_up() { curl -fsS "$GOVOICE_ADMIN_URL/ready" >/dev/null 2>&1; }
-require_server() { server_up || die "no dev server at $GOVOICE_ADMIN_URL; start it with 'make dev'"; }
-require_agent() { [[ -n "${GOVOICE_DEV_AGENT_ID:-}" ]] || die "no dev agent yet: add provider keys to examples/.env and rerun 'make dev', or create one in the admin UI and set GOVOICE_DEV_AGENT_ID in ${DEV_ENV#"$ROOT"/}"; }
+require_server() { server_up || die "no dev server at $GOVOICE_ADMIN_URL; start it with './dev up'"; }
+require_agent() { [[ -n "${GOVOICE_DEV_AGENT_ID:-}" ]] || die "no dev agent yet: add provider keys to examples/.env and rerun './dev up', or create one in the admin UI and set GOVOICE_DEV_AGENT_ID in ${DEV_ENV#"$ROOT"/}"; }
 
 # Starts a background process with prefixed output; remembers its pid.
 PIDS=()
@@ -181,7 +181,7 @@ cmd_up() {
   ADMIN_PORT="$(pick_port admin "${want_admin:-9090}" "$([[ -n "$want_admin" ]] && echo 1 || echo 0)" "$PUBLIC_PORT")"
   UI_PORT="$(pick_port ui "${want_ui:-5173}" "$([[ -n "$want_ui" ]] && echo 1 || echo 0)" "$PUBLIC_PORT" "$ADMIN_PORT")"
   export_urls
-  set_env PUBLIC_PORT "$PUBLIC_PORT"; set_env ADMIN_PORT "$ADMIN_PORT"
+  set_env PUBLIC_PORT "$PUBLIC_PORT"; set_env ADMIN_PORT "$ADMIN_PORT"; set_env UI_PORT "$UI_PORT"
 
   make build >/dev/null || die "build failed (run 'make build' to see why)"
   go build -o bin/mcptest ./cmd/mcptest || die "mcptest build failed"
@@ -203,7 +203,7 @@ cmd_up() {
   spawn mcptest ./bin/mcptest -addr "127.0.0.1:$MCPTEST_PORT" -blackhole-addr "127.0.0.1:$MCPTEST_HOLE_PORT"
   for _ in $(seq 1 50); do curl -fsS "$MCPTEST_URL/_record" >/dev/null 2>&1 && break; sleep 0.1; done
 
-  # GOVOICE_DEV_SEED=0 (make dev-fresh) starts with no agents, so /onboarding opens the first-run wizard.
+  # GOVOICE_DEV_SEED=0 (./dev up-fresh) starts with no agents, so /onboarding opens the first-run wizard.
   if [[ "${GOVOICE_DEV_SEED:-1}" == "0" ]]; then
     echo "dev: not seeding (GOVOICE_DEV_SEED=0): open /onboarding for the first-run wizard"
   elif agent_id="$(node scripts/dev-seed.mjs)"; then
@@ -226,7 +226,7 @@ cmd_up() {
     Data            ${DEV_DIR#"$ROOT"/}/  (SQLite store; the key is in dev.env)
     Test MCP        $MCPTEST_URL (/ok /open /fail/tools /fail/auth /fail/list /slow; black hole :$MCPTEST_HOLE_PORT)
 
-  In another terminal: make example-web | make example-cli TEXT="Hello" | make example-go NAME=google_pipeline
+  In another terminal: ./dev example-web | ./dev example-cli TEXT="Hello" | ./dev example-go NAME=google_pipeline
   Ctrl-C stops everything.
 
 EOF
@@ -254,15 +254,69 @@ cmd_cli() {
 cmd_go() {
   local name="${1:-}"
   local list; list="$(cd examples && for d in */; do [[ -f "$d/main.go" ]] && printf ' %s' "${d%/}"; done)"
-  [[ -n "$name" && -f "examples/$name/main.go" ]] || die "usage: make example-go NAME=<example>; one of:$list"
+  [[ -n "$name" && -f "examples/$name/main.go" ]] || die "usage: ./dev example-go NAME=<example>; one of:$list"
   exec go run "./examples/$name"
+}
+
+# The dev stacks this checkout may own: a custom GOVOICE_DEV_DIR plus the normal and
+# fresh onboarding stacks.
+dev_dirs() {
+  if [[ -n "${GOVOICE_DEV_DIR:-}" ]]; then
+    printf '%s\n' "$GOVOICE_DEV_DIR"
+  fi
+  printf '%s\n' "$ROOT/.govoice-dev" "$ROOT/.govoice-dev-fresh"
+}
+
+stack_pids_in() { # <dev dir>
+  ( DEV_DIR="$1"; own_stack_pids ) | sort -un | tr '\n' ' '
+}
+
+cmd_down() {
+  local dir pids any=0
+  while IFS= read -r dir; do
+    pids="$(stack_pids_in "$dir")"
+    [[ -n "${pids// }" ]] || continue
+    any=1
+    DEV_DIR="$dir"
+    stop_previous_stack
+  done < <(dev_dirs)
+  (( any )) || echo "dev: not running"
+}
+
+cmd_status() {
+  local dir pids public admin ui
+  while IFS= read -r dir; do
+    pids="$(stack_pids_in "$dir")"
+    [[ -n "${pids// }" ]] || continue
+    DEV_DIR="$dir"
+    if [[ -f "$dir/dev.env" ]]; then
+      set -a; source "$dir/dev.env"; set +a
+    fi
+    public="${PUBLIC_PORT:-8080}"
+    admin="${ADMIN_PORT:-9090}"
+    ui="${UI_PORT:-5173}"
+    if curl -fsS "http://127.0.0.1:$admin/ready" >/dev/null 2>&1; then
+      echo "dev: running (pids ${pids% }), ready"
+    else
+      echo "dev: running (pids ${pids% }), not ready yet"
+    fi
+    echo "  state     ${dir#"$ROOT"/}"
+    echo "  admin UI  http://127.0.0.1:$ui"
+    echo "  API       http://127.0.0.1:$admin"
+    echo "  voice     ws://127.0.0.1:$public/ws"
+    return 0
+  done < <(dev_dirs)
+  echo "dev: not running (start it with ./dev up)"
+  return 1
 }
 
 case "${1:-up}" in
   up) cmd_up ;;
+  down) cmd_down ;;
+  status) cmd_status ;;
   web) cmd_web ;;
   cli) cmd_cli ;;
   link) load_env; "$ROOT/scripts/admin-link.sh" "http://127.0.0.1:$UI_PORT" ;;
   go) cmd_go "${2:-}" ;;
-  *) die "unknown command '$1' (up | web | cli | link | go <name>)" ;;
+  *) die "unknown command '$1' (up | down | status | web | cli | link | go <name>)" ;;
 esac
